@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# package
+*.egg-info/
+
+# env and secrets
+.env
+.env.*
+
+# generated runtime data
+/data/
+/logs/
+/browser/
+*.db
+*.sqlite3
+
+# OS/editor
+.DS_Store
+.vscode/

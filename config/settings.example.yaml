@@ -1,0 +1,44 @@
+scanner:
+  discovery_interval_seconds: 180
+  ending_interval_seconds: 45
+  jitter_seconds: 30
+  concurrency: 2
+
+marketplaces:
+  buyee:
+    base_url: "https://buyee.jp/jdirectitems/auction"
+    rate_limit_per_minute: 30
+  yahoo:
+    ended_auction_base: "https://auctions.yahoo.co.jp"
+
+pricing:
+  fx_jpy_to_usd: 0.00675
+  buyee_fee_percent: 0.11
+  plan_fee_jpy: 350
+  domestic_shipping_jpy: 800
+  international_shipping_jpy: 1500
+  packaging_jpy: 300
+  insurance_percent: 0.02
+  duty_percent: 0.08
+  reserve_percent: 0.05
+  profit_floor_usd: 75
+  min_profit_multiple: 1.5
+
+alert:
+  buyout_min_score: 78
+  ending_min_score: 70
+  grail_min_score: 82
+  ignore_max_score: 64
+  min_expected_profit_usd: 75
+
+intelligence:
+  auto_promote: false
+  daily_refresh_hours: 24
+
+risk:
+  max_auth_risk: "medium"
+
+feeds:
+  personal:
+    min_score: 72
+    allowed_risk: ["low", "medium"]

@@ -1,0 +1,29 @@
+auth:
+  max_risk: "medium"
+  rules:
+    replica_markers:
+      - replica
+      - fake
+      - レプリカ
+      - no brand
+      - type
+      - style
+    suspicious_inventory:
+      - generic logo tee
+      - obvious fake luxury
+      - repeated relist
+
+seller:
+  min_feedback_percent: 95
+  min_feedback_count: 20
+  allowed_types:
+    - individual
+    - store
+
+valuation:
+  min_required_profit_usd: 75
+  min_multiple: 1.5
+
+hard_gates:
+  allow_grail_speculation: true
+  require_auth_checks: true

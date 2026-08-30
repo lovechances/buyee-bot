@@ -1,0 +1,48 @@
+positive:
+  - miyashita
+  - 本人期
+  - original era
+  - destroy
+  - mohair
+  - patchwork
+  - silver
+  - leather
+  - reconstruct
+  - rebuild
+  - runway
+  - archive
+  - kimono
+  - avant garde
+  - distressed
+  - collaboration
+  - grafik
+  - graphic
+  - musician
+  - vintage music tee
+  - rock
+  - metal
+  - punk
+  - industrial
+  - grunge
+  - cult
+
+negative:
+  - generic
+  - basic
+  - logo tee
+  - replica
+  - fake
+  - inspired by
+  - type
+  - style
+  - no brand
+  - reprint
+  - diffusion
+  - cheap logo
+
+weights:
+  value: 35
+  comp_confidence: 20
+  taste: 20
+  seller_auth: 15
+  urgency: 10

@@ -1,0 +1,54 @@
+search_families:
+  - brand: "Number (N)ine"
+    aliases:
+      - "Number (N)ine"
+      - "Number Nine"
+      - "ナンバーナイン"
+      - "本人期"
+    terms:
+      - "destroy"
+      - "mohair"
+      - "patchwork"
+      - "A Closed Feeling"
+      - "High Streets"
+      - "09AW"
+      - "08AW"
+  - brand: "Needles"
+    aliases:
+      - "Needles"
+      - "Rebuild"
+      - "リビルド"
+    terms:
+      - "Ozzy"
+      - "Rebuild"
+      - "vintage"
+      - "distressed"
+      - "music"
+  - brand: "Chrome Hearts"
+    aliases:
+      - "Chrome Hearts"
+      - "クロムハーツ"
+    terms:
+      - "silver"
+      - "925"
+      - "cross patch"
+      - "leather"
+      - "buckles"
+  - brand: "Dior Homme"
+    aliases:
+      - "Dior Homme"
+      - "Dior Hedi"
+    terms:
+      - "Strip"
+      - "Navigate"
+      - "Luster"
+      - "VOTC"
+  - brand: "Rick Owens"
+    aliases:
+      - "Rick Owens"
+      - "Rick Owens Slab"
+    terms:
+      - "slab"
+      - "runway"
+      - "leather"
+      - "distressed"
