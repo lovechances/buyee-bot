@@ -162,6 +162,35 @@ def restore_session_cookies(context: BrowserContext, state_path: str | Path | No
         context.add_cookies(cookies)
 
 
+async def restore_session_cookies_async(context: BrowserContext, state_path: str | Path | None = None) -> None:
+    path = Path(state_path) if state_path is not None else STATE_PATH
+    if not path.exists():
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+
+    cookies = []
+    for cookie in payload.get("cookies", []):
+        if not isinstance(cookie, dict):
+            continue
+        normalized = {
+            "name": cookie.get("name"),
+            "value": cookie.get("value"),
+            "domain": cookie.get("domain"),
+            "path": cookie.get("path", "/"),
+            "expires": cookie.get("expires"),
+            "httpOnly": bool(cookie.get("httpOnly", False)),
+            "secure": bool(cookie.get("secure", False)),
+            "sameSite": cookie.get("sameSite"),
+        }
+        if normalized["name"] and normalized["value"] and normalized["domain"]:
+            cookies.append(normalized)
+    if cookies:
+        await context.add_cookies(cookies)
+
+
 def launch_manual_buyee_login() -> tuple[Browser, BrowserContext, Page]:
     """Open a fresh headed browser profile and restore the saved Buyee auth if present.
 

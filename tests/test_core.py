@@ -1,10 +1,14 @@
+import asyncio
 import subprocess
 import sys
 from pathlib import Path
 
+import httpx
+
 from buyeeye.browser_session import has_valid_session, load_session_cookies
 from buyeeye.discovery import dedupe_listings, generate_search_queries
 from buyeeye.intelligence import list_proposals
+from buyeeye.live_sources import BuyeeAuthenticatedSource, LiveListing
 from buyeeye.normalize import negative_term_hits, normalize_season, normalize_text
 from buyeeye.scoring import score_listing
 from buyeeye.taste import classify_brand, extract_taste_signals
@@ -114,3 +118,72 @@ def test_installed_package_cli_starts():
     )
     assert result.returncode == 0, result.stderr
     assert "BuyEye status: ready" in result.stdout
+
+
+def test_buyee_authenticated_source_uses_browser_fallback_on_http_403(monkeypatch):
+    class FakeResponse:
+        status_code = 403
+        text = "<html><body><a href='https://buyee.jp/item/123'>Number (N)ine tee ¥12000</a></body></html>"
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("403 Forbidden", request=None, response=self)
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("buyeeye.live_sources.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr(
+        "buyeeye.live_sources.BuyeeAuthenticatedSource._fetch_via_browser",
+        lambda self, query: [
+            LiveListing(
+                source="buyee",
+                source_listing_id="123",
+                url="https://buyee.jp/item/123",
+                title_original="Number (N)ine tee",
+                title_normalized="number n ine tee",
+                brand="Number (N)ine",
+                category="unknown",
+                current_price=12000,
+                buyout_price=12000,
+                starting_price=12000,
+                seller_name=None,
+                condition=None,
+                raw={"query": query},
+            )
+        ],
+    )
+
+    items = asyncio.run(BuyeeAuthenticatedSource().fetch("Number (N)ine"))
+    assert len(items) == 1
+    assert items[0].source == "buyee"
+    assert items[0].current_price == 12000
+
+
+def test_buyee_browser_payload_parser_extracts_live_listing_fields_from_real_dom():
+    rows = [
+        {
+            "href": "https://buyee.jp/item/jdirectitems/auction/s1242650927?conversionType=yac_top_recommend_list",
+            "text": "Time Remaining 6 day(s) 3,300 YEN (US$21.65)",
+        },
+        {
+            "href": "https://buyee.jp/item/jdirectitems/auction/c1242648160?conversionType=yac_top_recommend_list",
+            "text": "Time Remaining 13 hour(s) 4,000 YEN (US$26.24)",
+        },
+    ]
+
+    items = BuyeeAuthenticatedSource._items_from_browser_payload(rows, "Number (N)ine")
+    assert len(items) == 2
+    assert items[0].current_price == 3300
+    assert items[0].source_listing_id.endswith("1242650927")
+    assert "Time Remaining" in items[0].title_original
+    assert items[1].current_price == 4000
