@@ -13,6 +13,7 @@ venv/
 # env and secrets
 .env
 .env.*
+!.env.example
 
 # generated runtime data
 /data/

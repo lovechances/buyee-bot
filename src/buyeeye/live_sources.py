@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -9,10 +8,17 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
+import yaml
 from bs4 import BeautifulSoup
 
-from .browser_session import SESSION_DIR, STATE_PATH, load_session_cookies, restore_session_cookies, restore_session_cookies_async
-from .db import save_listings
+from .browser_session import (
+    SESSION_DIR,
+    STATE_PATH,
+    ensure_browser_dir,
+    load_session_cookies,
+    restore_session_cookies_async,
+)
+from .db import DB_PATH, save_listings
 from .normalize import normalize_brand, normalize_text
 
 
@@ -31,6 +37,10 @@ class LiveListing:
     seller_name: str | None
     condition: str | None
     image_url: str | None = None
+    time_remaining: str | None = None
+    buyout_indicator: str | None = None
+    bid_count: int | None = None
+    watch_count: int | None = None
     raw: dict[str, Any] | None = None
 
 
@@ -45,8 +55,8 @@ def load_live_queries(config_path: str | Path = "config/searches.yaml") -> list[
     if not path.exists():
         return []
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
         return []
     families = payload.get("search_families", [])
     queries: list[str] = []
@@ -86,6 +96,7 @@ class BuyeeAuthenticatedSource(ListingSource):
         if query:
             url = f"{url}?q={quote_plus(query)}"
 
+        ensure_browser_dir()
         async with async_playwright() as p:
             browser = await p.chromium.launch_persistent_context(
                 str(SESSION_DIR),
@@ -125,40 +136,95 @@ class BuyeeAuthenticatedSource(ListingSource):
         return compact[-32:] if len(compact) > 32 else compact
 
     @staticmethod
+    def _extract_card_title(row: dict[str, Any]) -> str:
+        for key in ("title", "item_title", "listing_title", "name", "item_name", "title_original", "itemName"):
+            value = row.get(key)
+            if value:
+                cleaned = normalize_text(str(value))
+                if cleaned and not re.search(r"(?i)Time Remaining|YEN|JPY|US\$", cleaned):
+                    return cleaned
+        return ""
+
+    @staticmethod
+    def _extract_time_remaining(text: str) -> str | None:
+        match = re.search(
+            r"(?i)Time Remaining\s+(.+?)(?=\s+[0-9][0-9,]*\s*(?:YEN|JPY|¥|US\$)|$)",
+            text,
+        )
+        if match:
+            value = match.group(1).strip()
+            if value:
+                return value
+        return None
+
+    @staticmethod
+    def _extract_buyout_price(text: str) -> int | None:
+        match = re.search(r"(?i)(?:Buy\s*Now|Buyout|Buy\s*Out)\s*(?:[:\-]?)\s*(?:¥|JPY|YEN)?\s*([0-9][0-9,]*)", text)
+        if match:
+            return int(match.group(1).replace(",", ""))
+        return None
+
+    @staticmethod
+    def _extract_bid_count(text: str) -> int | None:
+        match = re.search(r"(?i)([0-9]+)\s*(?:bids?|bid count)", text)
+        if match:
+            return int(match.group(1))
+        return None
+
+    @staticmethod
+    def _extract_watch_count(text: str) -> int | None:
+        match = re.search(r"(?i)([0-9]+)\s*(?:watch(?:es)?|watch count)", text)
+        if match:
+            return int(match.group(1))
+        return None
+
+    @staticmethod
     def _items_from_browser_payload(rows: list[dict[str, str]], query: str | None = None) -> list[LiveListing]:
         listings: list[LiveListing] = []
         seen: set[str] = set()
         for row in rows:
             href = row.get("href", "")
-            text = normalize_text(row.get("text", "") or "")
+            text = str(row.get("text") or "")
             if not href or not text:
                 continue
             item_id = BuyeeAuthenticatedSource._item_id_from_href(href)
             if not item_id or item_id in seen:
                 continue
             seen.add(item_id)
+            title = BuyeeAuthenticatedSource._extract_card_title(row)
+            title_original = title
+            if title_original and title_original.lower() in {"time remaining", ""}:
+                title_original = ""
+            time_remaining = BuyeeAuthenticatedSource._extract_time_remaining(text)
             price = BuyeeAuthenticatedSource._extract_price(text)
+            buyout_price = BuyeeAuthenticatedSource._extract_buyout_price(text)
             raw = {
                 "query": query or "buyee-auction",
-                "time_remaining": None,
+                "time_remaining": time_remaining,
+                "bid_count": BuyeeAuthenticatedSource._extract_bid_count(text),
+                "watch_count": BuyeeAuthenticatedSource._extract_watch_count(text),
+                "image_url": row.get("image_url") or row.get("img_src") or None,
+                "buyout_indicator": "buyout" if buyout_price is not None else None,
             }
-            time_match = re.search(r"Time Remaining\s+([^\n]+)", text, flags=re.I)
-            if time_match:
-                raw["time_remaining"] = time_match.group(1)
             listings.append(
                 LiveListing(
                     source="buyee",
                     source_listing_id=item_id,
                     url=href,
-                    title_original=text,
-                    title_normalized=normalize_text(text),
-                    brand=normalize_brand(BuyeeAuthenticatedSource._extract_brand(text)),
+                    title_original=title_original,
+                    title_normalized=normalize_text(title_original),
+                    brand=normalize_brand(BuyeeAuthenticatedSource._extract_brand(title_original or text)),
                     category="unknown",
                     current_price=price,
-                    buyout_price=None,
+                    buyout_price=buyout_price,
                     starting_price=price,
                     seller_name=None,
                     condition=None,
+                    image_url=row.get("image_url") or row.get("img_src") or None,
+                    time_remaining=time_remaining,
+                    buyout_indicator=raw["buyout_indicator"],
+                    bid_count=raw["bid_count"],
+                    watch_count=raw["watch_count"],
                     raw=raw,
                 )
             )
@@ -173,32 +239,43 @@ class BuyeeAuthenticatedSource(ListingSource):
         candidates = soup.select("a[href*='/item/jdirectitems/auction/'], a[href*='/item/search/']")
         for item in candidates[:40]:
             href = item.get("href") or ""
-            text = normalize_text(item.get_text(" ", strip=True))
+            text = item.get_text(" ", strip=True)
             if not href or not text:
                 continue
             item_id = BuyeeAuthenticatedSource._item_id_from_href(href)
             if not item_id or item_id in seen:
                 continue
             seen.add(item_id)
+            time_remaining = BuyeeAuthenticatedSource._extract_time_remaining(text)
             price = BuyeeAuthenticatedSource._extract_price(text)
-            raw = {"query": query or "buyee-auction", "time_remaining": None}
-            time_match = re.search(r"Time Remaining\s+([^\n]+)", text, flags=re.I)
-            if time_match:
-                raw["time_remaining"] = time_match.group(1)
+            title = BuyeeAuthenticatedSource._extract_card_title({"text": text, "title": item.get("title")})
+            buyout_price = BuyeeAuthenticatedSource._extract_buyout_price(text)
+            raw = {
+                "query": query or "buyee-auction",
+                "time_remaining": time_remaining,
+                "bid_count": BuyeeAuthenticatedSource._extract_bid_count(text),
+                "watch_count": BuyeeAuthenticatedSource._extract_watch_count(text),
+                "buyout_indicator": "buyout" if buyout_price is not None else None,
+            }
             listings.append(
                 LiveListing(
                     source="buyee",
                     source_listing_id=item_id,
                     url=href if href.startswith("http") else f"https://buyee.jp{href}",
-                    title_original=text,
-                    title_normalized=normalize_text(text),
-                    brand=normalize_brand(BuyeeAuthenticatedSource._extract_brand(text)),
+                    title_original=title,
+                    title_normalized=normalize_text(title),
+                    brand=normalize_brand(BuyeeAuthenticatedSource._extract_brand(title or text)),
                     category="unknown",
                     current_price=price,
-                    buyout_price=None,
+                    buyout_price=buyout_price,
                     starting_price=price,
                     seller_name=None,
                     condition=None,
+                    image_url=item.select_one("img") and item.select_one("img").get("src"),
+                    time_remaining=time_remaining,
+                    buyout_indicator=raw["buyout_indicator"],
+                    bid_count=raw["bid_count"],
+                    watch_count=raw["watch_count"],
                     raw=raw,
                 )
             )
@@ -213,7 +290,11 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _extract_price(text: str) -> int | None:
-        match = re.search(r"(?:¥|JPY|YEN)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*(?:YEN|JPY|¥)", text, flags=re.I)
+        match = re.search(
+            r"(?:¥|JPY|YEN)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*(?:YEN|JPY|¥)",
+            text,
+            flags=re.IGNORECASE,
+        )
         if not match:
             return None
         value = match.group(1) or match.group(2)
@@ -319,7 +400,7 @@ class LiveMarketLoop:
     def __init__(self, sources: list[ListingSource] | None = None) -> None:
         self.sources = sources or [BuyeeAuthenticatedSource(), YahooAuctionSource()]
 
-    async def run_once(self, query: str) -> list[LiveListing]:
+    async def run_once(self, query: str, persist: bool = True, db_path: str | Path = DB_PATH) -> list[LiveListing]:
         combined: list[LiveListing] = []
         for source in self.sources:
             try:
@@ -327,5 +408,6 @@ class LiveMarketLoop:
                 combined.extend(items)
             except (httpx.HTTPError, ValueError):
                 continue
-        persisted = save_listings(combined)
-        return combined if persisted is None else combined
+        if persist:
+            save_listings(combined, db_path)
+        return combined

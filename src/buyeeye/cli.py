@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import signal
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
 from .browser_session import has_valid_session, launch_manual_buyee_login, save_session_state
 from .db import init_db
+from .discord_alerts import send_test_alert
 from .live_sources import LiveMarketLoop, load_live_queries
+from .pipeline import health_report, scan_once
 from .settings import load_settings
 
 
@@ -18,6 +23,9 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status")
     subparsers.add_parser("run")
     subparsers.add_parser("scan-once")
+    scan_alert = subparsers.add_parser("scan-alert-once")
+    scan_alert.add_argument("query", nargs="?")
+    subparsers.add_parser("health")
     subparsers.add_parser("setup-session")
     subparsers.add_parser("send-test-alert")
     subparsers.add_parser("backtest")
@@ -63,19 +71,42 @@ def main(argv: list[str] | None = None) -> int:
         print(f"DB: {db_path}")
         return 0
 
+    if args.command == "health":
+        report = health_report(db_path)
+        print(f"BuyEye health: {'ready' if report['database_ready'] else 'degraded'}")
+        print(f"Database: {report['database']}")
+        print(f"Buyee session: {'ready' if report['session_ready'] else 'manual login required'}")
+        return 0 if report["database_ready"] else 1
+
     if args.command == "run":
-        print("BuyEye daemon started in local loop mode.")
+        print("BuyEye daemon started.")
         queries = load_live_queries()
-        loop = LiveMarketLoop()
+        interval = int(load_settings().get("scanner", {}).get("discovery_interval_seconds", 180))
+        stopping = False
+
+        def stop_handler(_signum: int, _frame: Any) -> None:
+            nonlocal stopping
+            stopping = True
+
+        signal.signal(signal.SIGINT, stop_handler)
+        signal.signal(signal.SIGTERM, stop_handler)
+        backoff = interval
         try:
-            while True:
-                asyncio.run(_run_market_pass(loop, queries))
-                print("Sleeping 180s before next market pass...")
-                for _ in range(180):
-                    import time
+            while not stopping:
+                for query in queries:
+                    try:
+                        result = asyncio.run(scan_once(query, db_path))
+                        print(f"query={query!r} scanned={result.scanned} alerts={result.new_alerts} suppressed={result.suppressed_alerts}")
+                        backoff = interval
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"query={query!r} failed={type(exc).__name__} retry_in={backoff}s")
+                        backoff = min(backoff * 2, 1800)
+                for _ in range(backoff):
+                    if stopping:
+                        break
                     time.sleep(1)
-        except KeyboardInterrupt:
-            print("BuyEye daemon stopped by user interrupt.")
+        finally:
+            print("BuyEye daemon stopped.")
         return 0
 
     if args.command == "scan-once":
@@ -84,6 +115,17 @@ def main(argv: list[str] | None = None) -> int:
         print("BuyEye scan-once started.")
         asyncio.run(_run_market_pass(loop, queries))
         return 0
+
+    if args.command == "scan-alert-once":
+        queries = load_live_queries()
+        query = args.query or (queries[0] if queries else "Number (N)ine")
+        try:
+            result = asyncio.run(scan_once(query, db_path))
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"query={query!r} failed={type(exc).__name__}")
+            return 1
+        print(f"query={query!r} scanned={result.scanned} new_rows={result.new_rows} updated_rows={result.updated_rows} alerts={result.new_alerts} suppressed={result.suppressed_alerts} failed_alerts={result.failed_alerts}")
+        return 0 if result.scanned else 1
 
     if args.command == "setup-session":
         if has_valid_session():
@@ -101,8 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "send-test-alert":
-        print("Discord test alert is configured via environment variables and will be sent if webhooks exist.")
-        return 0
+        return send_test_alert()
 
     if args.command == "backtest":
         print("Backtest initialized. Fixture-backed behaviors available in tests.")
