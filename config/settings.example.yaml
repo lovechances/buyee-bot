@@ -41,6 +41,10 @@ comps:
   cache_ttl_hours: 72
   minimum_heat_for_lookup: 40
 
+detail:
+  minimum_heat: 40
+  cache_ttl_hours: 24
+
 risk:
   max_auth_risk: "medium"
 

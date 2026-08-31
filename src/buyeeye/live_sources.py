@@ -151,31 +151,6 @@ class BuyeeAuthenticatedSource(ListingSource):
                     await page.wait_for_load_state("domcontentloaded", timeout=45000)
                     await page.wait_for_timeout(3000)
                     data = await page.evaluate(listing_script)
-                detail_page = await browser.new_page()
-                try:
-                    for row in data:
-                        if self._extract_card_title(row):
-                            continue
-                        detail_url = (
-                            row["href"]
-                            if row["href"].startswith("http")
-                            else f"https://buyee.jp{row['href']}"
-                        )
-                        try:
-                            await detail_page.goto(
-                                detail_url, wait_until="domcontentloaded", timeout=60000
-                            )
-                            await detail_page.wait_for_timeout(1000)
-                            row["title"] = (
-                                await detail_page.locator(
-                                    ".itemInformation__itemName, .itemInformation__title"
-                                ).first.text_content()
-                                or await detail_page.title()
-                            )
-                        except (OSError, PlaywrightError, TimeoutError):
-                            continue
-                finally:
-                    await detail_page.close()
                 return self._items_from_browser_payload(data, query)
             finally:
                 await browser.close()

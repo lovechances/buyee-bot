@@ -259,9 +259,27 @@ def assess_auth_risk(profile: FashionProfile, title: str, price_jpy: int | None,
 
 
 def evaluate_listing(listing: Any, comps: Iterable[Comp] = (), settings: dict[str, Any] | None = None) -> ListingEvaluation:
-    profile = enrich_title(listing.title_original, getattr(listing, "brand", None))
-    desirability = score_desirability(profile, listing.title_original, getattr(listing, "condition", None))
+    stage_b_record = (getattr(listing, "raw", None) or {}).get("stage_b", {})
+    stage_b = stage_b_record.get("observed", {})
+    evidence_text = " ".join(
+        str(value)
+        for value in (
+            listing.title_original,
+            stage_b.get("description_original"),
+            stage_b.get("brand_observed"),
+            stage_b.get("item_type_observed"),
+            stage_b.get("material_original"),
+            stage_b.get("size_original"),
+            " ".join(stage_b.get("category_hierarchy", [])),
+        )
+        if value
+    )
+    profile = enrich_title(evidence_text, getattr(listing, "brand", None))
+    desirability = score_desirability(profile, evidence_text, getattr(listing, "condition", None))
     comp_result = evaluate_comps(profile, comps)
+    if stage_b_record.get("status") == "failed" and comp_result.confidence in {"medium", "high"}:
+        comp_result.confidence = "low"
+        comp_result.reason = f"{comp_result.reason}; Stage B identity unavailable"
     economics = evaluate_economics(getattr(listing, "buyout_price", None) or listing.current_price, comp_result, settings)
     auth = assess_auth_risk(profile, listing.title_original, listing.current_price, getattr(listing, "raw", None))
     return ListingEvaluation(profile, desirability, comp_result, economics, auth)

@@ -131,7 +131,10 @@ def main(argv: list[str] | None = None) -> int:
             f"rejected_invalid={result.rejected_invalid} below_threshold={result.below_threshold} "
             f"new_rows={result.new_rows} updated_rows={result.updated_rows} alerts={result.new_alerts} "
             f"suppressed={result.suppressed_alerts} failed_alerts={result.failed_alerts} "
-            f"comp_candidates={result.comp_candidates} comps_accepted={result.comps_accepted} "
+            f"stage_a_rejected={result.stage_a_rejected} stage_b_candidates={result.stage_b_candidates} "
+            f"stage_b_enriched={result.stage_b_enriched} stage_b_failed={result.stage_b_failed} "
+            f"comp_queried={result.comp_queried} comp_candidates={result.comp_candidates} "
+            f"comps_accepted={result.comps_accepted} final_candidates={result.final_candidates} "
             f"routes={result.route_counts}"
         )
         return 0 if result.scanned else 1

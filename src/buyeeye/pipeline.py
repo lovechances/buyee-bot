@@ -13,6 +13,7 @@ from .browser_session import has_valid_session
 from .comp_cache import CompRepository, CompService
 from .comp_sources import YahooEndedSource
 from .db import DB_PATH, get_alert_state, save_alert_state, save_listings
+from .detail_enrichment import BuyeeDetailService, DetailRepository
 from .discord_alerts import send_listing_alert
 from .evaluation import ListingEvaluation, evaluate_listing
 from .fashion import enrich_title
@@ -34,6 +35,12 @@ class ScanResult:
     route_counts: dict[str, int] | None = None
     comp_candidates: int = 0
     comps_accepted: int = 0
+    stage_a_rejected: int = 0
+    stage_b_candidates: int = 0
+    stage_b_enriched: int = 0
+    stage_b_failed: int = 0
+    comp_queried: int = 0
+    final_candidates: int = 0
 
 
 def _minutes_remaining(value: str | None) -> int | None:
@@ -155,19 +162,58 @@ async def scan_once(
         item.source_listing_id: get_alert_state(item.source, item.source_listing_id, db_path)
         for item in listings
     }
+    preliminary: dict[str, ListingEvaluation] = {}
+    valid_listings: list[LiveListing] = []
     for listing in listings:
         if not _is_relevant(listing):
             result.rejected_irrelevant += 1
+            result.stage_a_rejected += 1
             continue
         if not _price_is_valid(listing):
             result.rejected_invalid += 1
+            result.stage_a_rejected += 1
             continue
         evaluation = evaluate_listing(listing, settings=settings)
+        preliminary[listing.source_listing_id] = evaluation
+        valid_listings.append(listing)
+
+    stage_b_threshold = int(settings.get("detail", {}).get("minimum_heat", 40))
+    stage_b_listings = [
+        listing
+        for listing in valid_listings
+        if preliminary[listing.source_listing_id].desirability.score >= stage_b_threshold
+        and preliminary[listing.source_listing_id].auth_risk.level != "do_not_touch"
+    ]
+    result.stage_b_candidates = len(stage_b_listings)
+    result.stage_a_rejected += len(valid_listings) - len(stage_b_listings)
+    if stage_b_listings:
+        detail_service = BuyeeDetailService(
+            DetailRepository(
+                db_path,
+                ttl_hours=int(settings.get("detail", {}).get("cache_ttl_hours", 24)),
+            )
+        )
+        try:
+            result.stage_b_enriched, result.stage_b_failed = await detail_service.enrich(stage_b_listings)
+        except Exception:  # noqa: BLE001 - Stage B must fail closed without stopping scans.
+            result.stage_b_failed = len(stage_b_listings)
+        for listing in stage_b_listings:
+            if not (listing.raw or {}).get("stage_b"):
+                listing.raw = {
+                    **(listing.raw or {}),
+                    "stage_b": {"status": "failed", "error_type": "DetailUnavailable"},
+                }
+
+    stage_b_ids = {listing.source_listing_id for listing in stage_b_listings}
+    comp_threshold = int(settings.get("comps", {}).get("minimum_heat_for_lookup", 40))
+    for listing in valid_listings:
+        evaluation = evaluate_listing(listing, settings=settings)
         if (
-            evaluation.desirability.score
-            >= int(settings.get("comps", {}).get("minimum_heat_for_lookup", 40))
+            listing.source_listing_id in stage_b_ids
+            and evaluation.desirability.score >= comp_threshold
             and evaluation.auth_risk.level != "do_not_touch"
         ):
+            result.comp_queried += 1
             try:
                 comp_candidates = await comp_service.retrieve(evaluation.profile)
             except (httpx.HTTPError, OSError, ValueError):
@@ -200,6 +246,7 @@ async def scan_once(
             result.below_threshold += 1
             continue
         route, reason = routed
+        result.final_candidates += 1
         result.route_counts[route] = result.route_counts.get(route, 0) + 1
         signature = _signature(listing)
         previous = before[listing.source_listing_id]

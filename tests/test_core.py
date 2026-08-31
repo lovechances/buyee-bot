@@ -13,6 +13,13 @@ from buyeeye.browser_session import (
 from buyeeye.comp_cache import CompRepository, CompService
 from buyeeye.comp_sources import SoldCompSource, YahooEndedSource, build_comp_queries
 from buyeeye.db import Listing, get_session, save_listings
+from buyeeye.detail_enrichment import (
+    BuyeeDetailService,
+    DetailObservation,
+    DetailRepository,
+    apply_detail,
+    parse_detail_payload,
+)
 from buyeeye.discovery import dedupe_listings, generate_search_queries
 from buyeeye.evaluation import (
     assess_auth_risk,
@@ -648,7 +655,15 @@ def test_scan_suppresses_unchanged_qualifying_alert(monkeypatch, tmp_path):
     async def fake_run_once(self, query, persist=False):
         return [listing]
 
+    async def fake_detail(self, listings):
+        return 0, len(listings)
+
+    async def fake_comps(self, profile, minimum_candidates=8):
+        return []
+
     monkeypatch.setattr("buyeeye.pipeline.LiveMarketLoop.run_once", fake_run_once)
+    monkeypatch.setattr("buyeeye.pipeline.BuyeeDetailService.enrich", fake_detail)
+    monkeypatch.setattr("buyeeye.pipeline.CompService.retrieve", fake_comps)
     monkeypatch.setattr("buyeeye.pipeline.send_listing_alert", lambda *args: (True, 204, 0.01))
     db_path = tmp_path / "dedupe.db"
 
@@ -659,3 +674,209 @@ def test_scan_suppresses_unchanged_qualifying_alert(monkeypatch, tmp_path):
     assert second.new_alerts == 0
     assert second.suppressed_alerts == 1
     assert second.updated_rows == 1
+
+
+def test_detail_payload_preserves_raw_observations():
+    payload = {
+        "heading": "Number (N)ine 2001SS Time Migration Skull Mohair Knit Size 3",
+        "description": "Original Japanese description with shoulder 46 cm",
+        "breadcrumbs": ["Fashion", "Men", "Knitwear"],
+        "labels": [
+            ["Brand", "Number (N)ine"],
+            ["Item Type", "Knitwear"],
+            ["Condition", "Used"],
+            ["Size", "3"],
+            ["Measurements", "Shoulder 46 cm / Chest 52 cm"],
+            ["Material", "Mohair 70% / Nylon 30%"],
+            ["Seller", "archive_store"],
+            ["Feedback", "99.8% (1,234 ratings)"],
+            ["Current Price", "3,111 YEN"],
+            ["Buyout", "25,000 YEN"],
+            ["End Time", "2026-09-02 22:14 JST"],
+        ],
+        "images": ["https://img.example/1.jpg", "https://img.example/2.jpg"],
+    }
+    observation = parse_detail_payload("buyee", "number-nine-1", payload)
+
+    assert observation.title_original == payload["heading"]
+    assert observation.category_hierarchy == ["Fashion", "Men", "Knitwear"]
+    assert observation.item_type_observed == "Knitwear"
+    assert observation.material_original == "Mohair 70% / Nylon 30%"
+    assert observation.seller_feedback_percent == 99.8
+    assert observation.seller_feedback_count == 1234
+    assert observation.current_price == 3111
+    assert observation.buyout_price == 25000
+    assert observation.raw == payload
+
+
+def test_detail_cache_avoids_browser_fetch_and_propagates_full_title(tmp_path):
+    repository = DetailRepository(tmp_path / "detail.db")
+    observation = DetailObservation(
+        source="buyee",
+        source_listing_id="cached-1",
+        observed_at="2026-08-31T00:00:00+00:00",
+        title_original="Number (N)ine 2001SS Time Migration Skull Mohair Knit Size 3",
+        item_type_observed="knitwear",
+        material_original="mohair",
+        raw={
+            "heading": "Number (N)ine 2001SS Time Migration Skull Mohair Knit Size 3",
+            "labels": [["Item Type", "knitwear"], ["Material", "mohair"]],
+        },
+    )
+    repository.put(observation)
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="cached-1",
+        url="https://buyee.jp/item/cached-1",
+        title_original="Number (N)ine Time Migration...",
+        title_normalized="number n ine time migration",
+        brand="Number (N)ine",
+        category="unknown",
+        current_price=3111,
+        buyout_price=None,
+        starting_price=3111,
+        seller_name=None,
+        condition=None,
+    )
+
+    assert asyncio.run(BuyeeDetailService(repository).enrich([listing])) == (1, 0)
+    assert listing.title_original == observation.title_original
+    assert listing.raw["stage_b"]["observed"]["raw"] == observation.raw
+
+
+def test_stage_b_is_candidate_only_and_improves_item_identity(monkeypatch, tmp_path):
+    rejected = LiveListing(
+        source="buyee",
+        source_listing_id="generic-1",
+        url="https://buyee.jp/item/generic-1",
+        title_original="Number (N)ine basic t-shirt",
+        title_normalized="number n ine basic t shirt",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=3000,
+        buyout_price=None,
+        starting_price=3000,
+        seller_name=None,
+        condition=None,
+    )
+    candidate = LiveListing(
+        source="buyee",
+        source_listing_id="candidate-1",
+        url="https://buyee.jp/item/candidate-1",
+        title_original="Number (N)ine 2001SS Time Migration skull...",
+        title_normalized="number n ine 2001ss time migration skull",
+        brand="Number (N)ine",
+        category="unknown",
+        current_price=3111,
+        buyout_price=None,
+        starting_price=3111,
+        seller_name=None,
+        condition=None,
+    )
+    detail_calls = []
+    comp_profiles = []
+
+    async def fake_run_once(self, query, persist=False):
+        return [rejected, candidate]
+
+    async def fake_detail(self, listings):
+        detail_calls.extend(item.source_listing_id for item in listings)
+        apply_detail(
+            listings[0],
+            DetailObservation(
+                source="buyee",
+                source_listing_id="candidate-1",
+                observed_at="2026-08-31T00:00:00+00:00",
+                title_original="Number (N)ine 2001SS Time Migration Skull Mohair Knit Size 3",
+                description_original="Skull motif mohair pullover knit",
+                item_type_observed="knitwear",
+                material_original="mohair",
+            ),
+        )
+        return 1, 0
+
+    async def fake_comps(self, profile, minimum_candidates=8):
+        comp_profiles.append(profile)
+        return []
+
+    monkeypatch.setattr("buyeeye.pipeline.LiveMarketLoop.run_once", fake_run_once)
+    monkeypatch.setattr("buyeeye.pipeline.BuyeeDetailService.enrich", fake_detail)
+    monkeypatch.setattr("buyeeye.pipeline.CompService.retrieve", fake_comps)
+
+    result = asyncio.run(scan_once("Number (N)ine", tmp_path / "stage.db", send_alerts=False))
+
+    assert detail_calls == ["candidate-1"]
+    assert result.stage_a_rejected == 1
+    assert result.stage_b_candidates == 1
+    assert result.stage_b_enriched == 1
+    assert result.comp_queried == 1
+    assert len(comp_profiles) == 1
+    assert comp_profiles[0].item_type.value == "knitwear"
+    assert candidate.title_original.endswith("Mohair Knit Size 3")
+
+
+def test_stage_b_failure_degrades_without_crashing(monkeypatch, tmp_path):
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="detail-failure-1",
+        url="https://buyee.jp/item/detail-failure-1",
+        title_original="Number (N)ine 08AW A Closed Feeling destroy mohair jacket",
+        title_normalized="number n ine 08aw a closed feeling destroy mohair jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=4000,
+        buyout_price=None,
+        starting_price=4000,
+        seller_name=None,
+        condition=None,
+    )
+
+    async def fake_run_once(self, query, persist=False):
+        return [listing]
+
+    async def fake_detail(self, listings):
+        return 0, 1
+
+    async def fake_comps(self, profile, minimum_candidates=8):
+        return []
+
+    monkeypatch.setattr("buyeeye.pipeline.LiveMarketLoop.run_once", fake_run_once)
+    monkeypatch.setattr("buyeeye.pipeline.BuyeeDetailService.enrich", fake_detail)
+    monkeypatch.setattr("buyeeye.pipeline.CompService.retrieve", fake_comps)
+
+    result = asyncio.run(scan_once("Number (N)ine", tmp_path / "failure.db", send_alerts=False))
+
+    assert result.stage_b_candidates == 1
+    assert result.stage_b_enriched == 0
+    assert result.stage_b_failed == 1
+    assert result.comp_queried == 1
+    assert result.new_rows == 1
+    assert listing.raw["stage_b"]["status"] == "failed"
+    assert listing.comp_confidence in {"none", "low"}
+
+
+def test_stage_b_failure_caps_comp_confidence():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="failed-confidence-1",
+        url="https://buyee.jp/item/failed-confidence-1",
+        title_original="Number (N)ine 2001SS Time Migration t-shirt",
+        title_normalized="number n ine 2001ss time migration t shirt",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=5000,
+        buyout_price=None,
+        starting_price=5000,
+        seller_name=None,
+        condition=None,
+        raw={"stage_b": {"status": "failed", "error_type": "TimeoutError"}},
+    )
+    comps = [
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        for price in (20_000, 25_000, 30_000)
+    ]
+
+    evaluation = evaluate_listing(listing, comps)
+
+    assert evaluation.comps.confidence == "low"
+    assert "Stage B identity unavailable" in evaluation.comps.reason
