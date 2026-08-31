@@ -130,7 +130,9 @@ def main(argv: list[str] | None = None) -> int:
             f"query={query!r} scanned={result.scanned} rejected_irrelevant={result.rejected_irrelevant} "
             f"rejected_invalid={result.rejected_invalid} below_threshold={result.below_threshold} "
             f"new_rows={result.new_rows} updated_rows={result.updated_rows} alerts={result.new_alerts} "
-            f"suppressed={result.suppressed_alerts} failed_alerts={result.failed_alerts} routes={result.route_counts}"
+            f"suppressed={result.suppressed_alerts} failed_alerts={result.failed_alerts} "
+            f"comp_candidates={result.comp_candidates} comps_accepted={result.comps_accepted} "
+            f"routes={result.route_counts}"
         )
         return 0 if result.scanned else 1
 

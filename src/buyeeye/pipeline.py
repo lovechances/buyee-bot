@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from .browser_session import has_valid_session
+from .comp_cache import CompRepository, CompService
+from .comp_sources import YahooEndedSource
 from .db import DB_PATH, get_alert_state, save_alert_state, save_listings
 from .discord_alerts import send_listing_alert
 from .evaluation import ListingEvaluation, evaluate_listing
@@ -28,6 +32,8 @@ class ScanResult:
     rejected_invalid: int = 0
     below_threshold: int = 0
     route_counts: dict[str, int] | None = None
+    comp_candidates: int = 0
+    comps_accepted: int = 0
 
 
 def _minutes_remaining(value: str | None) -> int | None:
@@ -138,6 +144,13 @@ async def scan_once(
     settings = load_settings()
     ending_threshold = int(settings.get("alert", {}).get("ending_threshold_minutes", 60))
     result = ScanResult(scanned=len(listings), route_counts={})
+    comp_service = CompService(
+        [YahooEndedSource()],
+        CompRepository(
+            db_path,
+            ttl_hours=int(settings.get("comps", {}).get("cache_ttl_hours", 72)),
+        ),
+    )
     before = {
         item.source_listing_id: get_alert_state(item.source, item.source_listing_id, db_path)
         for item in listings
@@ -150,6 +163,18 @@ async def scan_once(
             result.rejected_invalid += 1
             continue
         evaluation = evaluate_listing(listing, settings=settings)
+        if (
+            evaluation.desirability.score
+            >= int(settings.get("comps", {}).get("minimum_heat_for_lookup", 40))
+            and evaluation.auth_risk.level != "do_not_touch"
+        ):
+            try:
+                comp_candidates = await comp_service.retrieve(evaluation.profile)
+            except (httpx.HTTPError, OSError, ValueError):
+                comp_candidates = []
+            evaluation = evaluate_listing(listing, comps=comp_candidates, settings=settings)
+            result.comp_candidates += evaluation.comps.candidate_count
+            result.comps_accepted += len(evaluation.comps.matches)
         if evaluation.profile.brand:
             listing.brand = evaluation.profile.brand.value
         if evaluation.profile.category:
@@ -164,6 +189,10 @@ async def scan_once(
                 "desirability_reasons": evaluation.desirability.reasons,
                 "warnings": evaluation.desirability.warnings + evaluation.economics.warnings,
                 "auth_reasons": evaluation.auth_risk.reasons,
+                "comp_queries": evaluation.comps.queries,
+                "comp_sources": evaluation.comps.sources,
+                "comp_candidates": evaluation.comps.candidate_count,
+                "comps_accepted": len(evaluation.comps.matches),
             },
         }
         routed = _route_evaluation(listing, evaluation, ending_threshold)

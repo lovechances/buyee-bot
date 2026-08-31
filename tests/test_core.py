@@ -10,12 +10,15 @@ from buyeeye.browser_session import (
     has_valid_session,
     load_session_cookies,
 )
+from buyeeye.comp_cache import CompRepository, CompService
+from buyeeye.comp_sources import SoldCompSource, YahooEndedSource, build_comp_queries
 from buyeeye.db import Listing, get_session, save_listings
 from buyeeye.discovery import dedupe_listings, generate_search_queries
 from buyeeye.evaluation import (
     assess_auth_risk,
     evaluate_comps,
     evaluate_economics,
+    evaluate_listing,
     score_desirability,
 )
 from buyeeye.fashion import enrich_title, expand_discovery_terms
@@ -28,6 +31,7 @@ from buyeeye.pipeline import (
     _minutes_remaining,
     _price_is_valid,
     _route,
+    _route_evaluation,
     scan_once,
 )
 from buyeeye.scoring import score_listing
@@ -159,6 +163,85 @@ def test_piece_aware_comps_reject_brand_only_category_mismatch_and_active_asks()
     assert result.confidence == "low"
 
 
+def test_exact_piece_comp_outranks_brand_only_and_outlier_is_trimmed():
+    profile = enrich_title("Dior Homme 04SS Strip distressed wax denim jeans")
+    assert profile.collection and profile.collection.value == "Strip"
+    prices = [100_000, 105_000, 110_000, 115_000, 9_999_999]
+    comps = [
+        Comp(
+            "yahoo_ended",
+            "Dior Homme 04SS Strip distressed wax denim jeans",
+            price,
+            1.0,
+            index + 1,
+            query="Dior Homme Strip denim",
+        )
+        for index, price in enumerate(prices)
+    ]
+    comps.append(Comp("yahoo_ended", "Dior Homme generic shirt", 20_000, 1.0, 2))
+    result = evaluate_comps(profile, comps)
+    assert result.matches[0].similarity > 0.8
+    assert all("shirt" not in comp.title for comp in result.matches)
+    assert result.median_jpy == 110_000
+    assert result.high_jpy < 9_999_999
+    assert result.matches[0].query == "Dior Homme Strip denim"
+
+
+def test_yahoo_closed_parser_requires_explicit_winning_price():
+    html = """
+    <ul><li>
+      <a href="https://auctions.yahoo.co.jp/jp/auction/a123">Dior Homme 04SS Strip wax denim</a>
+      <span>落札 54,900 円</span><span>8/25 19:38 終了</span>
+    </li><li>
+      <a href="https://auctions.yahoo.co.jp/jp/auction/b456">Active Dior ask</a>
+      <span>現在 99,999 円</span>
+    </li></ul>
+    """
+    comps = YahooEndedSource.parse(html, "Dior Homme Strip")
+    assert len(comps) == 1
+    assert comps[0].is_sold is True
+    assert comps[0].price_jpy == 54_900
+    assert comps[0].original_currency == "JPY"
+    assert comps[0].source_listing_id == "a123"
+
+
+def test_comp_cache_prevents_repeat_retrieval(tmp_path):
+    class CountingSource(SoldCompSource):
+        name = "yahoo_ended"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def fetch(self, query):
+            self.calls += 1
+            return [
+                Comp(
+                    "yahoo_ended",
+                    "Number (N)ine A Closed Feeling jacket",
+                    80_000,
+                    1.0,
+                    5,
+                    source_listing_id="sold-1",
+                    query=query,
+                )
+            ]
+
+    source = CountingSource()
+    service = CompService([source], CompRepository(tmp_path / "cache.db"))
+    profile = enrich_title("Number (N)ine 08AW A Closed Feeling jacket")
+    first = asyncio.run(service.retrieve(profile, minimum_candidates=1))
+    second = asyncio.run(service.retrieve(profile, minimum_candidates=1))
+    assert first and second
+    assert source.calls == 1
+
+
+def test_comp_query_builder_preserves_piece_identity_then_broadens():
+    profile = enrich_title("Number (N)ine 08AW A Closed Feeling mohair knit")
+    queries = build_comp_queries(profile)
+    assert "A Closed Feeling" in queries[0]
+    assert queries[-1] == "Number (N)ine"
+
+
 def test_economics_stays_separate_and_fails_closed_without_comps():
     no_comps = evaluate_comps(enrich_title("Dior Homme Hedi Strip jacket"), [])
     result = evaluate_economics(20_000, no_comps)
@@ -173,6 +256,59 @@ def test_auth_risk_is_explainable_and_conservative():
     risk = assess_auth_risk(profile, "Chrome Hearts style 925 ring", 3_000, {})
     assert risk.level == "do_not_touch"
     assert "counterfeit-associated seller wording" in risk.reasons
+
+
+def test_auth_risk_blocks_apparently_excellent_economics():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="risky-ring",
+        url="https://buyee.jp/item/risky-ring",
+        title_original="Chrome Hearts style keeper 925 silver ring",
+        title_normalized="chrome hearts style keeper 925 silver ring",
+        brand="Chrome Hearts",
+        category="jewelry",
+        current_price=3_000,
+        buyout_price=3_000,
+        starting_price=3_000,
+        seller_name=None,
+        condition=None,
+    )
+    comps = [
+        Comp("yahoo_ended", "Chrome Hearts keeper 925 silver ring", price, 1.0, 10)
+        for price in (80_000, 90_000, 100_000)
+    ]
+    evaluation = evaluate_listing(listing, comps)
+    assert evaluation.economics.opportunity_score >= 70
+    assert evaluation.auth_risk.level == "do_not_touch"
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_high_confidence_economics_can_route_buyout():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="good-buyout",
+        url="https://buyee.jp/item/good-buyout",
+        title_original="Number (N)ine 08AW A Closed Feeling mohair knit",
+        title_normalized="number n ine 08aw a closed feeling mohair knit",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=10_000,
+        buyout_price=10_000,
+        starting_price=10_000,
+        seller_name=None,
+        condition=None,
+    )
+    comps = [
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        for price in (90_000, 100_000, 110_000)
+    ]
+    evaluation = evaluate_listing(listing, comps)
+    assert evaluation.comps.confidence == "medium"
+    assert evaluation.economics.opportunity_score >= 70
+    assert _route_evaluation(listing, evaluation) == (
+        "buyouts",
+        "strong sold-comp economics at a fixed buyout",
+    )
 
 
 def test_discovery_expansion_has_provenance_and_japanese_aliases():

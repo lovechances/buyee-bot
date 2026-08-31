@@ -72,15 +72,18 @@ def enrich_title(title: str, hinted_brand: str | None = None) -> FashionProfile:
             if era_match:
                 profile.era = Evidence(era, 0.8, f"taxonomy.brands.{brand_key}.eras", era_match)
                 break
+        collection_matches: list[tuple[bool, int, dict[str, Any], str]] = []
         for collection in record.get("collections", []):
-            collection_match = next(
-                (str(term) for term in collection.get("terms", []) if str(term).lower() in text), None
+            for term in collection.get("terms", []):
+                term_text = str(term)
+                if term_text.lower() in text:
+                    is_season_only = bool(re.fullmatch(r"(?i)(?:aw|fw|ss)\d{2}|\d{2}(?:aw|fw|ss)", term_text))
+                    collection_matches.append((not is_season_only, len(term_text), collection, term_text))
+        if collection_matches:
+            _, _, collection, collection_match = max(collection_matches, key=lambda item: (item[0], item[1]))
+            profile.collection = Evidence(
+                collection["name"], 0.9, f"taxonomy.brands.{brand_key}.collections", collection_match
             )
-            if collection_match:
-                profile.collection = Evidence(
-                    collection["name"], 0.9, f"taxonomy.brands.{brand_key}.collections", collection_match
-                )
-                break
         for term in record.get("strong_signals", []):
             if str(term).lower() in text:
                 profile.positive_signals.append(

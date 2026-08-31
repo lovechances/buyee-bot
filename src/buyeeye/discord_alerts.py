@@ -163,6 +163,19 @@ def send_listing_alert(
                 },
             ]
         )
+        if evaluation.comps.matches:
+            comp_lines = []
+            for comp in evaluation.comps.matches[:3]:
+                label = comp.title[:70]
+                price = f"¥{comp.price_jpy:,}" if comp.price_jpy else "price unknown"
+                comp_lines.append(f"[{label}]({comp.url}) — {price}" if comp.url else f"{label} — {price}")
+            fields.append(
+                {
+                    "name": f"Sold comps ({len(evaluation.comps.matches)} accepted / {evaluation.comps.candidate_count} candidates)",
+                    "value": "\n".join(comp_lines),
+                    "inline": False,
+                }
+            )
     payload: dict[str, Any] = {
         "content": f"BuyEye live listing [{route}]",
         "embeds": [{"title": title, "url": listing.url, "fields": fields, "color": 5814783}],

@@ -37,6 +37,10 @@ intelligence:
   auto_promote: false
   daily_refresh_hours: 24
 
+comps:
+  cache_ttl_hours: 72
+  minimum_heat_for_lookup: 40
+
 risk:
   max_auth_risk: "medium"
 

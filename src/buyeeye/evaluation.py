@@ -25,6 +25,10 @@ class CompResult:
     confidence: str
     matches: list[Comp] = field(default_factory=list)
     reason: str = ""
+    candidate_count: int = 0
+    rejected_count: int = 0
+    queries: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -120,13 +124,18 @@ def _comp_similarity(profile: FashionProfile, comp: Comp) -> float:
         score += 0.15
     if profile.material and comp_profile.material and profile.material.value == comp_profile.material.value:
         score += 0.1
+    target_signals = {signal.value for signal in profile.positive_signals}
+    comp_signals = {signal.value for signal in comp_profile.positive_signals}
+    if target_signals & comp_signals:
+        score += 0.15
     return max(0.0, min(1.0, score * max(0.0, min(1.0, comp.similarity))))
 
 
 def evaluate_comps(profile: FashionProfile, comps: Iterable[Comp]) -> CompResult:
+    candidates = list(comps)
     allowed_sources = {"grailed_sold", "yahoo_ended", "ebay_sold", "local_sold"}
     matched: list[Comp] = []
-    for comp in comps:
+    for comp in candidates:
         if not comp.is_sold or comp.source not in allowed_sources or not comp.price_jpy:
             continue
         similarity = _comp_similarity(profile, comp)
@@ -142,10 +151,30 @@ def evaluate_comps(profile: FashionProfile, comps: Iterable[Comp]) -> CompResult
                 category=comp.category,
                 is_sold=True,
                 provenance=comp.provenance,
+                source_listing_id=comp.source_listing_id,
+                url=comp.url,
+                query=comp.query,
+                sold_at=comp.sold_at,
+                original_price=comp.original_price,
+                original_currency=comp.original_currency,
+                shipping_original=comp.shipping_original,
+                condition=comp.condition,
+                size=comp.size,
             )
         )
     if not matched:
-        return CompResult(None, None, None, "none", [], "no sufficiently similar sold comps")
+        return CompResult(
+            None,
+            None,
+            None,
+            "none",
+            [],
+            "no sufficiently similar sold comps",
+            len(candidates),
+            len(candidates),
+            sorted({comp.query for comp in candidates if comp.query}),
+            sorted({comp.source for comp in candidates}),
+        )
     prices = sorted(int(comp.price_jpy) for comp in matched if comp.price_jpy)
     if len(prices) >= 5:
         trim = max(1, len(prices) // 10)
@@ -160,6 +189,10 @@ def evaluate_comps(profile: FashionProfile, comps: Iterable[Comp]) -> CompResult
         confidence=confidence,
         matches=sorted(matched, key=lambda comp: comp.similarity, reverse=True),
         reason=f"{len(matched)} piece-aware sold comp(s)",
+        candidate_count=len(candidates),
+        rejected_count=len(candidates) - len(matched),
+        queries=sorted({comp.query for comp in candidates if comp.query}),
+        sources=sorted({comp.source for comp in candidates}),
     )
 
 

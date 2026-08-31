@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 
@@ -43,6 +44,15 @@ class Comp:
     category: str | None = None
     is_sold: bool = True
     provenance: str = "observed_market"
+    source_listing_id: str | None = None
+    url: str | None = None
+    query: str | None = None
+    sold_at: datetime | None = None
+    original_price: float | None = None
+    original_currency: str | None = None
+    shipping_original: float | None = None
+    condition: str | None = None
+    size: str | None = None
 
 
 @dataclass
