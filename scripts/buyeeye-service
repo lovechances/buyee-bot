@@ -1,0 +1,35 @@
+#!/bin/zsh
+set -eu
+
+ROOT_DIR="/Users/chance/Desktop/python/buyee"
+LABEL="com.buyeeye.scout"
+DOMAIN="gui/$(id -u)"
+PLIST="$ROOT_DIR/deploy/$LABEL.plist"
+LOG="$ROOT_DIR/data/logs/buyeeye.log"
+
+case "${1:-status}" in
+  start)
+    mkdir -p "$ROOT_DIR/data/logs"
+    launchctl bootstrap "$DOMAIN" "$PLIST"
+    ;;
+  stop)
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    ;;
+  restart)
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    launchctl bootstrap "$DOMAIN" "$PLIST"
+    ;;
+  status)
+    launchctl print "$DOMAIN/$LABEL"
+    "$ROOT_DIR/.venv/bin/buyeeye" health
+    ;;
+  logs)
+    mkdir -p "$ROOT_DIR/data/logs"
+    touch "$LOG"
+    tail -n 100 -f "$LOG"
+    ;;
+  *)
+    print "usage: $0 {start|stop|restart|status|logs}" >&2
+    exit 2
+    ;;
+esac

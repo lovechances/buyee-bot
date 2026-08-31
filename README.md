@@ -2,6 +2,8 @@
 
 BuyEye is a lean archive-fashion sourcing intelligence daemon focused on Buyee and Yahoo! JAPAN Auctions. It is built to find interesting menswear and archive pieces, estimate value conservatively, suppress generic brand-only noise, and send only high-quality alerts to Discord.
 
+Open-auction bids are treated as provisional until the configurable maturity window (12 hours by default). Fixed-price buyouts remain actionable immediately. Exceptional pieces discovered earlier may surface as `ARCHIVE WATCH`, but their current bid is excluded from landed-cost, margin, and resale-multiple claims until the auction matures. The separate 60-minute threshold controls ending-soon routing.
+
 ## Quick start
 
 1. Install Python 3.12+
@@ -69,12 +71,23 @@ python -m buyeeye status
 
 ## Running 24/7
 
-Use a systemd unit or the built-in scheduler loop:
+On this Mac, use the included launchd job. It runs the canonical virtual environment, restarts
+after failure, preserves the authenticated browser profile, and uses BuyEye's process lock to
+prevent duplicate scanners. Runtime secrets are loaded from the repository-local `.env` without
+being printed.
+
 ```bash
-python -m buyeeye run
+scripts/buyeeye-service start
+scripts/buyeeye-service stop
+scripts/buyeeye-service restart
+scripts/buyeeye-service status
+scripts/buyeeye-service logs
 ```
 
-Example systemd service is included in `systemd/buyeeye.service`.
+Logs rotate at 5 MB with five retained files under `data/logs/`. If health reports that manual login
+is required, stop the service, run `.venv/bin/buyeeye setup-session`, then start it again. The
+optional `DISCORD_WEBHOOK_STATUS` receives only startup, authentication-expiration,
+sustained-outage, recovery, and fatal-shutdown notices.
 
 ## Intelligence review
 

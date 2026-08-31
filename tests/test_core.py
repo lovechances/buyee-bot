@@ -11,7 +11,12 @@ from buyeeye.browser_session import (
     load_session_cookies,
 )
 from buyeeye.comp_cache import CompRepository, CompService
-from buyeeye.comp_sources import SoldCompSource, YahooEndedSource, build_comp_queries
+from buyeeye.comp_sources import (
+    ObservedUSSoldSource,
+    SoldCompSource,
+    YahooEndedSource,
+    build_comp_queries,
+)
 from buyeeye.db import Listing, get_session, save_listings
 from buyeeye.detail_enrichment import (
     BuyeeDetailService,
@@ -20,7 +25,13 @@ from buyeeye.detail_enrichment import (
     apply_detail,
     parse_detail_payload,
 )
-from buyeeye.discovery import dedupe_listings, generate_search_queries
+from buyeeye.discord_alerts import send_listing_alert
+from buyeeye.discovery import (
+    QuerySpec,
+    build_query_universe,
+    dedupe_listings,
+    generate_search_queries,
+)
 from buyeeye.evaluation import (
     assess_auth_risk,
     evaluate_comps,
@@ -41,7 +52,9 @@ from buyeeye.pipeline import (
     _route_evaluation,
     scan_once,
 )
+from buyeeye.runtime_state import choose_query, mark_listing_seen, record_query_result
 from buyeeye.scoring import score_listing
+from buyeeye.settings import load_yaml
 from buyeeye.taste import classify_brand, extract_taste_signals
 from buyeeye.valuation import estimate_landed_cost_jpy, estimate_max_bid_jpy
 
@@ -810,8 +823,8 @@ def test_stage_b_is_candidate_only_and_improves_item_identity(monkeypatch, tmp_p
     assert result.stage_b_candidates == 1
     assert result.stage_b_enriched == 1
     assert result.comp_queried == 1
-    assert len(comp_profiles) == 1
-    assert comp_profiles[0].item_type.value == "knitwear"
+    assert len(comp_profiles) == 2
+    assert all(profile.item_type.value == "knitwear" for profile in comp_profiles)
     assert candidate.title_original.endswith("Mohair Knit Size 3")
 
 
@@ -880,3 +893,453 @@ def test_stage_b_failure_caps_comp_confidence():
 
     assert evaluation.comps.confidence == "low"
     assert "Stage B identity unavailable" in evaluation.comps.reason
+
+
+def test_time_migration_archive_opportunity_routes_with_seller_warning():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="time-migration-live",
+        url="https://buyee.jp/item/time-migration-live",
+        title_original="希少初期NUMBER (N)INE 2001SSタイム期 散弾銃tシャツ②2ナンバーナイン",
+        title_normalized="number nine 2001ss time migration shotgun t shirt",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=3111,
+        buyout_price=None,
+        starting_price=1,
+        seller_name="st",
+        condition="No obvious damages/dirt",
+        time_remaining="6 day(s)",
+        raw={
+            "seller_feedback_percent": 84.4,
+            "seller_feedback_count": 526,
+            "detail_photo_count": 3,
+        },
+    )
+    comps = [
+        Comp(
+            "grailed_sold",
+            listing.title_original,
+            price,
+            1.0,
+            30,
+            original_price=usd,
+            original_currency="USD",
+        )
+        for price, usd in ((10_370, 70), (17_778, 120), (22_815, 154))
+    ]
+    japan_comps = [
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 30)
+        for price in (7777, 20_000, 25_000, 30_000, 35_000)
+    ]
+
+    evaluation = evaluate_listing(listing, comps, japan_comps=japan_comps)
+
+    assert evaluation.auth_risk.level == "medium"
+    assert any("84.4% across 526 ratings" in reason for reason in evaluation.auth_risk.reasons)
+    assert evaluation.economics.resale_median_jpy == 17_778
+    assert evaluation.economics.multiple is None
+    assert evaluation.japan_comps.median_jpy == 25_000
+    assert evaluation.directional.thesis is None
+    assert evaluation.auction_maturity.level == "low"
+    assert _route_evaluation(listing, evaluation) == (
+        "grails",
+        "early archive discovery; current bid is provisional",
+    )
+
+
+def test_cheap_desirable_margiela_can_route_without_us_fmv():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="margiela-asymmetric",
+        url="https://buyee.jp/item/margiela-asymmetric",
+        title_original="Maison Martin Margiela 本人期 AIDS archive graphic t-shirt",
+        title_normalized="maison martin margiela aids archive graphic t shirt",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=1500,
+        buyout_price=None,
+        starting_price=1500,
+        seller_name=None,
+        condition="Used",
+        time_remaining="8 hour(s)",
+        raw={"detail_photo_count": 4, "seller_feedback_count": 300},
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.comps.confidence == "none"
+    assert evaluation.economics.resale_median_jpy is None
+    assert evaluation.directional.us_valuation_state == "us_resale_unverified"
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "grails"
+
+
+def test_generic_margiela_at_normal_price_without_comps_is_suppressed():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="margiela-generic",
+        url="https://buyee.jp/item/margiela-generic",
+        title_original="Maison Margiela basic logo t-shirt",
+        title_normalized="maison margiela basic logo t shirt",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=22_000,
+        buyout_price=None,
+        starting_price=22_000,
+        seller_name=None,
+        condition="Used",
+        time_remaining="7 day(s)",
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_archive_grail_can_route_without_resale_proof():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="archive-grail-no-comps",
+        url="https://buyee.jp/item/archive-grail-no-comps",
+        title_original="Number (N)ine 08AW A Closed Feeling destroy mohair patchwork jacket",
+        title_normalized="number nine a closed feeling destroy mohair patchwork jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=40_000,
+        buyout_price=None,
+        starting_price=40_000,
+        seller_name=None,
+        condition="Used",
+        time_remaining="5 day(s)",
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.economics.resale_median_jpy is None
+    assert evaluation.desirability.score >= 82
+    assert _route_evaluation(listing, evaluation) == (
+        "grails",
+        "early archive discovery; current bid is provisional",
+    )
+
+
+def test_auth_sensitive_silver_with_implausible_price_routes_to_review():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="chrome-review",
+        url="https://buyee.jp/item/chrome-review",
+        title_original="Chrome Hearts keeper 925 silver ring",
+        title_normalized="chrome hearts keeper 925 silver ring",
+        brand="Chrome Hearts",
+        category="jewelry",
+        current_price=3000,
+        buyout_price=None,
+        starting_price=3000,
+        seller_name=None,
+        condition=None,
+        raw={"detail_photo_count": 2, "seller_feedback_count": 100},
+    )
+    comps = [
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        for price in (80_000, 90_000, 100_000)
+    ]
+
+    evaluation = evaluate_listing(listing, comps)
+
+    assert evaluation.auth_risk.level == "high"
+    assert _route_evaluation(listing, evaluation)[0] == "review"
+
+
+def test_controlled_query_universe_has_provenance_without_cartesian_explosion():
+    root = Path(__file__).resolve().parents[1]
+    searches = load_yaml(root / "config" / "searches.yaml")
+    taxonomy = load_yaml(root / "config" / "fashion_taxonomy.yaml")
+
+    universe = build_query_universe(searches, taxonomy)
+    query_text = {spec.query.casefold() for spec in universe}
+
+    assert len(universe) < 300
+    assert len(query_text) == len(universe)
+    assert all(spec.provenance and spec.family and spec.cooldown_minutes > 0 for spec in universe)
+    for expected in (
+        "number (n)ine",
+        "ディオールオム",
+        "サンローラン",
+        "ヴェトモン",
+        "クロムハーツ",
+        "リックオウエンス",
+        "マルタンマルジェラ",
+        "イフシックスワズナイン",
+        "ロエン",
+        "バレンシアガ",
+        "プラダ",
+        "キングベイビー",
+        "ガボラトリー",
+        "ヴィンテージ バンドt",
+    ):
+        assert expected.casefold() in query_text
+
+
+def test_query_scheduler_cooldown_and_persistent_global_dedupe(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    high = QuerySpec("Number (N)ine", "test", "number_nine", 100, 60)
+    explore = QuerySpec("ナンバーナイン", "test", "number_nine", 80, 60)
+
+    assert choose_query([high, explore], db_path) == high
+    record_query_result(high, object(), db_path)
+    assert choose_query([high, explore], db_path) == explore
+
+    first = mark_listing_seen("buyee", "abc", "sig-1", high.query, db_path)
+    second = mark_listing_seen("buyee", "abc", "sig-1", explore.query, db_path)
+    changed = mark_listing_seen("buyee", "abc", "sig-2", explore.query, db_path)
+    assert first.is_duplicate is False
+    assert second.is_duplicate is True and second.unchanged is True
+    assert changed.is_duplicate is False and changed.unchanged is False
+
+
+def test_observed_us_sold_source_excludes_asks_and_non_us_records(tmp_path):
+    path = tmp_path / "us_sold.yaml"
+    path.write_text(
+        """
+sold_comps:
+  - {listing_id: 'sold-1', market: US, status: sold, title: 'Number (N)ine Time Migration T-Shirt', sold_price_usd: 120, query_terms: ['number (n)ine', 'time migration'], url: 'https://www.grailed.com/listings/sold-1'}
+  - {listing_id: 'ask-1', market: US, status: active, title: 'Active reseller ask', sold_price_usd: 999, query_terms: ['number (n)ine'], url: 'https://example.com/ask'}
+  - {listing_id: 'jp-1', market: JP, status: sold, title: 'Japanese sale', sold_price_usd: 20, query_terms: ['number (n)ine'], url: 'https://example.com/jp'}
+""",
+        encoding="utf-8",
+    )
+
+    records = asyncio.run(
+        ObservedUSSoldSource(path, jpy_to_usd=0.01).fetch(
+            "Number (N)ine Time Migration t shirt"
+        )
+    )
+
+    assert len(records) == 1
+    assert records[0].source == "grailed_sold"
+    assert records[0].original_currency == "USD"
+    assert records[0].original_price == 120
+    assert records[0].price_jpy == 12_000
+
+
+def test_discord_alert_is_compact_and_thesis_led(monkeypatch):
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="compact-card",
+        url="https://buyee.jp/item/compact-card",
+        title_original="Number (N)ine 2001SS Time Migration Bullet T-Shirt",
+        title_normalized="number nine time migration bullet t shirt",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=3111,
+        buyout_price=None,
+        starting_price=1,
+        seller_name="st",
+        condition="Used",
+        time_remaining="8 hour(s)",
+        raw={
+            "seller_feedback_percent": 84.4,
+            "seller_feedback_count": 526,
+            "detail_photo_count": 3,
+        },
+    )
+    comps = [
+        Comp(
+            "grailed_sold",
+            listing.title_original,
+            price,
+            1.0,
+            30,
+            source_listing_id=str(index),
+            url=f"https://www.grailed.com/listings/{index}",
+            original_price=usd,
+            original_currency="USD",
+        )
+        for index, (price, usd) in enumerate(((10_370, 70), (17_778, 120), (22_815, 154)))
+    ]
+    evaluation = evaluate_listing(listing, comps)
+    captured = {}
+
+    monkeypatch.setattr(
+        "buyeeye.discord_alerts._webhooks", lambda: {"grails": "https://discord.invalid"}
+    )
+
+    def capture(_url, payload):
+        captured.update(payload)
+        return True, 204, 0.01
+
+    monkeypatch.setattr("buyeeye.discord_alerts._send_webhook", capture)
+
+    sent, _, _ = send_listing_alert(
+        listing,
+        "grails",
+        "fashion-relevant piece with unusually low absolute downside",
+        evaluation.desirability.score,
+        evaluation,
+    )
+    embed = captured["embeds"][0]
+
+    assert sent is True
+    assert "ASYMMETRIC VALUE" in embed["description"]
+    assert len(embed["fields"]) <= 5
+    assert sum("seller 84.4%" in field["value"] for field in embed["fields"]) == 1
+    assert any(field["name"] == "U.S. sold / upside" for field in embed["fields"])
+
+
+def _margiela_auction(
+    *,
+    listing_id: str,
+    time_remaining: str,
+    current_price: int = 1000,
+    buyout_price: int | None = None,
+) -> LiveListing:
+    return LiveListing(
+        source="buyee",
+        source_listing_id=listing_id,
+        url=f"https://buyee.jp/item/{listing_id}",
+        title_original="Maison Martin Margiela 本人期 AIDS archive graphic t-shirt",
+        title_normalized="maison martin margiela aids archive graphic t shirt",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=current_price,
+        buyout_price=buyout_price,
+        starting_price=1000,
+        seller_name="archive-seller",
+        condition="Used",
+        time_remaining=time_remaining,
+        bid_count=1,
+        watch_count=2,
+        raw={"detail_photo_count": 5, "seller_feedback_count": 300},
+    )
+
+
+def test_early_open_auction_cannot_route_on_low_provisional_bid():
+    listing = _margiela_auction(listing_id="early-open", time_remaining="6 day(s)")
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auction_maturity.level == "low"
+    assert evaluation.auction_maturity.price_actionable is False
+    assert evaluation.economics.landed_cost_jpy is None
+    assert evaluation.economics.multiple is None
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_actionable_buyout_is_not_suppressed_by_long_time_remaining():
+    listing = _margiela_auction(
+        listing_id="early-buyout", time_remaining="6 day(s)", buyout_price=4000
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auction_maturity.auction_type == "fixed_price"
+    assert evaluation.auction_maturity.price_actionable is True
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+
+
+def test_open_auction_becomes_economically_actionable_inside_maturity_window():
+    listing = _margiela_auction(listing_id="mature-open", time_remaining="8 hour(s)")
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auction_maturity.level == "medium"
+    assert evaluation.auction_maturity.price_actionable is True
+    assert evaluation.economics.landed_cost_jpy is not None
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "grails"
+
+
+def test_ending_soon_remains_distinct_from_auction_maturity():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="ending-time-migration",
+        url="https://buyee.jp/item/ending-time-migration",
+        title_original="希少初期 NUMBER (N)INE 2001SS Time Migration shotgun t-shirt archive",
+        title_normalized="number nine 2001ss time migration shotgun t shirt",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=3111,
+        buyout_price=None,
+        starting_price=1,
+        seller_name="st",
+        condition="Used",
+        time_remaining="45 minute(s)",
+        bid_count=5,
+        watch_count=12,
+        raw={"detail_photo_count": 3, "seller_feedback_count": 526},
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auction_maturity.level == "high"
+    assert evaluation.auction_maturity.remaining_minutes == 45
+    assert evaluation.desirability.score >= 70
+    assert _route_evaluation(listing, evaluation)[0] == "ending"
+
+
+def test_early_archive_watch_omits_provisional_flip_economics(monkeypatch):
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="early-archive-watch",
+        url="https://buyee.jp/item/early-archive-watch",
+        title_original="Number (N)ine 08AW A Closed Feeling destroy mohair patchwork jacket",
+        title_normalized="number nine a closed feeling destroy mohair patchwork jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=1200,
+        buyout_price=None,
+        starting_price=1000,
+        seller_name="archive-seller",
+        condition="Used",
+        time_remaining="5 day(s)",
+        bid_count=1,
+        watch_count=8,
+    )
+    evaluation = evaluate_listing(listing)
+    route = _route_evaluation(listing, evaluation)
+    captured = {}
+    monkeypatch.setattr(
+        "buyeeye.discord_alerts._webhooks", lambda: {"grails": "https://discord.invalid"}
+    )
+
+    def capture(_url, payload):
+        captured.update(payload)
+        return True, 204, 0.01
+
+    monkeypatch.setattr("buyeeye.discord_alerts._send_webhook", capture)
+    send_listing_alert(listing, route[0], route[1], evaluation.desirability.score, evaluation)
+    embed = captured["embeds"][0]
+    rendered = " ".join(field["value"] for field in embed["fields"])
+
+    assert route == ("grails", "early archive discovery; current bid is provisional")
+    assert evaluation.economics.multiple is None
+    assert "ARCHIVE WATCH" in embed["description"]
+    assert "EARLY AUCTION" in rendered
+    assert "×" not in rendered
+
+
+def test_generic_cheap_early_auction_is_suppressed():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="generic-cheap-early",
+        url="https://buyee.jp/item/generic-cheap-early",
+        title_original="Maison Margiela basic logo t-shirt",
+        title_normalized="maison margiela basic logo t shirt",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=500,
+        buyout_price=None,
+        starting_price=500,
+        seller_name=None,
+        condition="Used",
+        time_remaining="7 day(s)",
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auction_maturity.level == "low"
+    assert _route_evaluation(listing, evaluation) is None

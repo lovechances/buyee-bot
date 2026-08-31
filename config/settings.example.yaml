@@ -2,7 +2,11 @@ scanner:
   discovery_interval_seconds: 180
   ending_interval_seconds: 45
   jitter_seconds: 30
-  concurrency: 2
+  concurrency: 1
+  query_gap_seconds: 20
+  search_pages_per_query: 2
+  listing_dedupe_hours: 6
+  max_source_attempts: 3
 
 marketplaces:
   buyee:
@@ -27,6 +31,8 @@ pricing:
 
 alert:
   ending_threshold_minutes: 60
+  auction_alert_max_remaining_hours: 12
+  archive_watch_min_heat: 70
   buyout_min_score: 78
   ending_min_score: 70
   grail_min_score: 82
@@ -40,10 +46,16 @@ intelligence:
 comps:
   cache_ttl_hours: 72
   minimum_heat_for_lookup: 40
+  minimum_candidates_before_broadening: 5
 
 detail:
   minimum_heat: 40
   cache_ttl_hours: 24
+
+directional_opportunity:
+  minimum_heat: 55
+  exceptional_landed_usd: 30
+  max_landed_usd: 65
 
 risk:
   max_auth_risk: "medium"

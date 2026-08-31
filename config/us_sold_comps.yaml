@@ -1,0 +1,34 @@
+version: 1
+provenance: manual_verified_public_us_sold
+
+# Only completed U.S.-market sales belong here. Active/reseller asks are forbidden.
+sold_comps:
+  - listing_id: "4466597"
+    market: "US"
+    status: "sold"
+    platform: "Grailed"
+    title: 'Number (N)ine SS01 "Time Migration" T-Shirt'
+    sold_price_usd: 120
+    size: "3"
+    query_terms: ["number (n)ine", "time migration", "t shirt"]
+    url: "https://www.grailed.com/listings/4466597-number-n-ine-number-n-ine-ss01-time-migration-t-shirt"
+  - listing_id: "37239749"
+    market: "US"
+    status: "sold"
+    platform: "Grailed"
+    title: 'Vintage Number (N)ine SS01 "Time Migration" Montreal T-Shirt'
+    sold_price_usd: 70
+    size: "1"
+    condition: "Worn"
+    query_terms: ["number (n)ine", "time migration", "t shirt"]
+    url: "https://www.grailed.com/listings/37239749-number-n-ine-vintage-number-n-ine-ss01-time-migration-montreal-t-s"
+  - listing_id: "79545908"
+    market: "US"
+    status: "sold"
+    platform: "Grailed"
+    title: 'Number (N)ine SS01 "Time Migration" Montreal Bullet Tee'
+    sold_price_usd: 154
+    size: "4"
+    condition: "Gently Used"
+    query_terms: ["number (n)ine", "time migration", "t shirt"]
+    url: "https://www.grailed.com/listings/79545908-number-n-ine-ss01-time-migration-montreal-bullet-tee"

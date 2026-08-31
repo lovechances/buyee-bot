@@ -59,7 +59,7 @@ brands:
     designer: "Martin Margiela"
     eras:
       martin_era: ["本人期", "ここのえ", "初期", "martin era"]
-    strong_signals: ["artisanal", "アーティザナル", "0 10", "010", "replica line", "再構築", "足袋", "tabi"]
+    strong_signals: ["artisanal", "アーティザナル", "0 10", "010", "replica line", "再構築", "足袋", "tabi", "AIDS", "archive graphic"]
     generic_signals: ["mm6", "logo tee"]
   vetements:
     canonical: "Vetements"
@@ -99,14 +99,25 @@ brands:
     aliases: ["king baby", "キングベイビー"]
     strong_signals: ["skull", "crown", "cross", "925", "sterling"]
     auth_sensitive: true
+  needles:
+    canonical: "Needles"
+    aliases: ["needles", "ニードルズ", "rebuild by needles", "リビルドバイニードルズ"]
+    designer: "Keizo Shimizu"
+    strong_signals: ["rebuild", "再構築", "7 cut", "track", "butterfly", "vintage"]
+    generic_signals: ["logo tee"]
+  vintage_band_tees:
+    canonical: "Vintage Band Tee"
+    aliases: ["vintage band t-shirt", "ヴィンテージ バンドt", "90s バンドt", "バンドtシャツ"]
+    strong_signals: ["single stitch", "シングルステッチ", "nirvana", "smashing pumpkins", "marilyn manson", "sonic youth", "nine inch nails"]
+    generic_signals: ["reprint", "復刻", "bootleg style"]
 
 item_types:
   jewelry: ["ring", "necklace", "bracelet", "pendant", "chain", "リング", "ネックレス", "ブレスレット", "ペンダント", "チェーン"]
   jacket: ["jacket", "blazer", "ライダース", "ジャケット", "ブルゾン"]
   coat: ["coat", "parka", "コート", "モッズコート"]
   knitwear: ["knit", "mohair", "cardigan", "ニット", "モヘア", "カーディガン"]
-  shirt: ["shirt", "シャツ"]
   t_shirt: ["t-shirt", "t shirt", "tee", "tシャツ", "カットソー"]
+  shirt: ["shirt", "シャツ"]
   denim: ["denim", "jeans", "デニム", "ジーンズ"]
   trousers: ["pants", "trousers", "パンツ", "スラックス"]
   footwear: ["boots", "sneaker", "ブーツ", "スニーカー", "シューズ"]

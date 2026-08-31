@@ -136,16 +136,21 @@ class CompService:
     def __init__(self, sources: list[SoldCompSource], repository: CompRepository):
         self.sources = sources
         self.repository = repository
+        self.cache_hits = 0
+        self.cache_misses = 0
 
-    async def retrieve(self, profile: FashionProfile, minimum_candidates: int = 8) -> list[Comp]:
+    async def retrieve(self, profile: FashionProfile, minimum_candidates: int = 5) -> list[Comp]:
         collected: list[Comp] = []
         seen: set[tuple[str, str | None]] = set()
         for query in build_comp_queries(profile):
             for source in self.sources:
                 records = self.repository.get_fresh(source.name, query)
                 if records is None:
+                    self.cache_misses += 1
                     records = await source.fetch(query)
                     self.repository.put(source.name, query, records)
+                else:
+                    self.cache_hits += 1
                 for comp in records:
                     identity = (comp.source, comp.source_listing_id)
                     if identity in seen:

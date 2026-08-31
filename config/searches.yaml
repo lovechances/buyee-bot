@@ -1,5 +1,7 @@
 search_families:
   - brand: "Number (N)ine"
+    priority: 95
+    cooldown_minutes: 120
     aliases:
       - "Number (N)ine"
       - "Number Nine"
@@ -13,6 +15,9 @@ search_families:
       - "High Streets"
       - "09AW"
       - "08AW"
+      - "タイム期"
+      - "カート期"
+      - "散弾銃"
   - brand: "Needles"
     aliases:
       - "Needles"
@@ -25,6 +30,7 @@ search_families:
       - "distressed"
       - "music"
   - brand: "Chrome Hearts"
+    priority: 82
     aliases:
       - "Chrome Hearts"
       - "クロムハーツ"
@@ -35,6 +41,7 @@ search_families:
       - "leather"
       - "buckles"
   - brand: "Dior Homme"
+    priority: 90
     aliases:
       - "Dior Homme"
       - "Dior Hedi"
@@ -44,6 +51,7 @@ search_families:
       - "Luster"
       - "VOTC"
   - brand: "Rick Owens"
+    priority: 82
     aliases:
       - "Rick Owens"
       - "Rick Owens Slab"
@@ -53,6 +61,7 @@ search_families:
       - "leather"
       - "distressed"
   - brand: "Saint Laurent"
+    priority: 82
     aliases:
       - "Saint Laurent Paris"
       - "サンローランパリ"
@@ -62,6 +71,7 @@ search_families:
       - "Wyatt"
       - "Babycat"
   - brand: "Maison Martin Margiela"
+    priority: 88
     aliases:
       - "Maison Martin Margiela"
       - "マルタンマルジェラ"
@@ -71,6 +81,7 @@ search_families:
       - "ここのえ"
       - "再構築"
   - brand: "Vetements"
+    priority: 80
     aliases:
       - "Vetements"
       - "ヴェトモン"
@@ -79,6 +90,7 @@ search_families:
       - "Antwerpen"
       - "May the bridges"
   - brand: "IF SIX WAS NINE"
+    priority: 82
     aliases:
       - "IF SIX WAS NINE"
       - "ifsixwasnine"
@@ -88,6 +100,7 @@ search_families:
       - "L.G.B."
       - "レザー"
   - brand: "Gaboratory"
+    priority: 72
     aliases:
       - "Gaboratory"
       - "ガボラトリー"
@@ -96,3 +109,24 @@ search_families:
       - "925"
       - "ブルドッグ"
       - "スカル"
+  - brand: "Roen"
+    priority: 70
+    aliases: ["Roen", "ロエン"]
+    terms: ["スカル", "Hiromu Takahara", "レザー"]
+  - brand: "Balenciaga"
+    priority: 74
+    aliases: ["Balenciaga", "バレンシアガ"]
+    terms: ["Demna", "runway", "distressed", "strike"]
+  - brand: "Prada"
+    priority: 76
+    aliases: ["Prada", "プラダ", "Prada Sport", "Linea Rossa"]
+    terms: ["archive", "nylon", "1999", "technical"]
+  - brand: "King Baby"
+    priority: 68
+    aliases: ["King Baby", "キングベイビー"]
+    terms: ["925", "skull", "cross", "リング"]
+  - brand: "Vintage band tees"
+    priority: 65
+    cooldown_minutes: 240
+    aliases: ["ヴィンテージ バンドT", "vintage band t-shirt", "90s バンドT"]
+    terms: ["Nirvana", "Smashing Pumpkins", "Marilyn Manson", "single stitch"]

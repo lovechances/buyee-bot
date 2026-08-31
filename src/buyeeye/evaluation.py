@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -51,12 +52,131 @@ class AuthRiskResult:
 
 
 @dataclass
+class DirectionalOpportunityResult:
+    score: int
+    confidence: str
+    thesis: str | None
+    landed_usd: float | None
+    us_valuation_state: str
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AuctionMaturityResult:
+    auction_type: str
+    level: str
+    remaining_minutes: int | None
+    price_actionable: bool
+    current_bid_provisional: bool
+    reason: str
+
+
+@dataclass
 class ListingEvaluation:
     profile: FashionProfile
     desirability: DesirabilityResult
     comps: CompResult
     economics: EconomicsResult
     auth_risk: AuthRiskResult
+    auction_maturity: AuctionMaturityResult
+    directional: DirectionalOpportunityResult
+    japan_comps: CompResult | None = None
+
+
+def assess_auction_maturity(
+    listing: Any, settings: dict[str, Any] | None = None
+) -> AuctionMaturityResult:
+    if getattr(listing, "buyout_price", None) is not None:
+        return AuctionMaturityResult(
+            "fixed_price", "high", None, True, False, "actionable buyout price"
+        )
+    text = str(getattr(listing, "time_remaining", None) or "")
+    matches = re.findall(r"(\d+)\s*(day|hour|minute)s?(?:\(s\))?", text.casefold())
+    remaining = (
+        sum(
+            int(amount) * {"day": 1440, "hour": 60, "minute": 1}[unit]
+            for amount, unit in matches
+        )
+        if matches
+        else None
+    )
+    max_hours = int(
+        (settings or {}).get("alert", {}).get("auction_alert_max_remaining_hours", 12)
+    )
+    if remaining is None or remaining > max_hours * 60:
+        level = "low"
+    elif remaining <= 6 * 60:
+        level = "high"
+    else:
+        level = "medium"
+    bids = getattr(listing, "bid_count", None) or 0
+    watches = getattr(listing, "watch_count", None) or 0
+    activity = f"{bids} bid(s), {watches} watcher(s)"
+    reason = (
+        f"auction outside {max_hours}h actionability window; {activity}"
+        if level == "low"
+        else f"auction within actionability window; {activity}"
+    )
+    return AuctionMaturityResult(
+        "open_auction", level, remaining, level in {"medium", "high"}, True, reason
+    )
+
+
+def assess_directional_opportunity(
+    profile: FashionProfile,
+    desirability: DesirabilityResult,
+    economics: EconomicsResult,
+    auth: AuthRiskResult,
+    settings: dict[str, Any] | None = None,
+) -> DirectionalOpportunityResult:
+    config = (settings or {}).get("directional_opportunity", {})
+    fx = float((settings or {}).get("pricing", {}).get("fx_jpy_to_usd", 0.00675))
+    landed_usd = round(economics.landed_cost_jpy * fx, 2) if economics.landed_cost_jpy else None
+    max_landed = float(config.get("max_landed_usd", 65))
+    exceptional_landed = float(config.get("exceptional_landed_usd", 30))
+    min_heat = int(config.get("minimum_heat", 55))
+    score = desirability.score
+    reasons: list[str] = []
+    if profile.brand and profile.item_type:
+        score += 8
+        reasons.append("confident brand and item identity")
+    if profile.collection or profile.era:
+        score += 8
+        reasons.append("collection or era evidence")
+    if landed_usd is not None and landed_usd <= exceptional_landed:
+        score += 22
+        reasons.append(f"exceptionally low absolute downside (~${landed_usd:.0f} landed)")
+    elif landed_usd is not None and landed_usd <= max_landed:
+        score += 14
+        reasons.append(f"low absolute downside (~${landed_usd:.0f} landed)")
+    if economics.comp_confidence in {"medium", "high"}:
+        score += 10
+        reasons.append("credible U.S. sold evidence")
+    if auth.level == "medium":
+        score -= 5
+    elif auth.level == "high":
+        score -= 20
+    elif auth.level == "do_not_touch":
+        score = 0
+    score = max(0, min(100, score))
+    qualifies = (
+        desirability.score >= min_heat
+        and landed_usd is not None
+        and landed_usd <= max_landed
+        and profile.brand is not None
+        and profile.item_type is not None
+        and auth.level in {"low", "medium"}
+    )
+    thesis = "asymmetric_value" if qualifies else None
+    confidence = "high" if score >= 85 else "medium" if score >= 65 else "low"
+    valuation_state = (
+        "verified_us_sold"
+        if economics.comp_confidence in {"medium", "high"}
+        else "us_resale_unverified"
+    )
+    return DirectionalOpportunityResult(
+        score, confidence, thesis, landed_usd, valuation_state, reasons
+    )
 
 
 def score_desirability(profile: FashionProfile, title: str, condition: str | None = None) -> DesirabilityResult:
@@ -230,7 +350,7 @@ def assess_auth_risk(profile: FashionProfile, title: str, price_jpy: int | None,
     points = 0
     counterfeit = [signal for signal in profile.negative_signals if signal.value.startswith("counterfeit:")]
     if counterfeit:
-        points += 80
+        points += 100
         reasons.append("counterfeit-associated seller wording")
     if profile.auth_sensitive:
         points += 15
@@ -244,21 +364,35 @@ def assess_auth_risk(profile: FashionProfile, title: str, price_jpy: int | None,
         if not raw.get("detail_photo_count"):
             points += 10
             reasons.append("detail-photo coverage unavailable")
-    if raw.get("seller_feedback_percent", 100) < 95:
-        points += 25
-        reasons.append("seller feedback below configured baseline")
-    if points >= 80:
+    feedback_percent = raw.get("seller_feedback_percent")
+    feedback_count = raw.get("seller_feedback_count") or 0
+    if feedback_percent is not None and feedback_percent < 95:
+        if feedback_percent < 80 or feedback_count < 10:
+            points += 25
+        elif feedback_percent < 90:
+            points += 15
+        else:
+            points += 8
+        reasons.append(
+            f"seller feedback {feedback_percent:g}% across {feedback_count:,} ratings"
+        )
+    if counterfeit or raw.get("provenance_inconsistency"):
         level = "do_not_touch"
-    elif points >= 50:
+    elif points >= 45:
         level = "high"
-    elif points >= 25:
+    elif points >= 15:
         level = "medium"
     else:
         level = "low"
     return AuthRiskResult(level, reasons or ["no explicit risk signal in available fields"])
 
 
-def evaluate_listing(listing: Any, comps: Iterable[Comp] = (), settings: dict[str, Any] | None = None) -> ListingEvaluation:
+def evaluate_listing(
+    listing: Any,
+    comps: Iterable[Comp] = (),
+    settings: dict[str, Any] | None = None,
+    japan_comps: Iterable[Comp] = (),
+) -> ListingEvaluation:
     stage_b_record = (getattr(listing, "raw", None) or {}).get("stage_b", {})
     stage_b = stage_b_record.get("observed", {})
     evidence_text = " ".join(
@@ -280,6 +414,34 @@ def evaluate_listing(listing: Any, comps: Iterable[Comp] = (), settings: dict[st
     if stage_b_record.get("status") == "failed" and comp_result.confidence in {"medium", "high"}:
         comp_result.confidence = "low"
         comp_result.reason = f"{comp_result.reason}; Stage B identity unavailable"
-    economics = evaluate_economics(getattr(listing, "buyout_price", None) or listing.current_price, comp_result, settings)
+    maturity = assess_auction_maturity(listing, settings)
+    economics = evaluate_economics(
+        getattr(listing, "buyout_price", None) or listing.current_price,
+        comp_result,
+        settings,
+    )
+    if not maturity.price_actionable:
+        economics = EconomicsResult(
+            None,
+            comp_result.median_jpy,
+            None,
+            None,
+            None,
+            None,
+            0,
+            comp_result.confidence,
+            ["current bid is provisional; auction is outside the maturity window"],
+        )
     auth = assess_auth_risk(profile, listing.title_original, listing.current_price, getattr(listing, "raw", None))
-    return ListingEvaluation(profile, desirability, comp_result, economics, auth)
+    directional = assess_directional_opportunity(profile, desirability, economics, auth, settings)
+    japan_result = evaluate_comps(profile, japan_comps)
+    return ListingEvaluation(
+        profile,
+        desirability,
+        comp_result,
+        economics,
+        auth,
+        maturity,
+        directional,
+        japan_result,
+    )

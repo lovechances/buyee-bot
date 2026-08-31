@@ -22,6 +22,14 @@ from .db import DB_PATH, save_listings
 from .normalize import normalize_brand, normalize_text
 
 
+class AuthExpiredError(RuntimeError):
+    pass
+
+
+class ParserAnomalyError(RuntimeError):
+    pass
+
+
 @dataclass
 class LiveListing:
     source: str
@@ -75,6 +83,10 @@ def load_live_queries(config_path: str | Path = "config/searches.yaml") -> list[
 
 
 class BuyeeAuthenticatedSource(ListingSource):
+    def __init__(self, max_pages: int = 1):
+        self.max_pages = max(1, min(max_pages, 5))
+        self.last_page_count = 0
+
     @staticmethod
     def _search_url(query: str | None) -> str:
         if not query:
@@ -82,6 +94,8 @@ class BuyeeAuthenticatedSource(ListingSource):
         return f"https://buyee.jp/item/search/query/{quote(query, safe='')}"
 
     async def fetch(self, query: str | None = None) -> list[LiveListing]:
+        if self.max_pages > 1:
+            return await self._fetch_via_browser(query)
         cookies = load_session_cookies()
         if not cookies:
             result = self._fetch_via_browser(query)
@@ -100,6 +114,7 @@ class BuyeeAuthenticatedSource(ListingSource):
 
         listings = self._parse_listing_html(response.text, query)
         if listings:
+            self.last_page_count = 1
             return listings
         result = self._fetch_via_browser(query)
         return await result if hasattr(result, "__await__") else result
@@ -123,7 +138,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                 page = await browser.new_page()
                 await page.goto("https://buyee.jp/", wait_until="domcontentloaded", timeout=45000)
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                await page.wait_for_timeout(4000)
+                await page.wait_for_timeout(8000)
                 listing_script = """
                     () => Array.from(document.querySelectorAll('a[href]'))
                         .map(a => {
@@ -141,17 +156,50 @@ class BuyeeAuthenticatedSource(ListingSource):
                             };
                         })
                         .filter(x => x.href.includes('/item/jdirectitems/auction/'))
-                        .slice(0, 20)
+                        .slice(0, 500)
                     """
-                try:
-                    data = await page.evaluate(listing_script)
-                except PlaywrightError as exc:
-                    if "Execution context was destroyed" not in str(exc):
-                        raise
-                    await page.wait_for_load_state("domcontentloaded", timeout=45000)
+                all_rows: list[dict[str, str]] = []
+                visited_pages: set[str] = set()
+                for _ in range(self.max_pages):
+                    if page.url in visited_pages:
+                        break
+                    visited_pages.add(page.url)
+                    try:
+                        data = await page.evaluate(listing_script)
+                    except PlaywrightError as exc:
+                        if "Execution context was destroyed" not in str(exc):
+                            raise
+                        await page.wait_for_load_state("domcontentloaded", timeout=45000)
+                        await page.wait_for_timeout(3000)
+                        data = await page.evaluate(listing_script)
+                    all_rows.extend(data)
+                    if not data:
+                        await page.wait_for_timeout(4000)
+                        data = await page.evaluate(listing_script)
+                        all_rows.extend(data)
+                    self.last_page_count += 1
+                    next_url = await page.evaluate(
+                        r"""
+                        () => {
+                          const links = [...document.querySelectorAll('a[href]')];
+                          const explicit = links.find(a =>
+                            a.rel === 'next' || /^(next|次へ|›|>)$/i.test(a.innerText.trim())
+                          );
+                          return explicit?.href || null;
+                        }
+                        """
+                    )
+                    if not next_url or next_url in visited_pages:
+                        break
+                    await page.goto(next_url, wait_until="domcontentloaded", timeout=60000)
                     await page.wait_for_timeout(3000)
-                    data = await page.evaluate(listing_script)
-                return self._items_from_browser_payload(data, query)
+                if not all_rows:
+                    body_text = normalize_text((await page.locator("body").inner_text())[:10000])
+                    if "Logout" not in body_text and re.search(r"(?i)\b(?:log in|login|sign in)\b", body_text):
+                        raise AuthExpiredError("Buyee authenticated session is no longer active")
+                    if not re.search(r"(?i)no (?:items|results)|0 (?:items|results)|該当する商品", body_text):
+                        raise ParserAnomalyError("search page contained no recognizable listing cards")
+                return self._items_from_browser_payload(all_rows, query)
             finally:
                 await browser.close()
 

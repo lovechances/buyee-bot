@@ -20,6 +20,7 @@ def _webhooks() -> dict[str, str]:
         "grails": env.get("DISCORD_WEBHOOK_GRAILS", "").strip(),
         "silver": env.get("DISCORD_WEBHOOK_SILVER", "").strip(),
         "review": env.get("DISCORD_WEBHOOK_REVIEW", "").strip(),
+        "status": env.get("DISCORD_WEBHOOK_STATUS", "").strip(),
     }
 
 
@@ -115,71 +116,174 @@ def send_listing_alert(
     if not url:
         return False, "route_unconfigured", 0.0
     title = listing.title_original or "Untitled Buyee listing"
-    fields = [
-        {
-            "name": "Price",
-            "value": f"{listing.current_price:,} YEN" if listing.current_price else "unknown",
-            "inline": True,
-        },
-        {"name": "Time remaining", "value": listing.time_remaining or "unknown", "inline": True},
-        {"name": "Closet heat", "value": str(score), "inline": True},
-        {
-            "name": "Brand / category",
-            "value": f"{listing.brand or 'unknown'} / {listing.category or 'unknown'}",
-            "inline": False,
-        },
-        {"name": "Reason", "value": reason, "inline": False},
-    ]
+    price = f"¥{listing.current_price:,}" if listing.current_price else "unknown"
+    if listing.buyout_price:
+        price += f" · buyout ¥{listing.buyout_price:,}"
+    fields: list[dict[str, Any]] = []
+    description = reason
     if evaluation is not None:
         economics = evaluation.economics
         profile = evaluation.profile
-        identity = " / ".join(
+        identity = " · ".join(
             evidence.value
-            for evidence in (profile.brand, profile.collection, profile.era, profile.item_type)
+            for evidence in (profile.brand, profile.collection, profile.item_type, profile.size)
             if evidence is not None
         )
-        fields.extend(
-            [
-                {"name": "Identity", "value": identity or "uncertain", "inline": False},
-                {
-                    "name": "Economics",
-                    "value": (
-                        f"landed ¥{economics.landed_cost_jpy:,}; resale median ¥{economics.resale_median_jpy:,}; "
-                        f"net margin ¥{economics.net_margin_jpy:,}; {economics.multiple}x"
-                        if economics.resale_median_jpy is not None
-                        else "no reliable sold comps; opportunity unscored"
-                    ),
-                    "inline": False,
-                },
-                {
-                    "name": "Risk / comp confidence",
-                    "value": f"{evaluation.auth_risk.level} / {economics.comp_confidence}",
-                    "inline": True,
-                },
-                {
-                    "name": "Why it matters",
-                    "value": "; ".join(evaluation.desirability.reasons[:4]) or "no strong piece-specific signal",
-                    "inline": False,
-                },
-            ]
+        if route == "review":
+            thesis = "NEEDS REVIEW"
+        elif (
+            evaluation.auction_maturity.auction_type == "open_auction"
+            and evaluation.auction_maturity.level == "low"
+        ):
+            thesis = "ARCHIVE WATCH"
+        elif (
+            economics.opportunity_score >= 70
+            and economics.comp_confidence in {"medium", "high"}
+        ):
+            thesis = "VERIFIED ARBITRAGE"
+        elif evaluation.directional.thesis == "asymmetric_value":
+            thesis = "ASYMMETRIC VALUE"
+        else:
+            thesis = "ARCHIVE GRAIL"
+        description = f"**{thesis}** · {reason}"
+        landed = (
+            f"~${evaluation.directional.landed_usd:,.0f} landed"
+            if evaluation.directional.landed_usd is not None
+            else "landed unknown"
         )
-        if evaluation.comps.matches:
-            comp_lines = []
-            for comp in evaluation.comps.matches[:3]:
-                label = comp.title[:70]
-                price = f"¥{comp.price_jpy:,}" if comp.price_jpy else "price unknown"
-                comp_lines.append(f"[{label}]({comp.url}) — {price}" if comp.url else f"{label} — {price}")
+        if evaluation.auction_maturity.price_actionable:
+            price_timing = f"{price} · {landed} · Ends {listing.time_remaining or 'unknown'}"
+        else:
+            price_timing = (
+                f"{price} current · Ends {listing.time_remaining or 'unknown'} · EARLY AUCTION"
+            )
+        fields.append({"name": "Price / timing", "value": price_timing, "inline": False})
+        signal_score = max(economics.opportunity_score, evaluation.directional.score)
+        signal = "HIGH" if signal_score >= 80 else "MEDIUM" if signal_score >= 65 else "WATCH"
+        fields.append(
+            {
+                "name": "Identity / scores",
+                "value": f"{identity or 'uncertain'} · heat {score} · opportunity {signal}",
+                "inline": False,
+            }
+        )
+        if economics.resale_median_jpy is not None and evaluation.auction_maturity.price_actionable:
             fields.append(
                 {
-                    "name": f"Sold comps ({len(evaluation.comps.matches)} accepted / {evaluation.comps.candidate_count} candidates)",
+                    "name": "U.S. sold / upside",
+                    "value": (
+                        f"¥{evaluation.comps.low_jpy:,}–¥{evaluation.comps.high_jpy:,} · FMV ¥{economics.resale_median_jpy:,} · "
+                        f"{economics.multiple}× · margin ¥{economics.net_margin_jpy:,} · {economics.comp_confidence} confidence"
+                    ),
+                    "inline": False,
+                }
+            )
+        elif economics.resale_median_jpy is not None:
+            fields.append(
+                {
+                    "name": "U.S. sold evidence",
+                    "value": (
+                        f"¥{evaluation.comps.low_jpy:,}–¥{evaluation.comps.high_jpy:,} verified · "
+                        "current bid excluded from spread"
+                    ),
+                    "inline": False,
+                }
+            )
+        elif evaluation.japan_comps and evaluation.japan_comps.median_jpy is not None:
+            fields.append(
+                {
+                    "name": "Market context",
+                    "value": (
+                        "U.S. resale unverified · Japan sold "
+                        f"¥{evaluation.japan_comps.low_jpy:,}–¥{evaluation.japan_comps.high_jpy:,} "
+                        f"· {evaluation.japan_comps.confidence} directional confidence"
+                    ),
+                    "inline": False,
+                }
+            )
+        else:
+            fields.append(
+                {
+                    "name": "Market context",
+                    "value": "U.S. resale unverified · no reliable sold range",
+                    "inline": False,
+                }
+            )
+        raw = listing.raw or {}
+        feedback_percent = raw.get("seller_feedback_percent")
+        feedback_count = raw.get("seller_feedback_count")
+        if evaluation.auth_risk.level != "low" or feedback_percent is not None:
+            seller = (
+                f" · seller {feedback_percent:g}%/{feedback_count or 0:,}"
+                if feedback_percent is not None
+                else ""
+            )
+            risk_reasons = [
+                value
+                for value in evaluation.auth_risk.reasons
+                if not value.startswith("seller feedback")
+            ]
+            warning = f"{evaluation.auth_risk.level.upper()}{seller}"
+            if risk_reasons:
+                warning += f" · {'; '.join(risk_reasons[:2])}"
+            fields.append(
+                {
+                    "name": "⚠ Review",
+                    "value": warning,
+                    "inline": False,
+                }
+            )
+        if evaluation.comps.matches:
+            comp_lines = []
+            for comp in evaluation.comps.matches[:2]:
+                label = comp.title[:55]
+                comp_price = (
+                    f"${comp.original_price:,.0f}"
+                    if comp.original_currency == "USD" and comp.original_price
+                    else f"¥{comp.price_jpy:,}"
+                )
+                comp_lines.append(
+                    f"[{label}]({comp.url}) — {comp_price}" if comp.url else f"{label} — {comp_price}"
+                )
+            fields.append(
+                {
+                    "name": f"U.S. sold comps ({len(evaluation.comps.matches)})",
                     "value": "\n".join(comp_lines),
                     "inline": False,
                 }
             )
+    else:
+        fields.append(
+            {
+                "name": "Price / timing",
+                "value": f"{price} · {listing.time_remaining or 'time unknown'} · heat {score}",
+                "inline": False,
+            }
+        )
     payload: dict[str, Any] = {
         "content": f"BuyEye live listing [{route}]",
-        "embeds": [{"title": title, "url": listing.url, "fields": fields, "color": 5814783}],
+        "embeds": [
+            {
+                "title": title,
+                "description": description,
+                "url": listing.url,
+                "fields": fields,
+                "color": 5814783,
+            }
+        ],
     }
     if listing.image_url:
         payload["embeds"][0]["thumbnail"] = {"url": listing.image_url}
+    return _send_webhook(url, payload)
+
+
+def send_status_event(message: str, level: str = "info") -> tuple[bool, int | str, float]:
+    url = _webhooks().get("status", "")
+    if not url:
+        return False, "status_unconfigured", 0.0
+    colors = {"info": 5814783, "warning": 16753920, "error": 15158332, "recovery": 5763719}
+    payload = {
+        "content": "BuyEye status",
+        "embeds": [{"description": message, "color": colors.get(level, 5814783)}],
+    }
     return _send_webhook(url, payload)

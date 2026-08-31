@@ -11,13 +11,14 @@ import httpx
 
 from .browser_session import has_valid_session
 from .comp_cache import CompRepository, CompService
-from .comp_sources import YahooEndedSource
+from .comp_sources import ObservedUSSoldSource, YahooEndedSource
 from .db import DB_PATH, get_alert_state, save_alert_state, save_listings
 from .detail_enrichment import BuyeeDetailService, DetailRepository
 from .discord_alerts import send_listing_alert
 from .evaluation import ListingEvaluation, evaluate_listing
 from .fashion import enrich_title
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
+from .runtime_state import mark_listing_seen
 from .settings import load_settings
 
 
@@ -41,6 +42,13 @@ class ScanResult:
     stage_b_failed: int = 0
     comp_queried: int = 0
     final_candidates: int = 0
+    unique_listings: int = 0
+    duplicates: int = 0
+    search_pages: int = 0
+    comp_cache_hits: int = 0
+    comp_cache_misses: int = 0
+    japan_comp_candidates: int = 0
+    japan_comps_accepted: int = 0
 
 
 def _minutes_remaining(value: str | None) -> int | None:
@@ -99,6 +107,7 @@ def _route_evaluation(
     listing: LiveListing,
     evaluation: ListingEvaluation,
     ending_threshold_minutes: int = 60,
+    archive_watch_min_heat: int = 70,
 ) -> tuple[str, str] | None:
     heat = evaluation.desirability.score
     economics = evaluation.economics
@@ -107,15 +116,33 @@ def _route_evaluation(
     if risk == "do_not_touch":
         return None
     if risk == "high":
-        return "review", "; ".join(evaluation.auth_risk.reasons[:2])
+        if heat >= 50 or economics.opportunity_score >= 70:
+            return "review", "; ".join(evaluation.auth_risk.reasons[:2])
+        return None
+    if (
+        evaluation.auction_maturity.auction_type == "open_auction"
+        and evaluation.auction_maturity.level == "low"
+    ):
+        if heat >= archive_watch_min_heat and (profile.collection or profile.era):
+            return "grails", "early archive discovery; current bid is provisional"
+        return None
+    meaningful_auth_concern = any(
+        phrase in " ".join(evaluation.auth_risk.reasons).lower()
+        for phrase in (
+            "frequently counterfeited",
+            "implausibly low",
+            "seller history unavailable",
+            "detail-photo coverage unavailable",
+        )
+    )
     if (
         listing.buyout_price is not None
         and economics.opportunity_score >= 70
         and economics.comp_confidence in {"medium", "high"}
     ):
         return "buyouts", "strong sold-comp economics at a fixed buyout"
-    if heat >= 82:
-        return "grails", "high piece-specific closet heat"
+    if listing.buyout_price is not None and evaluation.directional.thesis == "asymmetric_value":
+        return "buyouts", "actionable fixed price with unusually low absolute downside"
     if (
         heat >= 70
         and profile.category
@@ -127,6 +154,18 @@ def _route_evaluation(
     remaining = _minutes_remaining(listing.time_remaining)
     if remaining is not None and remaining <= ending_threshold_minutes and heat >= 70:
         return "ending", "desirable piece ending within the configured threshold"
+    if heat >= 82:
+        return "grails", "high piece-specific closet heat"
+    if (
+        economics.opportunity_score >= 70
+        and economics.comp_confidence in {"medium", "high"}
+        and heat >= 65
+    ):
+        if meaningful_auth_concern:
+            return "review", "strong economics with material authentication uncertainty"
+        return "grails", "piece-aware sold comps show a compelling archive opportunity"
+    if evaluation.directional.thesis == "asymmetric_value":
+        return "grails", "fashion-relevant piece with unusually low absolute downside"
     return None
 
 
@@ -137,21 +176,70 @@ def _signature(listing: LiveListing) -> str:
         "buyout": listing.buyout_price,
         "starting": listing.starting_price,
         "time": listing.time_remaining,
+        "bid_count": listing.bid_count,
+        "watch_count": listing.watch_count,
         "image": listing.image_url,
+        "opportunity": listing.opportunity_score,
+        "auth_risk": listing.auth_risk,
+        "comp_confidence": listing.comp_confidence,
+        "comp_sources": ((listing.raw or {}).get("intelligence") or {}).get("comp_sources", []),
+        "auction_maturity": ((listing.raw or {}).get("intelligence") or {}).get(
+            "auction_maturity"
+        ),
     }
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
 async def scan_once(
-    query: str, db_path: str | Path = DB_PATH, send_alerts: bool = True
+    query: str,
+    db_path: str | Path = DB_PATH,
+    send_alerts: bool = True,
+    global_dedupe: bool = False,
 ) -> ScanResult:
-    source = BuyeeAuthenticatedSource()
+    settings = load_settings()
+    source = BuyeeAuthenticatedSource(
+        max_pages=int(settings.get("scanner", {}).get("search_pages_per_query", 2))
+    )
     loop = LiveMarketLoop(sources=[source])
     listings = await loop.run_once(query, persist=False)
-    settings = load_settings()
     ending_threshold = int(settings.get("alert", {}).get("ending_threshold_minutes", 60))
-    result = ScanResult(scanned=len(listings), route_counts={})
+    result = ScanResult(
+        scanned=len(listings),
+        unique_listings=len(listings),
+        search_pages=source.last_page_count,
+        route_counts={},
+    )
+    if global_dedupe:
+        unique: list[LiveListing] = []
+        for listing in listings:
+            seen = mark_listing_seen(
+                listing.source,
+                listing.source_listing_id,
+                _signature(listing),
+                query,
+                db_path,
+                freshness_hours=int(
+                    settings.get("scanner", {}).get("listing_dedupe_hours", 6)
+                ),
+            )
+            if seen.is_duplicate:
+                result.duplicates += 1
+            else:
+                unique.append(listing)
+        listings = unique
+        result.unique_listings = len(unique)
     comp_service = CompService(
+        [
+            ObservedUSSoldSource(
+                jpy_to_usd=float(settings.get("pricing", {}).get("fx_jpy_to_usd", 0.00675))
+            )
+        ],
+        CompRepository(
+            db_path,
+            ttl_hours=int(settings.get("comps", {}).get("cache_ttl_hours", 72)),
+        ),
+    )
+    japan_comp_service = CompService(
         [YahooEndedSource()],
         CompRepository(
             db_path,
@@ -215,12 +303,38 @@ async def scan_once(
         ):
             result.comp_queried += 1
             try:
-                comp_candidates = await comp_service.retrieve(evaluation.profile)
+                comp_candidates = await comp_service.retrieve(
+                    evaluation.profile,
+                    minimum_candidates=int(
+                        settings.get("comps", {}).get(
+                            "minimum_candidates_before_broadening", 5
+                        )
+                    ),
+                )
             except (httpx.HTTPError, OSError, ValueError):
                 comp_candidates = []
-            evaluation = evaluate_listing(listing, comps=comp_candidates, settings=settings)
+            try:
+                japan_candidates = await japan_comp_service.retrieve(
+                    evaluation.profile,
+                    minimum_candidates=int(
+                        settings.get("comps", {}).get(
+                            "minimum_candidates_before_broadening", 5
+                        )
+                    ),
+                )
+            except (httpx.HTTPError, OSError, ValueError):
+                japan_candidates = []
+            evaluation = evaluate_listing(
+                listing,
+                comps=comp_candidates,
+                settings=settings,
+                japan_comps=japan_candidates,
+            )
             result.comp_candidates += evaluation.comps.candidate_count
             result.comps_accepted += len(evaluation.comps.matches)
+            if evaluation.japan_comps:
+                result.japan_comp_candidates += evaluation.japan_comps.candidate_count
+                result.japan_comps_accepted += len(evaluation.japan_comps.matches)
         if evaluation.profile.brand:
             listing.brand = evaluation.profile.brand.value
         if evaluation.profile.category:
@@ -239,9 +353,26 @@ async def scan_once(
                 "comp_sources": evaluation.comps.sources,
                 "comp_candidates": evaluation.comps.candidate_count,
                 "comps_accepted": len(evaluation.comps.matches),
+                "japan_comp_sources": (
+                    evaluation.japan_comps.sources if evaluation.japan_comps else []
+                ),
+                "japan_comps_accepted": (
+                    len(evaluation.japan_comps.matches) if evaluation.japan_comps else 0
+                ),
+                "directional_score": evaluation.directional.score,
+                "valuation_state": evaluation.directional.us_valuation_state,
+                "auction_maturity": evaluation.auction_maturity.level,
+                "price_actionable": evaluation.auction_maturity.price_actionable,
             },
         }
-        routed = _route_evaluation(listing, evaluation, ending_threshold)
+        routed = _route_evaluation(
+            listing,
+            evaluation,
+            ending_threshold,
+            archive_watch_min_heat=int(
+                settings.get("alert", {}).get("archive_watch_min_heat", 70)
+            ),
+        )
         if routed is None:
             result.below_threshold += 1
             continue
@@ -264,6 +395,8 @@ async def scan_once(
         else:
             result.failed_alerts += 1
     result.new_rows, result.updated_rows = save_listings(listings, db_path)
+    result.comp_cache_hits = comp_service.cache_hits + japan_comp_service.cache_hits
+    result.comp_cache_misses = comp_service.cache_misses + japan_comp_service.cache_misses
     return result
 
 

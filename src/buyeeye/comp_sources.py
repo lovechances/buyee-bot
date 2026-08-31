@@ -4,9 +4,11 @@ import hashlib
 import re
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
+import yaml
 from bs4 import BeautifulSoup
 
 from .fashion import FashionProfile
@@ -106,6 +108,53 @@ class YahooEndedSource(SoldCompSource):
                     sold_at=sold_at,
                     original_price=float(price_jpy),
                     original_currency="JPY",
+                )
+            )
+        return records
+
+
+class ObservedUSSoldSource(SoldCompSource):
+    """Manually verified U.S. sold records; never treats active asking prices as comps."""
+
+    name = "grailed_sold"
+
+    def __init__(
+        self,
+        path: str | Path = "config/us_sold_comps.yaml",
+        jpy_to_usd: float = 0.00675,
+    ):
+        self.path = Path(path)
+        self.jpy_to_usd = jpy_to_usd
+
+    async def fetch(self, query: str) -> list[Comp]:
+        if not self.path.exists() or self.jpy_to_usd <= 0:
+            return []
+        payload = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+        query_text = query.casefold()
+        records: list[Comp] = []
+        for row in payload.get("sold_comps", []):
+            terms = [str(term).casefold() for term in row.get("query_terms", [])]
+            if terms and not all(term in query_text for term in terms):
+                continue
+            if row.get("market") != "US" or row.get("status") != "sold":
+                continue
+            price_usd = float(row["sold_price_usd"])
+            records.append(
+                Comp(
+                    source="grailed_sold",
+                    title=str(row["title"]),
+                    price_jpy=round(price_usd / self.jpy_to_usd),
+                    similarity=1.0,
+                    recency_days=int(row.get("recency_days", 180)),
+                    is_sold=True,
+                    provenance=f"verified_public_grailed:{row['listing_id']}",
+                    source_listing_id=str(row["listing_id"]),
+                    url=str(row["url"]),
+                    query=query,
+                    original_price=price_usd,
+                    original_currency="USD",
+                    condition=row.get("condition"),
+                    size=row.get("size"),
                 )
             )
         return records
