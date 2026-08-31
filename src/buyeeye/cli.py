@@ -27,11 +27,11 @@ from .runtime_state import (
     record_query_result,
     update_health,
 )
-from .settings import CONFIG_DIR, ROOT, load_env_file, load_settings, load_yaml
+from .settings import CONFIG_DIR, load_env_file, load_settings, load_yaml, runtime_data_dir
 
 
 def _runtime_logger() -> logging.Logger:
-    log_dir = ROOT / "data" / "logs"
+    log_dir = runtime_data_dir() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("buyeeye.runtime")
     if not logger.handlers:
@@ -46,7 +46,7 @@ def _runtime_logger() -> logging.Logger:
 
 
 def _acquire_runtime_lock() -> Any | None:
-    lock_path = ROOT / "data" / "buyeeye.lock"
+    lock_path = runtime_data_dir() / "buyeeye.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("w", encoding="utf-8")
     try:
@@ -65,7 +65,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status")
     subparsers.add_parser("run")
-    subparsers.add_parser("scan-once")
+    scan_once_parser = subparsers.add_parser("scan-once")
+    scan_once_parser.add_argument("query", nargs="?")
     scan_alert = subparsers.add_parser("scan-alert-once")
     scan_alert.add_argument("query", nargs="?")
     subparsers.add_parser("health")
@@ -107,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = load_settings()
-    db_path = Path(settings.get("BUYEYE_DB_PATH", "data/buyeeye.db"))
+    db_path = Path(os.environ.get("BUYEYE_DB_PATH", runtime_data_dir() / "buyeeye.db"))
     init_db(db_path)
 
     if args.command == "status":
@@ -135,7 +136,9 @@ def main(argv: list[str] | None = None) -> int:
             f"stage_a_rejected={metrics['stage_a_rejected']} stage_b={metrics['stage_b_candidates']} "
             f"enriched={metrics['stage_b_enriched']} comps={metrics['comp_lookups']} "
             f"comp_cache={metrics['comp_cache_hits']}/{metrics['comp_cache_misses']} "
-            f"final={metrics['final_candidates']} alerts={metrics['alerts']} routes={metrics['routes']}"
+            f"final={metrics['final_candidates']} alerts={metrics['alerts']} "
+            f"routes={metrics['routes']} theses={metrics['theses']} "
+            f"opportunities={metrics['opportunities']}"
         )
         return 0 if report["database_ready"] else 1
 
@@ -257,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
                 logger.info(
                     "scan query=%r family=%s pages=%s cards=%s unique=%s duplicates=%s "
                     "stage_a_rejected=%s stage_b=%s enriched=%s comps=%s cache=%s/%s "
-                    "final=%s alerts=%s routes=%s",
+                    "final=%s alerts=%s routes=%s theses=%s opportunities=%s",
                     spec.query,
                     spec.family,
                     result.search_pages,
@@ -273,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
                     result.final_candidates,
                     result.new_alerts,
                     result.route_counts,
+                    result.thesis_counts,
+                    result.opportunity_counts,
                 )
                 if recovery_pending:
                     send_status_event("BuyEye recovered and completed a successful scan.", "recovery")
@@ -292,10 +297,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scan-once":
         queries = load_live_queries()
-        loop = LiveMarketLoop()
-        print("BuyEye scan-once started.")
-        asyncio.run(_run_market_pass(loop, queries))
-        return 0
+        query = args.query or (queries[0] if queries else "Number (N)ine")
+        try:
+            result = asyncio.run(scan_once(query, db_path, send_alerts=False))
+        except Exception as exc:  # noqa: BLE001
+            print(f"query={query!r} failed={type(exc).__name__}")
+            return 1
+        print(
+            f"query={query!r} pages={result.search_pages} scanned={result.scanned} "
+            f"unique={result.unique_listings} stage_a_rejected={result.stage_a_rejected} "
+            f"stage_b_candidates={result.stage_b_candidates} "
+            f"stage_b_enriched={result.stage_b_enriched} stage_b_failed={result.stage_b_failed} "
+            f"comp_queried={result.comp_queried} final_candidates={result.final_candidates} "
+            f"alerts=0 routes={result.route_counts} theses={result.thesis_counts} "
+            f"opportunities={result.opportunity_counts}"
+        )
+        return 0 if result.scanned else 1
 
     if args.command == "scan-alert-once":
         queries = load_live_queries()
@@ -318,7 +335,8 @@ def main(argv: list[str] | None = None) -> int:
             f"comp_cache_misses={result.comp_cache_misses} pages={result.search_pages} "
             f"unique={result.unique_listings} duplicates={result.duplicates} "
             f"final_candidates={result.final_candidates} "
-            f"routes={result.route_counts}"
+            f"routes={result.route_counts} theses={result.thesis_counts} "
+            f"opportunities={result.opportunity_counts}"
         )
         return 0 if result.scanned else 1
 
@@ -337,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                 "When the page is ready and logged in, press Enter to save the browser session and close the browser: "
             )
             save_session_state(context)
-            print("Buyee browser session saved to data/browser/buyee_state.json")
+            print(f"Buyee browser session saved to {runtime_data_dir() / 'browser/buyee_state.json'}")
             print(f"Current page title: {page.title()}")
         finally:
             context.close()

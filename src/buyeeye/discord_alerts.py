@@ -109,6 +109,24 @@ def send_test_alert() -> int:
     return 0 if sent else 1
 
 
+def alert_thesis(route: str, evaluation: Any) -> str:
+    if route == "review":
+        return "needs_review"
+    if (
+        evaluation.auction_maturity.auction_type == "open_auction"
+        and evaluation.auction_maturity.level == "low"
+    ):
+        return "archive_watch"
+    if (
+        evaluation.economics.opportunity_score >= 70
+        and evaluation.economics.comp_confidence in {"medium", "high"}
+    ):
+        return "verified_arbitrage"
+    if evaluation.directional.thesis == "asymmetric_value":
+        return "asymmetric_value"
+    return "archive_grail"
+
+
 def send_listing_alert(
     listing: Any, route: str, reason: str, score: int, evaluation: Any | None = None
 ) -> tuple[bool, int | str, float]:
@@ -129,22 +147,7 @@ def send_listing_alert(
             for evidence in (profile.brand, profile.collection, profile.item_type, profile.size)
             if evidence is not None
         )
-        if route == "review":
-            thesis = "NEEDS REVIEW"
-        elif (
-            evaluation.auction_maturity.auction_type == "open_auction"
-            and evaluation.auction_maturity.level == "low"
-        ):
-            thesis = "ARCHIVE WATCH"
-        elif (
-            economics.opportunity_score >= 70
-            and economics.comp_confidence in {"medium", "high"}
-        ):
-            thesis = "VERIFIED ARBITRAGE"
-        elif evaluation.directional.thesis == "asymmetric_value":
-            thesis = "ASYMMETRIC VALUE"
-        else:
-            thesis = "ARCHIVE GRAIL"
+        thesis = alert_thesis(route, evaluation).replace("_", " ").upper()
         description = f"**{thesis}** · {reason}"
         landed = (
             f"~${evaluation.directional.landed_usd:,.0f} landed"

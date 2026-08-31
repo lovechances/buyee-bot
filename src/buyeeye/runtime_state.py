@@ -17,6 +17,7 @@ class QueryRuntimeState(SQLModel, table=True):
     query: str = Field(index=True)
     family: str
     provenance: str
+    discovery_mode: str = "direct_piece"
     priority: int
     runs: int = 0
     cards_seen: int = 0
@@ -76,6 +77,8 @@ class ScanEvent(SQLModel, table=True):
     final_candidates: int = 0
     alerts: int = 0
     routes_json: str = "{}"
+    theses_json: str | None = None
+    opportunities_json: str | None = None
 
 
 @dataclass
@@ -134,6 +137,7 @@ def record_query_result(
                 query=spec.query,
                 family=spec.family,
                 provenance=spec.provenance,
+                discovery_mode=spec.discovery_mode,
                 priority=spec.priority,
             )
             session.add(row)
@@ -166,6 +170,10 @@ def record_query_result(
                 final_candidates=int(getattr(result, "final_candidates", 0)),
                 alerts=int(getattr(result, "new_alerts", 0)),
                 routes_json=json.dumps(getattr(result, "route_counts", {}) or {}),
+                theses_json=json.dumps(getattr(result, "thesis_counts", {}) or {}),
+                opportunities_json=json.dumps(
+                    getattr(result, "opportunity_counts", {}) or {}
+                ),
             )
         )
         session.commit()
@@ -260,9 +268,15 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
         "final_candidates": 0,
         "alerts": 0,
         "routes": {},
+        "theses": {},
+        "opportunities": {},
     }
-    numeric = [key for key in totals if key not in {"queries", "routes"}]
+    numeric = [
+        key for key in totals if key not in {"queries", "routes", "theses", "opportunities"}
+    ]
     routes: dict[str, int] = {}
+    theses: dict[str, int] = {}
+    opportunities: dict[str, int] = {}
     for row in rows:
         mapping = {
             "search_pages": row.search_pages,
@@ -282,5 +296,11 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             totals[key] = int(totals[key]) + mapping[key]
         for route, count in json.loads(row.routes_json).items():
             routes[route] = routes.get(route, 0) + int(count)
+        for thesis, count in json.loads(row.theses_json or "{}").items():
+            theses[thesis] = theses.get(thesis, 0) + int(count)
+        for kind, count in json.loads(row.opportunities_json or "{}").items():
+            opportunities[kind] = opportunities.get(kind, 0) + int(count)
     totals["routes"] = routes
+    totals["theses"] = theses
+    totals["opportunities"] = opportunities
     return totals

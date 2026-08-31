@@ -13,6 +13,15 @@ class QuerySpec:
     family: str
     priority: int
     cooldown_minutes: int = 180
+    discovery_mode: str = "direct_piece"
+
+
+def _discovery_mode(provenance: str) -> str:
+    if ".collection" in provenance or ".designer" in provenance:
+        return "collection_era"
+    if ".strong_signal" in provenance:
+        return "hidden_mislabeled"
+    return "direct_piece"
 
 
 def get_search_families(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -50,7 +59,9 @@ def build_query_universe(
         aliases = [normalize_text(str(value)) for value in family.get("aliases", []) if value]
         terms = [normalize_text(str(value)) for value in family.get("terms", []) if value]
         for alias in aliases[:4]:
-            candidates.append(QuerySpec(alias, "searches.alias", brand, priority, cooldown))
+            candidates.append(
+                QuerySpec(alias, "searches.alias", brand, priority, cooldown, "direct_piece")
+            )
         anchor = aliases[0] if aliases else brand
         for term in terms[:10]:
             candidates.append(
@@ -60,18 +71,29 @@ def build_query_universe(
                     brand,
                     priority + 5,
                     cooldown,
+                    "direct_piece",
                 )
             )
 
     for key, brand in taxonomy.get("brands", {}).items():
         canonical = normalize_text(str(brand.get("canonical") or key))
         aliases = [normalize_text(str(value)) for value in brand.get("aliases", []) if value]
-        candidates.append(QuerySpec(canonical, f"taxonomy.brands.{key}.canonical", key, 80, 240))
+        provenance = f"taxonomy.brands.{key}.canonical"
+        candidates.append(
+            QuerySpec(canonical, provenance, key, 80, 240, _discovery_mode(provenance))
+        )
         for alias in aliases[:4]:
             if alias.casefold() != canonical.casefold():
                 priority = 78 if any(ord(char) > 127 for char in alias) else 65
                 candidates.append(
-                    QuerySpec(alias, f"taxonomy.brands.{key}.alias", key, priority, 240)
+                    QuerySpec(
+                        alias,
+                        f"taxonomy.brands.{key}.alias",
+                        key,
+                        priority,
+                        240,
+                        "direct_piece",
+                    )
                 )
         designer = brand.get("designer")
         if designer:
@@ -82,6 +104,7 @@ def build_query_universe(
                     key,
                     72,
                     360,
+                    "collection_era",
                 )
             )
         for collection in brand.get("collections", [])[:8]:
@@ -94,6 +117,7 @@ def build_query_universe(
                         key,
                         90,
                         360,
+                        "collection_era",
                     )
                 )
             japanese_term = next(
@@ -112,6 +136,7 @@ def build_query_universe(
                         key,
                         88,
                         360,
+                        "collection_era",
                     )
                 )
         for signal in brand.get("strong_signals", [])[:5]:
@@ -122,6 +147,7 @@ def build_query_universe(
                     key,
                     75,
                     300,
+                    "hidden_mislabeled",
                 )
             )
 

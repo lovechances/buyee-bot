@@ -12,7 +12,9 @@ if TYPE_CHECKING:
     from playwright.async_api import BrowserContext as AsyncBrowserContext
     from playwright.sync_api import BrowserContext, Page, Playwright
 
-SESSION_DIR = Path("data/browser")
+from .settings import runtime_data_dir
+
+SESSION_DIR = Path(os.environ.get("BUYEYE_SESSION_DIR", runtime_data_dir() / "browser"))
 STATE_PATH = SESSION_DIR / "buyee_state.json"
 
 
@@ -20,11 +22,7 @@ def _kill_stale_browser_processes() -> None:
     """Terminate any Chromium instances still using this project-specific browser profile."""
     try:
         result = subprocess.run(
-            [
-                "pgrep",
-                "-af",
-                "Google Chrome for Testing.*--user-data-dir=.*data/browser",
-            ],
+            ["pgrep", "-af", "Google Chrome for Testing|chromium|chrome"],
             capture_output=True,
             text=True,
             check=False,
@@ -33,6 +31,8 @@ def _kill_stale_browser_processes() -> None:
         return
 
     for line in result.stdout.splitlines():
+        if f"--user-data-dir={SESSION_DIR}" not in line:
+            continue
         parts = line.strip().split(None, 1)
         if not parts:
             continue

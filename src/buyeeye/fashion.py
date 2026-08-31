@@ -3,14 +3,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .normalize import normalize_text
+from .settings import CONFIG_DIR
 
-TAXONOMY_PATH = Path(__file__).resolve().parents[2] / "config" / "fashion_taxonomy.yaml"
+TAXONOMY_PATH = CONFIG_DIR / "fashion_taxonomy.yaml"
 
 
 @dataclass(frozen=True)

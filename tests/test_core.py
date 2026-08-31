@@ -2,6 +2,7 @@ import asyncio
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 
@@ -52,9 +53,14 @@ from buyeeye.pipeline import (
     _route_evaluation,
     scan_once,
 )
-from buyeeye.runtime_state import choose_query, mark_listing_seen, record_query_result
+from buyeeye.runtime_state import (
+    choose_query,
+    hourly_metrics,
+    mark_listing_seen,
+    record_query_result,
+)
 from buyeeye.scoring import score_listing
-from buyeeye.settings import load_yaml
+from buyeeye.settings import load_yaml, runtime_data_dir
 from buyeeye.taste import classify_brand, extract_taste_signals
 from buyeeye.valuation import estimate_landed_cost_jpy, estimate_max_bid_jpy
 
@@ -637,11 +643,32 @@ def test_save_listings_upserts_existing_listing_by_source_and_id(tmp_path):
     created2, updated2 = save_listings(second, db_path)
     assert created2 == 0 and updated2 == 1
 
+    blank_identity = [
+        LiveListing(
+            source="buyee",
+            source_listing_id="abc123",
+            url="https://buyee.jp/item/jdirectitems/auction/abc123",
+            title_original="",
+            title_normalized="",
+            brand="",
+            category="",
+            current_price=3700,
+            buyout_price=None,
+            starting_price=3300,
+            seller_name=None,
+            condition=None,
+        )
+    ]
+    created3, updated3 = save_listings(blank_identity, db_path)
+    assert created3 == 0 and updated3 == 1
+
     session = get_session(db_path)
     try:
         rows = session.query(Listing).all()
         assert len(rows) == 1
-        assert rows[0].current_price == 3600
+        assert rows[0].current_price == 3700
+        assert rows[0].title_original == "Number (N)ine overshirt"
+        assert rows[0].brand == "Number (N)ine"
         assert rows[0].time_remaining == "5 day(s)"
         assert rows[0].bid_count == 7
     finally:
@@ -1062,7 +1089,18 @@ def test_controlled_query_universe_has_provenance_without_cartesian_explosion():
 
     assert len(universe) < 300
     assert len(query_text) == len(universe)
-    assert all(spec.provenance and spec.family and spec.cooldown_minutes > 0 for spec in universe)
+    assert all(
+        spec.provenance
+        and spec.family
+        and spec.cooldown_minutes > 0
+        and spec.discovery_mode in {"direct_piece", "collection_era", "hidden_mislabeled"}
+        for spec in universe
+    )
+    assert {spec.discovery_mode for spec in universe} == {
+        "direct_piece",
+        "collection_era",
+        "hidden_mislabeled",
+    }
     for expected in (
         "number (n)ine",
         "ディオールオム",
@@ -1097,6 +1135,35 @@ def test_query_scheduler_cooldown_and_persistent_global_dedupe(tmp_path):
     assert first.is_duplicate is False
     assert second.is_duplicate is True and second.unchanged is True
     assert changed.is_duplicate is False and changed.unchanged is False
+
+    record_query_result(
+        explore,
+        SimpleNamespace(
+            scanned=10,
+            unique_listings=8,
+            duplicates=2,
+            stage_b_candidates=1,
+            final_candidates=1,
+            new_alerts=0,
+            route_counts={"grails": 1},
+            thesis_counts={"archive_watch": 1},
+            opportunity_counts={"archive_watch": 1},
+        ),
+        db_path,
+    )
+    metrics = hourly_metrics(db_path)
+    assert metrics["theses"] == {"archive_watch": 1}
+    assert metrics["opportunities"] == {"archive_watch": 1}
+
+
+def test_runtime_data_dir_honors_explicit_and_railway_volume_paths(monkeypatch, tmp_path):
+    explicit = tmp_path / "explicit"
+    railway = tmp_path / "railway"
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", str(railway))
+    monkeypatch.setenv("BUYEYE_DATA_DIR", str(explicit))
+    assert runtime_data_dir() == explicit
+    monkeypatch.delenv("BUYEYE_DATA_DIR")
+    assert runtime_data_dir() == railway
 
 
 def test_observed_us_sold_source_excludes_asks_and_non_us_records(tmp_path):

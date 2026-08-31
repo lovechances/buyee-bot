@@ -14,7 +14,7 @@ from .comp_cache import CompRepository, CompService
 from .comp_sources import ObservedUSSoldSource, YahooEndedSource
 from .db import DB_PATH, get_alert_state, save_alert_state, save_listings
 from .detail_enrichment import BuyeeDetailService, DetailRepository
-from .discord_alerts import send_listing_alert
+from .discord_alerts import alert_thesis, send_listing_alert
 from .evaluation import ListingEvaluation, evaluate_listing
 from .fashion import enrich_title
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
@@ -34,6 +34,8 @@ class ScanResult:
     rejected_invalid: int = 0
     below_threshold: int = 0
     route_counts: dict[str, int] | None = None
+    thesis_counts: dict[str, int] | None = None
+    opportunity_counts: dict[str, int] | None = None
     comp_candidates: int = 0
     comps_accepted: int = 0
     stage_a_rejected: int = 0
@@ -208,6 +210,8 @@ async def scan_once(
         unique_listings=len(listings),
         search_pages=source.last_page_count,
         route_counts={},
+        thesis_counts={},
+        opportunity_counts={},
     )
     if global_dedupe:
         unique: list[LiveListing] = []
@@ -379,6 +383,24 @@ async def scan_once(
         route, reason = routed
         result.final_candidates += 1
         result.route_counts[route] = result.route_counts.get(route, 0) + 1
+        thesis = alert_thesis(route, evaluation)
+        result.thesis_counts[thesis] = result.thesis_counts.get(thesis, 0) + 1
+        if thesis == "archive_watch":
+            opportunity_kind = "archive_watch"
+        elif route == "ending":
+            opportunity_kind = "ending_soon"
+        elif route == "review":
+            opportunity_kind = "legit_review"
+        elif (
+            evaluation.auction_maturity.auction_type == "open_auction"
+            and evaluation.auction_maturity.price_actionable
+        ):
+            opportunity_kind = "mature_auction"
+        else:
+            opportunity_kind = "actionable_fixed_price"
+        result.opportunity_counts[opportunity_kind] = (
+            result.opportunity_counts.get(opportunity_kind, 0) + 1
+        )
         signature = _signature(listing)
         previous = before[listing.source_listing_id]
         if previous is not None and previous.signature == signature:

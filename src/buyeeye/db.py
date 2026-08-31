@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,9 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Field, Session, SQLModel, UniqueConstraint, create_engine, select
 
-DB_PATH = Path("data") / "buyeeye.db"
+from .settings import runtime_data_dir
+
+DB_PATH = Path(os.environ.get("BUYEYE_DB_PATH", runtime_data_dir() / "buyeeye.db"))
 
 
 class Listing(SQLModel, table=True):
@@ -131,7 +134,9 @@ def save_listings(listings: list[Any], path: str | Path = DB_PATH) -> tuple[int,
                 created += 1
             else:
                 for field_name, value in values.items():
-                    if value is not None:
+                    if value is not None and (
+                        not isinstance(value, str) or bool(value.strip())
+                    ):
                         setattr(existing, field_name, value)
                 updated += 1
         session.commit()

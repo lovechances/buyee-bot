@@ -89,6 +89,9 @@ is required, stop the service, run `.venv/bin/buyeeye setup-session`, then start
 optional `DISCORD_WEBHOOK_STATUS` receives only startup, authentication-expiration,
 sustained-outage, recovery, and fatal-shutdown notices.
 
+For Railway-first Docker deployment, persistent `/data` layout, portable session bootstrap, normal
+operations, and the Ubuntu VPS fallback, see [docs/deployment.md](docs/deployment.md).
+
 ## Intelligence review
 
 ```bash

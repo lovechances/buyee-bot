@@ -7,8 +7,16 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_DIR = ROOT / "config"
+CONFIG_DIR = Path(os.environ.get("BUYEYE_CONFIG_DIR", ROOT / "config"))
 DEFAULT_SETTINGS_PATH = CONFIG_DIR / "settings.example.yaml"
+
+
+def runtime_data_dir() -> Path:
+    """Return the persistent runtime root without changing local defaults."""
+    configured = os.environ.get("BUYEYE_DATA_DIR") or os.environ.get(
+        "RAILWAY_VOLUME_MOUNT_PATH"
+    )
+    return Path(configured).expanduser() if configured else ROOT / "data"
 
 
 def load_env_file(path: str | Path | None = None) -> None:
@@ -44,3 +52,8 @@ def load_settings(path: str | Path | None = None) -> dict[str, Any]:
         else:
             config_path = DEFAULT_SETTINGS_PATH
     return load_yaml(config_path)
+
+
+# Load the local development environment before modules derive persistent paths. In hosted
+# environments inherited variables already win because load_env_file never overwrites them.
+load_env_file()
