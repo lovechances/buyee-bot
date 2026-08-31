@@ -35,6 +35,10 @@ class Listing(SQLModel, table=True):
     overall_score: int | None = None
     decision: str | None = None
     is_alerted: bool = False
+    desirability_score: int | None = None
+    opportunity_score: int | None = None
+    auth_risk: str | None = None
+    comp_confidence: str | None = None
 
 
 class AlertState(SQLModel, table=True):
@@ -117,6 +121,10 @@ def save_listings(listings: list[Any], path: str | Path = DB_PATH) -> tuple[int,
                 "bid_count": getattr(row, "bid_count", None),
                 "watch_count": getattr(row, "watch_count", None),
                 "image_url": getattr(row, "image_url", None),
+                "desirability_score": getattr(row, "desirability_score", None),
+                "opportunity_score": getattr(row, "opportunity_score", None),
+                "auth_risk": getattr(row, "auth_risk", None),
+                "comp_confidence": getattr(row, "comp_confidence", None),
             }
             if existing is None:
                 session.add(Listing(source=source, source_listing_id=source_listing_id, **values))

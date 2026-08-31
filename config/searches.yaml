@@ -52,3 +52,47 @@ search_families:
       - "runway"
       - "leather"
       - "distressed"
+  - brand: "Saint Laurent"
+    aliases:
+      - "Saint Laurent Paris"
+      - "サンローランパリ"
+      - "YSL エディ"
+    terms:
+      - "Hedi"
+      - "Wyatt"
+      - "Babycat"
+  - brand: "Maison Martin Margiela"
+    aliases:
+      - "Maison Martin Margiela"
+      - "マルタンマルジェラ"
+      - "マルジェラ 本人期"
+    terms:
+      - "アーティザナル"
+      - "ここのえ"
+      - "再構築"
+  - brand: "Vetements"
+    aliases:
+      - "Vetements"
+      - "ヴェトモン"
+    terms:
+      - "Demna"
+      - "Antwerpen"
+      - "May the bridges"
+  - brand: "IF SIX WAS NINE"
+    aliases:
+      - "IF SIX WAS NINE"
+      - "ifsixwasnine"
+      - "イフシックスワズナイン"
+    terms:
+      - "MUD MAX"
+      - "L.G.B."
+      - "レザー"
+  - brand: "Gaboratory"
+    aliases:
+      - "Gaboratory"
+      - "ガボラトリー"
+      - "ガボール"
+    terms:
+      - "925"
+      - "ブルドッグ"
+      - "スカル"

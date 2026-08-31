@@ -21,6 +21,7 @@ pricing:
   insurance_percent: 0.02
   duty_percent: 0.08
   reserve_percent: 0.05
+  resale_fee_percent: 0.13
   profit_floor_usd: 75
   min_profit_multiple: 1.5
 

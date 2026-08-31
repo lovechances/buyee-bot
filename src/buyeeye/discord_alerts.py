@@ -109,7 +109,7 @@ def send_test_alert() -> int:
 
 
 def send_listing_alert(
-    listing: Any, route: str, reason: str, score: int
+    listing: Any, route: str, reason: str, score: int, evaluation: Any | None = None
 ) -> tuple[bool, int | str, float]:
     url = _webhooks().get(route, "")
     if not url:
@@ -122,7 +122,7 @@ def send_listing_alert(
             "inline": True,
         },
         {"name": "Time remaining", "value": listing.time_remaining or "unknown", "inline": True},
-        {"name": "Score", "value": str(score), "inline": True},
+        {"name": "Closet heat", "value": str(score), "inline": True},
         {
             "name": "Brand / category",
             "value": f"{listing.brand or 'unknown'} / {listing.category or 'unknown'}",
@@ -130,6 +130,39 @@ def send_listing_alert(
         },
         {"name": "Reason", "value": reason, "inline": False},
     ]
+    if evaluation is not None:
+        economics = evaluation.economics
+        profile = evaluation.profile
+        identity = " / ".join(
+            evidence.value
+            for evidence in (profile.brand, profile.collection, profile.era, profile.item_type)
+            if evidence is not None
+        )
+        fields.extend(
+            [
+                {"name": "Identity", "value": identity or "uncertain", "inline": False},
+                {
+                    "name": "Economics",
+                    "value": (
+                        f"landed ¥{economics.landed_cost_jpy:,}; resale median ¥{economics.resale_median_jpy:,}; "
+                        f"net margin ¥{economics.net_margin_jpy:,}; {economics.multiple}x"
+                        if economics.resale_median_jpy is not None
+                        else "no reliable sold comps; opportunity unscored"
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Risk / comp confidence",
+                    "value": f"{evaluation.auth_risk.level} / {economics.comp_confidence}",
+                    "inline": True,
+                },
+                {
+                    "name": "Why it matters",
+                    "value": "; ".join(evaluation.desirability.reasons[:4]) or "no strong piece-specific signal",
+                    "inline": False,
+                },
+            ]
+        )
     payload: dict[str, Any] = {
         "content": f"BuyEye live listing [{route}]",
         "embeds": [{"title": title, "url": listing.url, "fields": fields, "color": 5814783}],

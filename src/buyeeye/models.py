@@ -41,6 +41,8 @@ class Comp:
     similarity: float
     recency_days: int
     category: str | None = None
+    is_sold: bool = True
+    provenance: str = "observed_market"
 
 
 @dataclass

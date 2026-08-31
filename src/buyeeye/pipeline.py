@@ -10,8 +10,9 @@ from typing import Any
 from .browser_session import has_valid_session
 from .db import DB_PATH, get_alert_state, save_alert_state, save_listings
 from .discord_alerts import send_listing_alert
+from .evaluation import ListingEvaluation, evaluate_listing
+from .fashion import enrich_title
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
-from .scoring import score_listing
 from .settings import load_settings
 
 
@@ -41,29 +42,12 @@ def _minutes_remaining(value: str | None) -> int | None:
 
 
 def _is_relevant(listing: LiveListing) -> bool:
-    text = f"{listing.title_original} {listing.brand}".lower()
     if not listing.title_original:
         return False
-    if any(
-        term in text for term in ("toy", "figure", "plush", "game", "camera", "phone", "poster")
-    ):
+    profile = enrich_title(listing.title_original, listing.brand)
+    if any(signal.value.startswith("irrelevant:") for signal in profile.negative_signals):
         return False
-    return any(
-        brand in text
-        for brand in (
-            "number (n)ine",
-            "number nine",
-            "ナンバーナイン",
-            "本人期",
-            "needles",
-            "リビルド",
-            "chrome hearts",
-            "クロムハーツ",
-            "dior",
-            "rick owens",
-            "saint laurent",
-        )
-    )
+    return profile.brand is not None
 
 
 def _price_is_valid(listing: LiveListing) -> bool:
@@ -98,6 +82,41 @@ def _route(
     return None
 
 
+def _route_evaluation(
+    listing: LiveListing,
+    evaluation: ListingEvaluation,
+    ending_threshold_minutes: int = 60,
+) -> tuple[str, str] | None:
+    heat = evaluation.desirability.score
+    economics = evaluation.economics
+    risk = evaluation.auth_risk.level
+    profile = evaluation.profile
+    if risk == "do_not_touch":
+        return None
+    if risk == "high":
+        return "review", "; ".join(evaluation.auth_risk.reasons[:2])
+    if (
+        listing.buyout_price is not None
+        and economics.opportunity_score >= 70
+        and economics.comp_confidence in {"medium", "high"}
+    ):
+        return "buyouts", "strong sold-comp economics at a fixed buyout"
+    if heat >= 82:
+        return "grails", "high piece-specific closet heat"
+    if (
+        heat >= 70
+        and profile.category
+        and profile.category.value == "jewelry"
+        and profile.material
+        and profile.material.value == "silver"
+    ):
+        return "silver", "recognizable silver-jewelry candidate with strong piece signals"
+    remaining = _minutes_remaining(listing.time_remaining)
+    if remaining is not None and remaining <= ending_threshold_minutes and heat >= 70:
+        return "ending", "desirable piece ending within the configured threshold"
+    return None
+
+
 def _signature(listing: LiveListing) -> str:
     values = {
         "title": listing.title_original,
@@ -123,7 +142,6 @@ async def scan_once(
         item.source_listing_id: get_alert_state(item.source, item.source_listing_id, db_path)
         for item in listings
     }
-    result.new_rows, result.updated_rows = save_listings(listings, db_path)
     for listing in listings:
         if not _is_relevant(listing):
             result.rejected_irrelevant += 1
@@ -131,14 +149,24 @@ async def scan_once(
         if not _price_is_valid(listing):
             result.rejected_invalid += 1
             continue
-        score = score_listing(
-            {
-                "title_original": listing.title_original,
-                "brand": listing.brand,
-                "current_price": listing.current_price,
-            }
-        )
-        routed = _route(listing, score, ending_threshold)
+        evaluation = evaluate_listing(listing, settings=settings)
+        if evaluation.profile.brand:
+            listing.brand = evaluation.profile.brand.value
+        if evaluation.profile.category:
+            listing.category = evaluation.profile.category.value
+        listing.desirability_score = evaluation.desirability.score
+        listing.opportunity_score = evaluation.economics.opportunity_score
+        listing.auth_risk = evaluation.auth_risk.level
+        listing.comp_confidence = evaluation.economics.comp_confidence
+        listing.raw = {
+            **(listing.raw or {}),
+            "intelligence": {
+                "desirability_reasons": evaluation.desirability.reasons,
+                "warnings": evaluation.desirability.warnings + evaluation.economics.warnings,
+                "auth_reasons": evaluation.auth_risk.reasons,
+            },
+        }
+        routed = _route_evaluation(listing, evaluation, ending_threshold)
         if routed is None:
             result.below_threshold += 1
             continue
@@ -151,12 +179,15 @@ async def scan_once(
             continue
         if not send_alerts:
             continue
-        sent, _, _ = send_listing_alert(listing, route, reason, score)
+        sent, _, _ = send_listing_alert(
+            listing, route, reason, evaluation.desirability.score, evaluation
+        )
         if sent:
             save_alert_state(listing.source, listing.source_listing_id, signature, route, db_path)
             result.new_alerts += 1
         else:
             result.failed_alerts += 1
+    result.new_rows, result.updated_rows = save_listings(listings, db_path)
     return result
 
 

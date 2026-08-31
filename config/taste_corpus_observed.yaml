@@ -1,0 +1,38 @@
+version: 1
+generated_intelligence: true
+promotion_policy: "observations inform proposals; they do not establish FMV or auto-promote rules"
+observed_at: "2026-08-30"
+
+sources:
+  - name: "Archive Threads"
+    url: "https://archivethreads.ca/collections/all?filter.v.availability=1"
+    role: "positive_taste_corpus"
+    state: "observed"
+    price_use: "excluded_from_fmv"
+    observations:
+      - {signal: "season + collection + construction-rich titles", evidence: "SS04 Dior Homme Strip runway distressed wax denim"}
+      - {signal: "specific collaboration and material", evidence: "Rick Owens x Moncler goat fur Megalace boots"}
+      - {signal: "recognizable jewelry motif and material", evidence: "Chrome Hearts Forever spacer ring .925 silver"}
+      - {signal: "graphic/cultural specificity", evidence: "Raf Simons Virginia Creeper graphic hoodie"}
+  - name: "Dolce Vita Hub"
+    url: "https://dolcevitahub.com/collections/men"
+    role: "positive_taste_corpus"
+    state: "observed"
+    price_use: "excluded_from_fmv"
+    observations:
+      - {signal: "dated designer-era titles", evidence: "AW2003 Maison Martin Margiela oversized wool turtleneck"}
+      - {signal: "silhouette + fabric + finish", evidence: "military nylon, shearling combat leather, eroded biker"}
+      - {signal: "runway and rarity labels", evidence: "special collection separates runway/rare from ordinary stock"}
+      - {signal: "size is explicit", evidence: "menswear records expose garment size alongside title"}
+  - name: "4G Seller"
+    url: "https://4gseller.com/collections/all"
+    role: "positive_taste_corpus"
+    state: "observed_unavailable"
+    price_use: "excluded_from_fmv"
+    observations: []
+  - name: "Restricted Lifestyle"
+    url: "https://www.instagram.com/restricted.lifestyle/"
+    role: "positive_taste_corpus"
+    state: "observed_unavailable"
+    price_use: "excluded_from_fmv"
+    observations: []

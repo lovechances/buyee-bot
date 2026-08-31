@@ -1,0 +1,133 @@
+version: 1
+provenance: manual_v1_research
+
+brands:
+  number_nine:
+    canonical: "Number (N)ine"
+    aliases: ["number (n)ine", "number(n)ine", "number nine", "ナンバーナイン", "n(n)"]
+    designer: "Takahiro Miyashita"
+    eras:
+      original_miyashita: ["本人期", "宮下期", "miyashita", "original era", "2000", "2001", "2002", "2003", "2004", "2005", "2006", "2007", "2008", "2009"]
+    collections:
+      - name: "A Closed Feeling"
+        terms: ["a closed feeling", "closed feeling", "08aw"]
+      - name: "The High Streets"
+        terms: ["high streets", "03aw", "カート期"]
+      - name: "Time Migration"
+        terms: ["time migration", "タイム期", "01ss"]
+    strong_signals: ["destroy", "mohair", "patchwork", "散弾銃", "音符", "スカル", "宮下", "archive"]
+    generic_signals: ["basic", "logo tee", "復刻", "reprint"]
+  chrome_hearts:
+    canonical: "Chrome Hearts"
+    aliases: ["chrome hearts", "chromeheart", "クロムハーツ", "chome hearts"]
+    designer: "Richard Stark"
+    strong_signals: ["cemetery cross", "cemetery", "dagger", "5dagger", "floral cross", "keeper", "fancy chain", "セメタリー", "クロスボール", "ダガー", "キーパー", "925", "sterling"]
+    generic_signals: ["style", "type", "ノーブランド"]
+    auth_sensitive: true
+  dior_homme:
+    canonical: "Dior Homme"
+    aliases: ["dior homme", "ディオールオム", "dior hedi"]
+    designer: "Hedi Slimane"
+    eras:
+      hedi_slimane: ["hedi", "エディ", "2001", "2002", "2003", "2004", "2005", "2006", "2007"]
+    collections:
+      - name: "Luster"
+        terms: ["luster", "03aw"]
+      - name: "Victim of the Crime"
+        terms: ["victim of the crime", "votc", "04ss"]
+      - name: "Strip"
+        terms: ["strip", "04aw"]
+    strong_signals: ["navigate", "luster", "votc", "strip", "runway", "エディ期"]
+    generic_signals: ["dior logo", "basic tee"]
+  saint_laurent:
+    canonical: "Saint Laurent"
+    aliases: ["saint laurent", "saint laurent paris", "ysl", "サンローラン", "サンローランパリ"]
+    designer: "Hedi Slimane"
+    eras:
+      hedi_slimane: ["hedi", "エディ", "2013", "2014", "2015", "2016"]
+    strong_signals: ["blood luster", "babycat", "surf sound", "teddy", "wyatt", "runway"]
+    generic_signals: ["logo tee", "basic tee"]
+  rick_owens:
+    canonical: "Rick Owens"
+    aliases: ["rick owens", "drkshdw", "リックオウエンス", "ダークシャドウ"]
+    designer: "Rick Owens"
+    strong_signals: ["slab", "dunks", "dunk", "geobasket", "creatch", "banana", "bauhaus", "runway"]
+    generic_signals: ["basic tee", "logo tee"]
+  margiela:
+    canonical: "Maison Martin Margiela"
+    aliases: ["maison martin margiela", "maison margiela", "マルタンマルジェラ", "メゾンマルジェラ", "margiela"]
+    designer: "Martin Margiela"
+    eras:
+      martin_era: ["本人期", "ここのえ", "初期", "martin era"]
+    strong_signals: ["artisanal", "アーティザナル", "0 10", "010", "replica line", "再構築", "足袋", "tabi"]
+    generic_signals: ["mm6", "logo tee"]
+  vetements:
+    canonical: "Vetements"
+    aliases: ["vetements", "ヴェトモン"]
+    designer: "Demna Gvasalia"
+    eras:
+      demna_era: ["demna", "デムナ", "2014", "2015", "2016", "2017", "2018"]
+    strong_signals: ["antwerpen", "metal logo", "may the bridges", "titanic", "polizei", "runway"]
+    generic_signals: ["logo tee", "reprint"]
+  balenciaga:
+    canonical: "Balenciaga"
+    aliases: ["balenciaga", "バレンシアガ"]
+    designer: "Demna Gvasalia"
+    strong_signals: ["steroid", "bulldozer", "strike", "paris sneaker", "runway", "distressed"]
+    generic_signals: ["campaign logo", "basic tee"]
+  prada:
+    canonical: "Prada"
+    aliases: ["prada", "プラダ"]
+    designer: "Miuccia Prada"
+    strong_signals: ["sport", "linea rossa", "archive", "1999", "1998", "nylon", "technical"]
+    generic_signals: ["logo tee"]
+  if_six_was_nine:
+    canonical: "IF SIX WAS NINE"
+    aliases: ["if six was nine", "ifsixwasnine", "if six was 9", "イフシックスワズナイン", "if6w9"]
+    strong_signals: ["mud max", "lgb", "le grand bleu", "scab", "python", "cross"]
+  roen:
+    canonical: "Roen"
+    aliases: ["roen", "ロエン"]
+    strong_signals: ["hiromu takahara", "スカル", "skull", "leopard"]
+  gaboratory:
+    canonical: "Gaboratory"
+    aliases: ["gaboratory", "gabor", "ガボラトリー", "ガボール"]
+    strong_signals: ["bulldog", "skull", "lion", "keeper", "925", "sterling"]
+    auth_sensitive: true
+  king_baby:
+    canonical: "King Baby"
+    aliases: ["king baby", "キングベイビー"]
+    strong_signals: ["skull", "crown", "cross", "925", "sterling"]
+    auth_sensitive: true
+
+item_types:
+  jewelry: ["ring", "necklace", "bracelet", "pendant", "chain", "リング", "ネックレス", "ブレスレット", "ペンダント", "チェーン"]
+  jacket: ["jacket", "blazer", "ライダース", "ジャケット", "ブルゾン"]
+  coat: ["coat", "parka", "コート", "モッズコート"]
+  knitwear: ["knit", "mohair", "cardigan", "ニット", "モヘア", "カーディガン"]
+  shirt: ["shirt", "シャツ"]
+  t_shirt: ["t-shirt", "t shirt", "tee", "tシャツ", "カットソー"]
+  denim: ["denim", "jeans", "デニム", "ジーンズ"]
+  trousers: ["pants", "trousers", "パンツ", "スラックス"]
+  footwear: ["boots", "sneaker", "ブーツ", "スニーカー", "シューズ"]
+  accessory: ["belt", "wallet", "keyholder", "ベルト", "財布", "キーホルダ", "バッグ"]
+
+materials:
+  silver: ["silver", "sterling", "925", "シルバー", "銀製"]
+  leather: ["leather", "calf", "horsehide", "レザー", "革", "馬革"]
+  mohair: ["mohair", "モヘア"]
+  cashmere: ["cashmere", "カシミヤ"]
+  denim: ["denim", "デニム"]
+
+negative_terms:
+  irrelevant: ["poster", "figure", "doll", "toy", "phone case", "ポスター", "フィギュア", "人形", "ぬいぐるみ", "スマホケース"]
+  counterfeit: ["replica", "fake", "faux", "inspired", "style", "type", "レプリカ", "コピー", "タイプ", "ノーブランド", "社外品"]
+  generic: ["basic", "logo tee", "ノベルティ", "販促", "付録"]
+
+corpus_sources:
+  - {name: "4G Seller", role: "taste", state: "observed"}
+  - {name: "Archive Threads", role: "taste", state: "observed"}
+  - {name: "Dolce Vita Hub", role: "taste", state: "observed"}
+  - {name: "Restricted Lifestyle", role: "taste", state: "observed"}
+  - {name: "Playboi Carti references", role: "style_reference", state: "observed"}
+  - {name: "PZ / @p3ezy references", role: "style_reference", state: "observed"}

@@ -42,6 +42,10 @@ class LiveListing:
     bid_count: int | None = None
     watch_count: int | None = None
     raw: dict[str, Any] | None = None
+    desirability_score: int | None = None
+    opportunity_score: int | None = None
+    auth_risk: str | None = None
+    comp_confidence: str | None = None
 
 
 class ListingSource(ABC):
@@ -150,7 +154,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                 detail_page = await browser.new_page()
                 try:
                     for row in data:
-                        if row.get("title") or row.get("data_title") or row.get("image_alt"):
+                        if self._extract_card_title(row):
                             continue
                         detail_url = (
                             row["href"]
@@ -203,7 +207,9 @@ class BuyeeAuthenticatedSource(ListingSource):
             value = row.get(key)
             if value:
                 cleaned = normalize_text(str(value))
-                if cleaned and not re.search(r"(?i)Time Remaining|YEN|JPY|US\$", cleaned):
+                if cleaned and not re.search(
+                    r"(?i)Time Remaining|YEN|JPY|US\$|^With Authentication$", cleaned
+                ):
                     return cleaned
         return ""
 

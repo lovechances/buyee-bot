@@ -12,10 +12,24 @@ from buyeeye.browser_session import (
 )
 from buyeeye.db import Listing, get_session, save_listings
 from buyeeye.discovery import dedupe_listings, generate_search_queries
+from buyeeye.evaluation import (
+    assess_auth_risk,
+    evaluate_comps,
+    evaluate_economics,
+    score_desirability,
+)
+from buyeeye.fashion import enrich_title, expand_discovery_terms
 from buyeeye.intelligence import list_proposals
 from buyeeye.live_sources import BuyeeAuthenticatedSource, LiveListing
+from buyeeye.models import Comp
 from buyeeye.normalize import negative_term_hits, normalize_season, normalize_text
-from buyeeye.pipeline import _is_relevant, _minutes_remaining, _price_is_valid, _route, scan_once
+from buyeeye.pipeline import (
+    _is_relevant,
+    _minutes_remaining,
+    _price_is_valid,
+    _route,
+    scan_once,
+)
 from buyeeye.scoring import score_listing
 from buyeeye.taste import classify_brand, extract_taste_signals
 from buyeeye.valuation import estimate_landed_cost_jpy, estimate_max_bid_jpy
@@ -105,6 +119,66 @@ def test_extract_taste_signals_and_brand_classification():
     assert "rebuild" in positives
     assert classify_brand("Number Nine") == "number_nine"
     assert "generic" not in negatives
+
+
+def test_fashion_enrichment_recognizes_archive_context_and_japanese_terms():
+    profile = enrich_title("ナンバーナイン 03AW カート期 モヘア ニット")
+    assert profile.brand and profile.brand.value == "Number (N)ine"
+    assert profile.collection and profile.collection.value == "The High Streets"
+    assert profile.item_type and profile.item_type.value == "knitwear"
+    assert profile.material and profile.material.value == "mohair"
+    assert profile.season and profile.season.value == "03AW"
+    assert profile.brand.provenance.startswith("taxonomy.brands")
+
+
+def test_placeholder_authentication_badge_is_not_a_listing_title():
+    assert BuyeeAuthenticatedSource._extract_card_title({"title": "With Authentication"}) == ""
+
+
+def test_generic_brand_item_scores_below_piece_specific_archive_item():
+    generic = enrich_title("Saint Laurent basic logo tee")
+    archive = enrich_title("Saint Laurent Paris Hedi 2015 Babycat runway jacket")
+    generic_score = score_desirability(generic, "Saint Laurent basic logo tee")
+    archive_score = score_desirability(archive, "Saint Laurent Paris Hedi 2015 Babycat runway jacket")
+    assert generic_score.score < 20
+    assert archive_score.score >= 55
+    assert "brand match without piece-specific desirability evidence" in generic_score.warnings
+
+
+def test_piece_aware_comps_reject_brand_only_category_mismatch_and_active_asks():
+    profile = enrich_title("Chrome Hearts keeper 925 silver bracelet")
+    comps = [
+        Comp("grailed_sold", "Chrome Hearts keeper 925 silver bracelet", 180_000, 0.95, 30),
+        Comp("ebay_sold", "Chrome Hearts floral 925 silver bracelet", 160_000, 0.85, 60),
+        Comp("grailed_sold", "Chrome Hearts logo t-shirt", 45_000, 0.95, 20),
+        Comp("reseller_ask", "Chrome Hearts keeper bracelet", 400_000, 1.0, 1, is_sold=False),
+    ]
+    result = evaluate_comps(profile, comps)
+    assert result.median_jpy == 170_000
+    assert len(result.matches) == 2
+    assert result.confidence == "low"
+
+
+def test_economics_stays_separate_and_fails_closed_without_comps():
+    no_comps = evaluate_comps(enrich_title("Dior Homme Hedi Strip jacket"), [])
+    result = evaluate_economics(20_000, no_comps)
+    assert result.landed_cost_jpy and result.landed_cost_jpy > 20_000
+    assert result.opportunity_score == 0
+    assert result.multiple is None
+    assert "no reliable sold-market valuation" in result.warnings
+
+
+def test_auth_risk_is_explainable_and_conservative():
+    profile = enrich_title("Chrome Hearts style 925 ring")
+    risk = assess_auth_risk(profile, "Chrome Hearts style 925 ring", 3_000, {})
+    assert risk.level == "do_not_touch"
+    assert "counterfeit-associated seller wording" in risk.reasons
+
+
+def test_discovery_expansion_has_provenance_and_japanese_aliases():
+    terms = expand_discovery_terms("margiela")
+    assert any(term["term"] == "マルタンマルジェラ" for term in terms)
+    assert all(term["provenance"].startswith("taxonomy.brands.margiela") for term in terms)
 
 
 def test_landed_cost_and_bid_math():
@@ -423,8 +497,8 @@ def test_scan_suppresses_unchanged_qualifying_alert(monkeypatch, tmp_path):
         source="buyee",
         source_listing_id="dedupe-alert-1",
         url="https://buyee.jp/item/dedupe-alert-1",
-        title_original="Number (N)ine archive jacket",
-        title_normalized="number n ine archive jacket",
+        title_original="Number (N)ine 08AW A Closed Feeling destroy mohair patchwork jacket",
+        title_normalized="number n ine 08aw a closed feeling destroy mohair patchwork jacket",
         brand="Number (N)ine",
         category="menswear",
         current_price=4000,
@@ -439,7 +513,6 @@ def test_scan_suppresses_unchanged_qualifying_alert(monkeypatch, tmp_path):
         return [listing]
 
     monkeypatch.setattr("buyeeye.pipeline.LiveMarketLoop.run_once", fake_run_once)
-    monkeypatch.setattr("buyeeye.pipeline.score_listing", lambda payload: 90)
     monkeypatch.setattr("buyeeye.pipeline.send_listing_alert", lambda *args: (True, 204, 0.01))
     db_path = tmp_path / "dedupe.db"
 
