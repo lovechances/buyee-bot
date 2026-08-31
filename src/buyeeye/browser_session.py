@@ -6,8 +6,11 @@ import shutil
 import signal
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext as AsyncBrowserContext
+    from playwright.sync_api import BrowserContext, Page, Playwright
 
 SESSION_DIR = Path("data/browser")
 STATE_PATH = SESSION_DIR / "buyee_state.json"
@@ -48,14 +51,16 @@ def _remove_stale_profile_artifacts(profile_dir: Path) -> None:
     if not profile_dir.exists():
         return
 
-    for stale in [
-        "SingletonLock",
-        "SingletonSock",
-        "SingletonCookie",
-        "SingletonSocket",
-    ]:
-        path = profile_dir / stale
-        if path.exists():
+    stale_paths = {
+        profile_dir / name
+        for name in ["SingletonLock", "SingletonSock", "SingletonCookie", "SingletonSocket"]
+    }
+    stale_paths.update(profile_dir.glob("SingletonLock*"))
+    stale_paths.update(profile_dir.glob("SingletonSock*"))
+    stale_paths.update(profile_dir.glob("SingletonCookie*"))
+    stale_paths.update(profile_dir.glob("SingletonSocket*"))
+    for path in stale_paths:
+        if path.exists() or path.is_symlink():
             if path.is_dir() and not path.is_symlink():
                 for child in sorted(path.iterdir(), reverse=True):
                     if child.is_file() or child.is_symlink():
@@ -64,17 +69,8 @@ def _remove_stale_profile_artifacts(profile_dir: Path) -> None:
             else:
                 path.unlink()
 
-    for lock_file in sorted(profile_dir.rglob("*LOCK"), reverse=True):
-        if lock_file.exists():
-            lock_file.unlink()
-
-    for lock_file in sorted(profile_dir.rglob("*.lock"), reverse=True):
-        if lock_file.exists():
-            lock_file.unlink()
-
-    for other in sorted(profile_dir.rglob("*.ldb"), reverse=True):
-        if other.exists():
-            other.unlink()
+    # LevelDB files (including *.ldb and nested LOCK files) contain profile state.
+    # They are not Chromium singleton lifecycle artifacts and must be preserved.
 
 
 def reset_browser_profile(profile_dir: Path | str | None = None) -> Path:
@@ -162,7 +158,9 @@ def restore_session_cookies(context: BrowserContext, state_path: str | Path | No
         context.add_cookies(cookies)
 
 
-async def restore_session_cookies_async(context: BrowserContext, state_path: str | Path | None = None) -> None:
+async def restore_session_cookies_async(
+    context: AsyncBrowserContext, state_path: str | Path | None = None
+) -> None:
     path = Path(state_path) if state_path is not None else STATE_PATH
     if not path.exists():
         return
@@ -191,28 +189,28 @@ async def restore_session_cookies_async(context: BrowserContext, state_path: str
         await context.add_cookies(cookies)
 
 
-def launch_manual_buyee_login() -> tuple[Browser, BrowserContext, Page]:
+def launch_manual_buyee_login() -> tuple[Playwright, BrowserContext, Page]:
     """Open a fresh headed browser profile and restore the saved Buyee auth if present.
 
-    The old persistent Chrome profile is known to hang during restore, so we reset it and
-    explicitly rehydrate cookies into a clean context instead of reusing a dead profile.
+    Reuse the persistent profile after removing only stale browser lifecycle artifacts.
     """
+    from playwright.sync_api import sync_playwright
+
     ensure_browser_dir()
     playwright = sync_playwright().start()
-    profile_dir = reset_browser_profile(SESSION_DIR)
-    browser = playwright.chromium.launch_persistent_context(
-        str(profile_dir),
+    context = playwright.chromium.launch_persistent_context(
+        str(SESSION_DIR),
         headless=False,
+        args=["--window-position=-10000,-10000"],
         viewport={"width": 1440, "height": 1100},
     )
-    context = browser
     restore_session_cookies(context, STATE_PATH)
     page = context.new_page()
     page.add_init_script("""
         Object.defineProperty(window, '__BUYEYE_SESSION_READY__', { value: true, configurable: true });
     """)
     page.goto("https://buyee.jp/", wait_until="domcontentloaded", timeout=45000)
-    return browser, context, page
+    return playwright, context, page
 
 
 def save_session_state(context: BrowserContext) -> None:

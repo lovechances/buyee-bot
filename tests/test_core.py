@@ -5,11 +5,17 @@ from pathlib import Path
 
 import httpx
 
-from buyeeye.browser_session import has_valid_session, load_session_cookies
+from buyeeye.browser_session import (
+    _remove_stale_profile_artifacts,
+    has_valid_session,
+    load_session_cookies,
+)
+from buyeeye.db import Listing, get_session, save_listings
 from buyeeye.discovery import dedupe_listings, generate_search_queries
 from buyeeye.intelligence import list_proposals
 from buyeeye.live_sources import BuyeeAuthenticatedSource, LiveListing
 from buyeeye.normalize import negative_term_hits, normalize_season, normalize_text
+from buyeeye.pipeline import _is_relevant, _minutes_remaining, _price_is_valid, _route, scan_once
 from buyeeye.scoring import score_listing
 from buyeeye.taste import classify_brand, extract_taste_signals
 from buyeeye.valuation import estimate_landed_cost_jpy, estimate_max_bid_jpy
@@ -35,6 +41,28 @@ def test_load_session_cookies_reads_saved_state(monkeypatch, tmp_path):
     cookies = load_session_cookies()
     assert cookies["_fwb"] == "abc123"
     assert cookies["_fwb"]
+
+
+def test_stale_singleton_cleanup_preserves_profile_data(tmp_path):
+    profile = tmp_path / "browser"
+    profile.mkdir()
+    cookie_db = profile / "Cookies"
+    level_db = profile / "000123.ldb"
+    nested_lock = profile / "Local Storage" / "leveldb" / "LOCK"
+    nested_lock.parent.mkdir(parents=True)
+    cookie_db.write_bytes(b"cookie-state")
+    level_db.write_bytes(b"level-state")
+    nested_lock.write_bytes(b"level-lock")
+    (profile / "SingletonCookie 2").write_text("stale", encoding="utf-8")
+    (profile / "SingletonLock").symlink_to(profile / "missing-target")
+
+    _remove_stale_profile_artifacts(profile)
+
+    assert not (profile / "SingletonCookie 2").exists()
+    assert not (profile / "SingletonLock").is_symlink()
+    assert cookie_db.read_bytes() == b"cookie-state"
+    assert level_db.read_bytes() == b"level-state"
+    assert nested_lock.read_bytes() == b"level-lock"
 
 
 def test_generate_search_queries_contains_aliases_and_terms():
@@ -70,7 +98,9 @@ def test_normalization_and_negative_terms():
 
 
 def test_extract_taste_signals_and_brand_classification():
-    positives, negatives = extract_taste_signals("Number (N)ine destroy mohair archive", "This is a rebuild")
+    positives, negatives = extract_taste_signals(
+        "Number (N)ine destroy mohair archive", "This is a rebuild"
+    )
     assert "destroy" in positives
     assert "rebuild" in positives
     assert classify_brand("Number Nine") == "number_nine"
@@ -78,7 +108,20 @@ def test_extract_taste_signals_and_brand_classification():
 
 
 def test_landed_cost_and_bid_math():
-    landed = estimate_landed_cost_jpy(10000, {"pricing": {"buyee_fee_percent": 0.1, "plan_fee_jpy": 350, "international_shipping_jpy": 1500, "packaging_jpy": 300, "insurance_percent": 0.02, "duty_percent": 0.08, "reserve_percent": 0.05}})
+    landed = estimate_landed_cost_jpy(
+        10000,
+        {
+            "pricing": {
+                "buyee_fee_percent": 0.1,
+                "plan_fee_jpy": 350,
+                "international_shipping_jpy": 1500,
+                "packaging_jpy": 300,
+                "insurance_percent": 0.02,
+                "duty_percent": 0.08,
+                "reserve_percent": 0.05,
+            }
+        },
+    )
     assert landed["landed_jpy"] > 10000
     assert estimate_max_bid_jpy(5000, 8000, {"pricing": {"min_profit_multiple": 1.5}}) <= 10000
 
@@ -169,21 +212,241 @@ def test_buyee_authenticated_source_uses_browser_fallback_on_http_403(monkeypatc
     assert items[0].current_price == 12000
 
 
+def test_buyee_authenticated_source_uses_browser_fallback_on_empty_http_200(monkeypatch):
+    class FakeResponse:
+        text = "<html><body>interstitial without listings</body></html>"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    expected = [
+        LiveListing(
+            source="buyee",
+            source_listing_id="fallback-200",
+            url="https://buyee.jp/item/fallback-200",
+            title_original="Number (N)ine jacket",
+            title_normalized="number n ine jacket",
+            brand="Number (N)ine",
+            category="menswear",
+            current_price=12000,
+            buyout_price=None,
+            starting_price=12000,
+            seller_name=None,
+            condition=None,
+        )
+    ]
+    monkeypatch.setattr("buyeeye.live_sources.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr(
+        "buyeeye.live_sources.BuyeeAuthenticatedSource._fetch_via_browser",
+        lambda self, query: expected,
+    )
+
+    assert asyncio.run(BuyeeAuthenticatedSource().fetch("Number (N)ine")) == expected
+
+
 def test_buyee_browser_payload_parser_extracts_live_listing_fields_from_real_dom():
     rows = [
         {
             "href": "https://buyee.jp/item/jdirectitems/auction/s1242650927?conversionType=yac_top_recommend_list",
             "text": "Time Remaining 6 day(s) 3,300 YEN (US$21.65)",
+            "title": "Number (N)ine overshirt",
+            "image_url": "https://example.com/overshirt.jpg",
         },
         {
             "href": "https://buyee.jp/item/jdirectitems/auction/c1242648160?conversionType=yac_top_recommend_list",
             "text": "Time Remaining 13 hour(s) 4,000 YEN (US$26.24)",
+            "image_url": "https://example.com/other.jpg",
         },
     ]
 
     items = BuyeeAuthenticatedSource._items_from_browser_payload(rows, "Number (N)ine")
     assert len(items) == 2
+    assert items[0].title_original == "Number (N)ine overshirt"
+    assert items[0].time_remaining == "6 day(s)"
     assert items[0].current_price == 3300
     assert items[0].source_listing_id.endswith("1242650927")
-    assert "Time Remaining" in items[0].title_original
+    assert items[1].title_original == ""
+    assert items[1].time_remaining == "13 hour(s)"
     assert items[1].current_price == 4000
+    assert (
+        BuyeeAuthenticatedSource._extract_time_remaining(
+            "Current Price 3,300 YEN Time Remaining 2 day(s) Number of Bids 4"
+        )
+        == "2 day(s)"
+    )
+    assert (
+        BuyeeAuthenticatedSource._extract_brand("ナンバーナイン ジップパーカー") == "Number (N)ine"
+    )
+    assert BuyeeAuthenticatedSource._infer_category("ナンバーナイン ジップパーカー") == "menswear"
+
+
+def test_alert_quality_guards_reject_discovery_only_and_bad_prices():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="quality-1",
+        url="https://buyee.jp/item/quality-1",
+        title_original="Number (N)ine archive overshirt",
+        title_normalized="Number (N)ine archive overshirt",
+        brand="Number (N)ine",
+        category="unknown",
+        current_price=3300,
+        buyout_price=None,
+        starting_price=3300,
+        seller_name=None,
+        condition=None,
+        time_remaining="7 day(s)",
+    )
+    assert _is_relevant(listing) is True
+    assert _minutes_remaining("7 day(s)") == 10080
+    assert _route(listing, 10) is None
+    listing.current_price = 99_999_999
+    assert _price_is_valid(listing) is False
+
+
+def test_ending_route_requires_confident_sixty_minute_window():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="ending-1",
+        url="https://buyee.jp/item/ending-1",
+        title_original="Number (N)ine destroy knit",
+        title_normalized="Number (N)ine destroy knit",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=3300,
+        buyout_price=None,
+        starting_price=3300,
+        seller_name=None,
+        condition=None,
+        time_remaining="45 minutes",
+    )
+    assert _route(listing, 70, 60) == ("ending", "auction ends within the configured threshold")
+    listing.time_remaining = "2 day(s)"
+    assert _route(listing, 70, 60) is None
+    listing.time_remaining = "unknown"
+    assert _route(listing, 70, 60) is None
+
+
+def test_irrelevant_listing_is_not_relevant():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="irrelevant-1",
+        url="https://buyee.jp/item/irrelevant-1",
+        title_original="Number (N)ine poster figure",
+        title_normalized="Number (N)ine poster figure",
+        brand="Number (N)ine",
+        category="collectible",
+        current_price=1000,
+        buyout_price=None,
+        starting_price=1000,
+        seller_name=None,
+        condition=None,
+    )
+    assert _is_relevant(listing) is False
+
+
+def test_save_listings_upserts_existing_listing_by_source_and_id(tmp_path):
+    db_path = tmp_path / "buyeeye.db"
+    first = [
+        LiveListing(
+            source="buyee",
+            source_listing_id="abc123",
+            url="https://buyee.jp/item/jdirectitems/auction/abc123",
+            title_original="Number (N)ine overshirt",
+            title_normalized="number n ine overshirt",
+            brand="Number (N)ine",
+            category="unknown",
+            current_price=3300,
+            buyout_price=None,
+            starting_price=3300,
+            seller_name=None,
+            condition=None,
+            image_url="https://example.com/overshirt.jpg",
+            time_remaining="6 day(s)",
+            bid_count=5,
+            watch_count=17,
+            raw={"query": "Number (N)ine"},
+        )
+    ]
+    created1, updated1 = save_listings(first, db_path)
+    assert created1 == 1 and updated1 == 0
+
+    second = [
+        LiveListing(
+            source="buyee",
+            source_listing_id="abc123",
+            url="https://buyee.jp/item/jdirectitems/auction/abc123",
+            title_original="Number (N)ine overshirt",
+            title_normalized="number n ine overshirt",
+            brand="Number (N)ine",
+            category="unknown",
+            current_price=3600,
+            buyout_price=None,
+            starting_price=3300,
+            seller_name=None,
+            condition=None,
+            image_url="https://example.com/overshirt.jpg",
+            time_remaining="5 day(s)",
+            bid_count=7,
+            watch_count=21,
+            raw={"query": "Number (N)ine"},
+        )
+    ]
+    created2, updated2 = save_listings(second, db_path)
+    assert created2 == 0 and updated2 == 1
+
+    session = get_session(db_path)
+    try:
+        rows = session.query(Listing).all()
+        assert len(rows) == 1
+        assert rows[0].current_price == 3600
+        assert rows[0].time_remaining == "5 day(s)"
+        assert rows[0].bid_count == 7
+    finally:
+        session.close()
+
+
+def test_scan_suppresses_unchanged_qualifying_alert(monkeypatch, tmp_path):
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="dedupe-alert-1",
+        url="https://buyee.jp/item/dedupe-alert-1",
+        title_original="Number (N)ine archive jacket",
+        title_normalized="number n ine archive jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=4000,
+        buyout_price=4000,
+        starting_price=4000,
+        seller_name=None,
+        condition=None,
+        time_remaining="2 day(s)",
+    )
+
+    async def fake_run_once(self, query, persist=False):
+        return [listing]
+
+    monkeypatch.setattr("buyeeye.pipeline.LiveMarketLoop.run_once", fake_run_once)
+    monkeypatch.setattr("buyeeye.pipeline.score_listing", lambda payload: 90)
+    monkeypatch.setattr("buyeeye.pipeline.send_listing_alert", lambda *args: (True, 204, 0.01))
+    db_path = tmp_path / "dedupe.db"
+
+    first = asyncio.run(scan_once("Number (N)ine", db_path))
+    second = asyncio.run(scan_once("Number (N)ine", db_path))
+
+    assert first.new_alerts == 1
+    assert second.new_alerts == 0
+    assert second.suppressed_alerts == 1
+    assert second.updated_rows == 1

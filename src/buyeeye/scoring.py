@@ -18,9 +18,24 @@ def score_listing(payload: dict[str, Any]) -> int:
         score += 8
     if "dior" in brand:
         score += 6
-    if any(word in title for word in ["destroy", "mohair", "patchwork", "archive", "rebuild", "rare", "runway", "collab"]):
+    if any(
+        word in title
+        for word in [
+            "destroy",
+            "mohair",
+            "patchwork",
+            "archive",
+            "rebuild",
+            "rare",
+            "runway",
+            "collab",
+        ]
+    ):
         score += 30
-    if any(tag in tags for tag in ["destroy", "mohair", "patchwork", "archive", "rebuild", "silver", "leather"]):
+    if any(
+        tag in tags
+        for tag in ["destroy", "mohair", "patchwork", "archive", "rebuild", "silver", "leather"]
+    ):
         score += 25
     if any(word in title for word in ["generic", "basic", "reprint", "diffusion", "logo tee"]):
         score -= 25

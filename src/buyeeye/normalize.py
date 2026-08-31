@@ -40,8 +40,19 @@ def negative_term_hits(text: str | None) -> list[str]:
         return []
     lowered = text.lower()
     negative_terms = [
-        "fake", "replica", "inspired by", "type", "style", "no brand", "reprint",
-        "diffusion", "generic", "logo tee", "レプリカ", "ノーブランド", "タイプ",
+        "fake",
+        "replica",
+        "inspired by",
+        "type",
+        "style",
+        "no brand",
+        "reprint",
+        "diffusion",
+        "generic",
+        "logo tee",
+        "レプリカ",
+        "ノーブランド",
+        "タイプ",
     ]
     hits: list[str] = []
     for term in negative_terms:

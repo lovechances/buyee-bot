@@ -62,12 +62,16 @@ def init_db(path: str | Path = DB_PATH) -> None:
         for table in SQLModel.metadata.sorted_tables:
             if table.name not in existing_tables:
                 continue
-            existing_columns = {column["name"] for column in inspect(connection).get_columns(table.name)}
+            existing_columns = {
+                column["name"] for column in inspect(connection).get_columns(table.name)
+            }
             for column in table.columns:
                 if column.name in existing_columns or column.primary_key:
                     continue
                 column_type = column.type.compile(dialect=engine.dialect)
-                connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}'))
+                connection.execute(
+                    text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}')
+                )
 
 
 def get_session(path: str | Path = DB_PATH) -> Session:
@@ -95,7 +99,9 @@ def save_listings(listings: list[Any], path: str | Path = DB_PATH) -> tuple[int,
             if not source or not source_listing_id:
                 continue
             existing = session.exec(
-                select(Listing).where(Listing.source == source, Listing.source_listing_id == source_listing_id)
+                select(Listing).where(
+                    Listing.source == source, Listing.source_listing_id == source_listing_id
+                )
             ).first()
             values = {
                 "url": getattr(row, "url", None),
@@ -126,7 +132,9 @@ def save_listings(listings: list[Any], path: str | Path = DB_PATH) -> tuple[int,
     return created, updated
 
 
-def get_alert_state(source: str, source_listing_id: str, path: str | Path = DB_PATH) -> AlertState | None:
+def get_alert_state(
+    source: str, source_listing_id: str, path: str | Path = DB_PATH
+) -> AlertState | None:
     with get_session(path) as session:
         return session.exec(
             select(AlertState).where(

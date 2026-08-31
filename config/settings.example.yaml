@@ -25,6 +25,7 @@ pricing:
   min_profit_multiple: 1.5
 
 alert:
+  ending_threshold_minutes: 60
   buyout_min_score: 78
   ending_min_score: 70
   grail_min_score: 82

@@ -65,7 +65,9 @@ def send_test_alert() -> int:
     webhooks = _webhooks()
     configured = [name for name, url in webhooks.items() if url]
     if not configured:
-        print("No Discord webhooks configured. Set DISCORD_WEBHOOK_* in your environment before sending real alerts.")
+        print(
+            "No Discord webhooks configured. Set DISCORD_WEBHOOK_* in your environment before sending real alerts."
+        )
         return 1
 
     payload = {
@@ -79,7 +81,11 @@ def send_test_alert() -> int:
                 "fields": [
                     {"name": "Price", "value": "3,300 YEN", "inline": True},
                     {"name": "Time remaining", "value": "6 day(s)", "inline": True},
-                    {"name": "Reason", "value": "Live parser + DB path is active; this is a test delivery only.", "inline": False},
+                    {
+                        "name": "Reason",
+                        "value": "Live parser + DB path is active; this is a test delivery only.",
+                        "inline": False,
+                    },
                 ],
             }
         ],
@@ -92,22 +98,36 @@ def send_test_alert() -> int:
         success, result, elapsed = _send_webhook(url, payload)
         if success:
             sent += 1
-            print(f"Discord alert: channel={name} attempted success status={result} elapsed={elapsed:.2f}s")
+            print(
+                f"Discord alert: channel={name} attempted success status={result} elapsed={elapsed:.2f}s"
+            )
         else:
-            print(f"Discord alert: channel={name} attempted failure error={result} elapsed={elapsed:.2f}s")
+            print(
+                f"Discord alert: channel={name} attempted failure error={result} elapsed={elapsed:.2f}s"
+            )
     return 0 if sent else 1
 
 
-def send_listing_alert(listing: Any, route: str, reason: str, score: int) -> tuple[bool, int | str, float]:
+def send_listing_alert(
+    listing: Any, route: str, reason: str, score: int
+) -> tuple[bool, int | str, float]:
     url = _webhooks().get(route, "")
     if not url:
         return False, "route_unconfigured", 0.0
     title = listing.title_original or "Untitled Buyee listing"
     fields = [
-        {"name": "Price", "value": f"{listing.current_price:,} YEN" if listing.current_price else "unknown", "inline": True},
+        {
+            "name": "Price",
+            "value": f"{listing.current_price:,} YEN" if listing.current_price else "unknown",
+            "inline": True,
+        },
         {"name": "Time remaining", "value": listing.time_remaining or "unknown", "inline": True},
         {"name": "Score", "value": str(score), "inline": True},
-        {"name": "Brand / category", "value": f"{listing.brand or 'unknown'} / {listing.category or 'unknown'}", "inline": False},
+        {
+            "name": "Brand / category",
+            "value": f"{listing.brand or 'unknown'} / {listing.category or 'unknown'}",
+            "inline": False,
+        },
         {"name": "Reason", "value": reason, "inline": False},
     ]
     payload: dict[str, Any] = {

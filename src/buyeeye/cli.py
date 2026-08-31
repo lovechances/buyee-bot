@@ -96,7 +96,9 @@ def main(argv: list[str] | None = None) -> int:
                 for query in queries:
                     try:
                         result = asyncio.run(scan_once(query, db_path))
-                        print(f"query={query!r} scanned={result.scanned} alerts={result.new_alerts} suppressed={result.suppressed_alerts}")
+                        print(
+                            f"query={query!r} scanned={result.scanned} alerts={result.new_alerts} suppressed={result.suppressed_alerts}"
+                        )
                         backoff = interval
                     except Exception as exc:  # noqa: BLE001
                         print(f"query={query!r} failed={type(exc).__name__} retry_in={backoff}s")
@@ -121,25 +123,37 @@ def main(argv: list[str] | None = None) -> int:
         query = args.query or (queries[0] if queries else "Number (N)ine")
         try:
             result = asyncio.run(scan_once(query, db_path))
-        except (OSError, RuntimeError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"query={query!r} failed={type(exc).__name__}")
             return 1
-        print(f"query={query!r} scanned={result.scanned} new_rows={result.new_rows} updated_rows={result.updated_rows} alerts={result.new_alerts} suppressed={result.suppressed_alerts} failed_alerts={result.failed_alerts}")
+        print(
+            f"query={query!r} scanned={result.scanned} rejected_irrelevant={result.rejected_irrelevant} "
+            f"rejected_invalid={result.rejected_invalid} below_threshold={result.below_threshold} "
+            f"new_rows={result.new_rows} updated_rows={result.updated_rows} alerts={result.new_alerts} "
+            f"suppressed={result.suppressed_alerts} failed_alerts={result.failed_alerts} routes={result.route_counts}"
+        )
         return 0 if result.scanned else 1
 
     if args.command == "setup-session":
         if has_valid_session():
-            print("An existing Buyee session is already saved; reopening the persistent profile to reuse it.")
+            print(
+                "An existing Buyee session is already saved; reopening the persistent profile to reuse it."
+            )
         else:
-            print("Opening a headed browser for Buyee sign-in. Please log in in the browser window.")
-        browser, context, page = launch_manual_buyee_login()
+            print(
+                "Opening a headed browser for Buyee sign-in. Please log in in the browser window."
+            )
+        playwright, context, page = launch_manual_buyee_login()
         try:
-            input("When the page is ready and logged in, press Enter to save the browser session and close the browser: ")
+            input(
+                "When the page is ready and logged in, press Enter to save the browser session and close the browser: "
+            )
             save_session_state(context)
             print("Buyee browser session saved to data/browser/buyee_state.json")
             print(f"Current page title: {page.title()}")
         finally:
-            browser.close()
+            context.close()
+            playwright.stop()
         return 0
 
     if args.command == "send-test-alert":

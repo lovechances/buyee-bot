@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 import httpx
 import yaml
@@ -71,36 +71,47 @@ def load_live_queries(config_path: str | Path = "config/searches.yaml") -> list[
 
 
 class BuyeeAuthenticatedSource(ListingSource):
+    @staticmethod
+    def _search_url(query: str | None) -> str:
+        if not query:
+            return "https://buyee.jp/jdirectitems/auction"
+        return f"https://buyee.jp/item/search/query/{quote(query, safe='')}"
+
     async def fetch(self, query: str | None = None) -> list[LiveListing]:
         cookies = load_session_cookies()
         if not cookies:
             result = self._fetch_via_browser(query)
             return await result if hasattr(result, "__await__") else result
 
-        params = {"q": query} if query else None
-        url = "https://buyee.jp/jdirectitems/auction"
+        url = self._search_url(query)
         try:
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, cookies=cookies) as client:
-                response = await client.get(url, params=params)
+            async with httpx.AsyncClient(
+                timeout=20.0, follow_redirects=True, cookies=cookies
+            ) as client:
+                response = await client.get(url)
                 response.raise_for_status()
         except (httpx.HTTPError, ValueError):
             result = self._fetch_via_browser(query)
             return await result if hasattr(result, "__await__") else result
 
-        return self._parse_listing_html(response.text, query)
+        listings = self._parse_listing_html(response.text, query)
+        if listings:
+            return listings
+        result = self._fetch_via_browser(query)
+        return await result if hasattr(result, "__await__") else result
 
     async def _fetch_via_browser(self, query: str | None = None) -> list[LiveListing]:
+        from playwright.async_api import Error as PlaywrightError
         from playwright.async_api import async_playwright
 
-        url = "https://buyee.jp/jdirectitems/auction"
-        if query:
-            url = f"{url}?q={quote_plus(query)}"
+        url = self._search_url(query)
 
         ensure_browser_dir()
         async with async_playwright() as p:
             browser = await p.chromium.launch_persistent_context(
                 str(SESSION_DIR),
                 headless=False,
+                args=["--window-position=-10000,-10000"],
                 viewport={"width": 1440, "height": 1100},
             )
             try:
@@ -109,17 +120,58 @@ class BuyeeAuthenticatedSource(ListingSource):
                 await page.goto("https://buyee.jp/", wait_until="domcontentloaded", timeout=45000)
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(4000)
-                data = await page.evaluate(
-                    """
+                listing_script = """
                     () => Array.from(document.querySelectorAll('a[href]'))
-                        .map(a => ({
+                        .map(a => {
+                            const card = a.closest('li');
+                            const titleNode = card?.querySelector(
+                                '.top-items__title, .top-items__name, [data-item-title], h2, h3'
+                            );
+                            return {
                             href: a.href,
-                            text: (a.textContent || '').replace(/\\s+/g, ' ').trim()
-                        }))
+                            text: (card?.innerText || a.textContent || '').replace(/\\s+/g, ' ').trim(),
+                            title: (a.textContent || '').replace(/\\s+/g, ' ').trim() || titleNode?.textContent?.trim() || a.getAttribute('title') || a.getAttribute('aria-label') || '',
+                            image_url: card?.querySelector('img')?.src || a.querySelector('img')?.src || '',
+                            image_alt: card?.querySelector('img')?.alt || a.querySelector('img')?.alt || '',
+                            data_title: a.getAttribute('data-title') || ''
+                            };
+                        })
                         .filter(x => x.href.includes('/item/jdirectitems/auction/'))
                         .slice(0, 20)
                     """
-                )
+                try:
+                    data = await page.evaluate(listing_script)
+                except PlaywrightError as exc:
+                    if "Execution context was destroyed" not in str(exc):
+                        raise
+                    await page.wait_for_load_state("domcontentloaded", timeout=45000)
+                    await page.wait_for_timeout(3000)
+                    data = await page.evaluate(listing_script)
+                detail_page = await browser.new_page()
+                try:
+                    for row in data:
+                        if row.get("title") or row.get("data_title") or row.get("image_alt"):
+                            continue
+                        detail_url = (
+                            row["href"]
+                            if row["href"].startswith("http")
+                            else f"https://buyee.jp{row['href']}"
+                        )
+                        try:
+                            await detail_page.goto(
+                                detail_url, wait_until="domcontentloaded", timeout=60000
+                            )
+                            await detail_page.wait_for_timeout(1000)
+                            row["title"] = (
+                                await detail_page.locator(
+                                    ".itemInformation__itemName, .itemInformation__title"
+                                ).first.text_content()
+                                or await detail_page.title()
+                            )
+                        except (OSError, PlaywrightError, TimeoutError):
+                            continue
+                finally:
+                    await detail_page.close()
                 return self._items_from_browser_payload(data, query)
             finally:
                 await browser.close()
@@ -137,7 +189,17 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _extract_card_title(row: dict[str, Any]) -> str:
-        for key in ("title", "item_title", "listing_title", "name", "item_name", "title_original", "itemName"):
+        for key in (
+            "title",
+            "item_title",
+            "listing_title",
+            "name",
+            "item_name",
+            "title_original",
+            "itemName",
+            "data_title",
+            "image_alt",
+        ):
             value = row.get(key)
             if value:
                 cleaned = normalize_text(str(value))
@@ -148,7 +210,7 @@ class BuyeeAuthenticatedSource(ListingSource):
     @staticmethod
     def _extract_time_remaining(text: str) -> str | None:
         match = re.search(
-            r"(?i)Time Remaining\s+(.+?)(?=\s+[0-9][0-9,]*\s*(?:YEN|JPY|¥|US\$)|$)",
+            r"(?i)Time Remaining\s+((?:\d+\s*(?:day|hour|minute)(?:\(s\)|s)?\s*)+)",
             text,
         )
         if match:
@@ -159,9 +221,13 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _extract_buyout_price(text: str) -> int | None:
-        match = re.search(r"(?i)(?:Buy\s*Now|Buyout|Buy\s*Out)\s*(?:[:\-]?)\s*(?:¥|JPY|YEN)?\s*([0-9][0-9,]*)", text)
+        match = re.search(
+            r"(?i)(?:Buy\s*Now|Buyout|Buy\s*Out)\s*(?:[:\-]?)\s*(?:¥|JPY|YEN)?\s*([0-9][0-9,]*)",
+            text,
+        )
         if match:
-            return int(match.group(1).replace(",", ""))
+            price = int(match.group(1).replace(",", ""))
+            return price if 0 < price <= 1_000_000 else None
         return None
 
     @staticmethod
@@ -179,7 +245,9 @@ class BuyeeAuthenticatedSource(ListingSource):
         return None
 
     @staticmethod
-    def _items_from_browser_payload(rows: list[dict[str, str]], query: str | None = None) -> list[LiveListing]:
+    def _items_from_browser_payload(
+        rows: list[dict[str, str]], query: str | None = None
+    ) -> list[LiveListing]:
         listings: list[LiveListing] = []
         seen: set[str] = set()
         for row in rows:
@@ -213,8 +281,10 @@ class BuyeeAuthenticatedSource(ListingSource):
                     url=href,
                     title_original=title_original,
                     title_normalized=normalize_text(title_original),
-                    brand=normalize_brand(BuyeeAuthenticatedSource._extract_brand(title_original or text)),
-                    category="unknown",
+                    brand=normalize_brand(
+                        BuyeeAuthenticatedSource._extract_brand(title_original or text)
+                    ),
+                    category=BuyeeAuthenticatedSource._infer_category(title_original),
                     current_price=price,
                     buyout_price=buyout_price,
                     starting_price=price,
@@ -248,7 +318,9 @@ class BuyeeAuthenticatedSource(ListingSource):
             seen.add(item_id)
             time_remaining = BuyeeAuthenticatedSource._extract_time_remaining(text)
             price = BuyeeAuthenticatedSource._extract_price(text)
-            title = BuyeeAuthenticatedSource._extract_card_title({"text": text, "title": item.get("title")})
+            title = BuyeeAuthenticatedSource._extract_card_title(
+                {"text": text, "title": item.get("title")}
+            )
             buyout_price = BuyeeAuthenticatedSource._extract_buyout_price(text)
             raw = {
                 "query": query or "buyee-auction",
@@ -265,7 +337,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                     title_original=title,
                     title_normalized=normalize_text(title),
                     brand=normalize_brand(BuyeeAuthenticatedSource._extract_brand(title or text)),
-                    category="unknown",
+                    category=BuyeeAuthenticatedSource._infer_category(title),
                     current_price=price,
                     buyout_price=buyout_price,
                     starting_price=price,
@@ -283,9 +355,69 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _extract_brand(title: str) -> str:
-        for marker in ["Number (N)ine", "Chrome Hearts", "Needles", "Rick Owens", "Dior Homme", "Saint Laurent"]:
+        if re.search(r"(?i)number\s*\(?n\)?\s*ine|ナンバーナイン", title):
+            return "Number (N)ine"
+        for marker in [
+            "Number (N)ine",
+            "Chrome Hearts",
+            "Needles",
+            "Rick Owens",
+            "Dior Homme",
+            "Saint Laurent",
+        ]:
             if marker.lower() in title.lower():
                 return marker
+        return "unknown"
+
+    @staticmethod
+    def _infer_category(title: str) -> str:
+        lowered = title.lower()
+        if any(
+            term in lowered
+            for term in (
+                "ring",
+                "necklace",
+                "bracelet",
+                "belt",
+                "wallet",
+                "keyholder",
+                "リング",
+                "ネックレス",
+                "ブレスレット",
+                "ベルト",
+                "財布",
+                "キーホルダ",
+            )
+        ):
+            return "accessory"
+        if any(
+            term in lowered
+            for term in (
+                "shirt",
+                "tee",
+                "jacket",
+                "coat",
+                "knit",
+                "cardigan",
+                "hoodie",
+                "pants",
+                "denim",
+                "jeans",
+                "boot",
+                "シャツ",
+                "ジャケット",
+                "コート",
+                "ニット",
+                "カーディガン",
+                "パーカー",
+                "パンツ",
+                "デニム",
+                "ジーンズ",
+                "ブーツ",
+                "セットアップ",
+            )
+        ):
+            return "menswear"
         return "unknown"
 
     @staticmethod
@@ -300,7 +432,10 @@ class BuyeeAuthenticatedSource(ListingSource):
         value = match.group(1) or match.group(2)
         if value is None:
             return None
-        return int(value.replace(",", ""))
+        price = int(value.replace(",", ""))
+        if price <= 0 or price > 1_000_000:
+            return None
+        return price
 
 
 class BuyeeYahooSearchSource(ListingSource):
@@ -339,7 +474,14 @@ class BuyeeYahooSearchSource(ListingSource):
 
     @staticmethod
     def _extract_brand(title: str) -> str:
-        for marker in ["Number (N)ine", "Chrome Hearts", "Needles", "Rick Owens", "Dior Homme", "Saint Laurent"]:
+        for marker in [
+            "Number (N)ine",
+            "Chrome Hearts",
+            "Needles",
+            "Rick Owens",
+            "Dior Homme",
+            "Saint Laurent",
+        ]:
             if marker.lower() in title.lower():
                 return marker
         return "unknown"
@@ -390,7 +532,14 @@ class YahooAuctionSource(ListingSource):
 
     @staticmethod
     def _extract_brand(title: str) -> str:
-        for marker in ["Number (N)ine", "Chrome Hearts", "Needles", "Rick Owens", "Dior Homme", "Saint Laurent"]:
+        for marker in [
+            "Number (N)ine",
+            "Chrome Hearts",
+            "Needles",
+            "Rick Owens",
+            "Dior Homme",
+            "Saint Laurent",
+        ]:
             if marker.lower() in title.lower():
                 return marker
         return "unknown"
@@ -400,7 +549,9 @@ class LiveMarketLoop:
     def __init__(self, sources: list[ListingSource] | None = None) -> None:
         self.sources = sources or [BuyeeAuthenticatedSource(), YahooAuctionSource()]
 
-    async def run_once(self, query: str, persist: bool = True, db_path: str | Path = DB_PATH) -> list[LiveListing]:
+    async def run_once(
+        self, query: str, persist: bool = True, db_path: str | Path = DB_PATH
+    ) -> list[LiveListing]:
         combined: list[LiveListing] = []
         for source in self.sources:
             try:
