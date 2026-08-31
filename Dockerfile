@@ -3,6 +3,8 @@ FROM python:3.13-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     BUYEYE_DATA_DIR=/data \
+    BUYEYE_DB_PATH=/data/buyeeye.db \
+    BUYEYE_SESSION_DIR=/data/browser \
     BUYEYE_CONFIG_DIR=/app/config
 
 WORKDIR /app
