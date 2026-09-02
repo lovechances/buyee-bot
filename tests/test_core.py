@@ -549,6 +549,25 @@ def test_buyee_browser_payload_parser_extracts_live_listing_fields_from_real_dom
     assert BuyeeAuthenticatedSource._infer_category("ナンバーナイン ジップパーカー") == "menswear"
 
 
+def test_empty_buyee_page_state_distinguishes_auth_empty_and_parser_anomaly():
+    assert (
+        BuyeeAuthenticatedSource._empty_page_state("Please log in to continue")
+        == "auth_expired"
+    )
+    assert (
+        BuyeeAuthenticatedSource._empty_page_state("No items matched your filters")
+        == "no_results"
+    )
+    assert (
+        BuyeeAuthenticatedSource._empty_page_state("Logout No results matched")
+        == "no_results"
+    )
+    assert (
+        BuyeeAuthenticatedSource._empty_page_state("Temporary empty search shell")
+        == "parser_anomaly"
+    )
+
+
 def test_alert_quality_guards_reject_discovery_only_and_bad_prices():
     listing = LiveListing(
         source="buyee",

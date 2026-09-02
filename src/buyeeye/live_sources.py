@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -97,6 +98,16 @@ class BuyeeAuthenticatedSource(ListingSource):
         if not query:
             return "https://buyee.jp/jdirectitems/auction"
         return f"https://buyee.jp/item/search/query/{quote(query, safe='')}"
+
+    @staticmethod
+    def _empty_page_state(body_text: str) -> str:
+        if "Logout" not in body_text and re.search(
+            r"(?i)\b(?:log in|login|sign in)\b", body_text
+        ):
+            return "auth_expired"
+        if re.search(r"(?i)no (?:items|results)|0 (?:items|results)|該当する商品", body_text):
+            return "no_results"
+        return "parser_anomaly"
 
     async def fetch(self, query: str | None = None) -> list[LiveListing]:
         if self.max_pages > 1:
@@ -200,10 +211,34 @@ class BuyeeAuthenticatedSource(ListingSource):
                     await page.wait_for_timeout(3000)
                 if not all_rows:
                     body_text = normalize_text((await page.locator("body").inner_text())[:10000])
-                    if "Logout" not in body_text and re.search(r"(?i)\b(?:log in|login|sign in)\b", body_text):
+                    state = self._empty_page_state(body_text)
+                    if state == "auth_expired":
                         raise AuthExpiredError("Buyee authenticated session is no longer active")
-                    if not re.search(r"(?i)no (?:items|results)|0 (?:items|results)|該当する商品", body_text):
-                        raise ParserAnomalyError("search page contained no recognizable listing cards")
+                    if state == "no_results":
+                        return []
+                    logging.getLogger("buyeeye.runtime").warning(
+                        "parser_empty_page query=%r recovery=same_context_reload", query
+                    )
+                    await page.reload(wait_until="domcontentloaded", timeout=60000)
+                    await page.wait_for_timeout(5000)
+                    all_rows.extend(await page.evaluate(listing_script))
+                    if all_rows:
+                        logging.getLogger("buyeeye.runtime").info(
+                            "parser_recovered query=%r recovery=same_context_reload", query
+                        )
+                    else:
+                        body_text = normalize_text(
+                            (await page.locator("body").inner_text())[:10000]
+                        )
+                        state = self._empty_page_state(body_text)
+                        if state == "auth_expired":
+                            raise AuthExpiredError(
+                                "Buyee authenticated session is no longer active"
+                            )
+                        if state == "parser_anomaly":
+                            raise ParserAnomalyError(
+                                "search page contained no recognizable listing cards"
+                            )
                 return self._items_from_browser_payload(all_rows, query)
             finally:
                 await browser.close()
