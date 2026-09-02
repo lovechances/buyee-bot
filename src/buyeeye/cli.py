@@ -11,7 +11,6 @@ import sys
 import time
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import Any
 
 from .browser_session import has_valid_session, launch_manual_buyee_login, save_session_state
@@ -27,7 +26,14 @@ from .runtime_state import (
     record_query_result,
     update_health,
 )
-from .settings import CONFIG_DIR, load_env_file, load_settings, load_yaml, runtime_data_dir
+from .settings import (
+    CONFIG_DIR,
+    load_env_file,
+    load_settings,
+    load_yaml,
+    runtime_data_dir,
+    runtime_state_path,
+)
 
 
 def _runtime_logger() -> logging.Logger:
@@ -108,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = load_settings()
-    db_path = Path(os.environ.get("BUYEYE_DB_PATH", runtime_data_dir() / "buyeeye.db"))
+    db_path = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
     init_db(db_path)
 
     if args.command == "status":

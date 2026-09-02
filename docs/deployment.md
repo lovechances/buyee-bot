@@ -11,8 +11,9 @@ rotation, bounded source retries, browser recovery, SQLite, and alert deduplicat
 3. Add the required Discord webhook variables from `.env.example` as Railway service variables.
    Do not upload `.env` or paste secrets into build arguments.
 4. Upload the portable authenticated state as described below.
-5. Perform the temporary no-alert deployment below, then clear its Start Command and redeploy the
-   continuous worker. Do not add a public domain; this worker exposes no web service.
+5. Perform the no-alert validation deployment below, then switch the same image to continuous mode.
+   Keep Railway's Start Command blank. Do not add a public domain; this worker exposes no web
+   service.
 6. Check logs for `startup query_universe=...`, then validate with
    `railway ssh -- python -m buyeeye health`.
 
@@ -48,16 +49,22 @@ The upload destination is relative to the selected volume's root. With that volu
 path `/data/browser/buyee_state.json`; using `/data/browser/...` as the remote volume path would
 incorrectly create `/data/data/browser/...` in the container.
 
-Do not print or base64-encode the state into logs or commit it. For the first deployment only, set
-the Railway Start Command temporarily to the no-alert validation command below:
+Do not print or base64-encode the state into logs or commit it. Remove any Railway service variables
+named `BUYEYE_DATA_DIR`, `BUYEYE_DB_PATH`, `BUYEYE_SESSION_DIR`, or `BUYEYE_CONFIG_DIR` that contain
+local relative paths. The image and Railway volume metadata own these paths in production.
 
-```sh
-python -m buyeeye scan-once "Number (N)ine"
+For the first deployment, leave Railway's Start Command blank and add these temporary non-secret
+service variables:
+
+```text
+BUYEYE_START_MODE=validate
+BUYEYE_VALIDATION_QUERY=Number (N)ine
 ```
 
-Deploy and inspect it with `railway logs --lines 200`. The one-shot command never sends listing
-alerts and exits after the scan. Then clear the Railway Start Command so the image's continuous
-`python -m buyeeye run` command applies, and redeploy. Validate the running worker with:
+The normal image entrypoint will initialize `/data`, report whether the portable state is present,
+start Xvfb, run `health`, and execute the no-alert scan. Inspect it with `railway logs --lines 200`.
+After it succeeds, remove `BUYEYE_START_MODE` and `BUYEYE_VALIDATION_QUERY`, then redeploy. With the
+Start Command still blank, the image runs continuous `python -m buyeeye run`. Validate it with:
 
 ```sh
 railway ssh -- python -m buyeeye health
@@ -81,8 +88,8 @@ it again, or move the same image to the VPS fallback below for a one-time secure
 - Stop: remove the active deployment in Railway
 - Status/metrics: `railway ssh -- python -m buyeeye health`
 - Logs: Railway Logs tab or `railway logs`
-- Safe one-shot: use `python -m buyeeye scan-once "query"` as a temporary Start Command, not beside
-  the daemon
+- Safe one-shot: set `BUYEYE_START_MODE=validate` and `BUYEYE_VALIDATION_QUERY`, deploy with Start
+  Command blank, then remove both variables before enabling the daemon
 - Explicit alerting one-shot: `python -m buyeeye scan-alert-once "query"` only when the daemon is
   stopped
 - Session refresh on Mac: `python -m buyeeye setup-session`, then upload storage state

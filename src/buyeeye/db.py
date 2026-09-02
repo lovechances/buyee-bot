@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,9 +8,9 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Field, Session, SQLModel, UniqueConstraint, create_engine, select
 
-from .settings import runtime_data_dir
+from .settings import runtime_state_path
 
-DB_PATH = Path(os.environ.get("BUYEYE_DB_PATH", runtime_data_dir() / "buyeeye.db"))
+DB_PATH = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
 
 
 class Listing(SQLModel, table=True):

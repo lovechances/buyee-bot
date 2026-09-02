@@ -10,6 +10,7 @@ from buyeeye.browser_session import (
     _remove_stale_profile_artifacts,
     has_valid_session,
     load_session_cookies,
+    restore_session_cookies,
 )
 from buyeeye.comp_cache import CompRepository, CompService
 from buyeeye.comp_sources import (
@@ -60,7 +61,7 @@ from buyeeye.runtime_state import (
     record_query_result,
 )
 from buyeeye.scoring import score_listing
-from buyeeye.settings import load_yaml, runtime_data_dir
+from buyeeye.settings import load_yaml, runtime_data_dir, runtime_state_path
 from buyeeye.taste import classify_brand, extract_taste_signals
 from buyeeye.valuation import estimate_landed_cost_jpy, estimate_max_bid_jpy
 
@@ -77,7 +78,7 @@ def test_has_valid_session_detects_buyee_cookie(monkeypatch, tmp_path):
 def test_load_session_cookies_reads_saved_state(monkeypatch, tmp_path):
     state_path = tmp_path / "buyee_state.json"
     state_path.write_text(
-        '{"cookies": [{"name": "_fwb", "value": "abc123", "domain": ".buyee.jp", "path": "/", "secure": false}], "origins": []}',
+        '{"cookies": [{"name": "_fwb", "value": "abc123", "domain": ".buyee.jp", "path": "/", "secure": false}], "origins": [{"origin": "https://buyee.jp", "localStorage": [{"name": "locale", "value": "en"}]}]}',
         encoding="utf-8",
     )
     monkeypatch.setattr("buyeeye.browser_session.STATE_PATH", state_path)
@@ -85,6 +86,23 @@ def test_load_session_cookies_reads_saved_state(monkeypatch, tmp_path):
     cookies = load_session_cookies()
     assert cookies["_fwb"] == "abc123"
     assert cookies["_fwb"]
+
+    class FakeContext:
+        def __init__(self):
+            self.cookies = []
+            self.scripts = []
+
+        def add_cookies(self, cookies):
+            self.cookies.extend(cookies)
+
+        def add_init_script(self, *, script):
+            self.scripts.append(script)
+
+    context = FakeContext()
+    restore_session_cookies(context, state_path)
+    assert context.cookies[0]["name"] == "_fwb"
+    assert "https://buyee.jp" in context.scripts[0]
+    assert "localStorage.setItem" in context.scripts[0]
 
 
 def test_stale_singleton_cleanup_preserves_profile_data(tmp_path):
@@ -1161,9 +1179,19 @@ def test_runtime_data_dir_honors_explicit_and_railway_volume_paths(monkeypatch, 
     railway = tmp_path / "railway"
     monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", str(railway))
     monkeypatch.setenv("BUYEYE_DATA_DIR", str(explicit))
-    assert runtime_data_dir() == explicit
+    assert runtime_data_dir() == railway
     monkeypatch.delenv("BUYEYE_DATA_DIR")
     assert runtime_data_dir() == railway
+
+    monkeypatch.setenv("BUYEYE_DATA_DIR", "data")
+    monkeypatch.setenv("BUYEYE_DB_PATH", "data/buyeeye.db")
+    monkeypatch.setenv("BUYEYE_SESSION_DIR", "data/browser")
+    assert runtime_data_dir() == railway
+    assert runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db") == railway / "buyeeye.db"
+    assert runtime_state_path("BUYEYE_SESSION_DIR", "browser") == railway / "browser"
+
+    monkeypatch.setenv("BUYEYE_DB_PATH", str(tmp_path / "outside.db"))
+    assert runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db") == railway / "buyeeye.db"
 
 
 def test_observed_us_sold_source_excludes_asks_and_non_us_records(tmp_path):

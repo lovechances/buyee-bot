@@ -12,9 +12,9 @@ if TYPE_CHECKING:
     from playwright.async_api import BrowserContext as AsyncBrowserContext
     from playwright.sync_api import BrowserContext, Page, Playwright
 
-from .settings import runtime_data_dir
+from .settings import runtime_state_path
 
-SESSION_DIR = Path(os.environ.get("BUYEYE_SESSION_DIR", runtime_data_dir() / "browser"))
+SESSION_DIR = runtime_state_path("BUYEYE_SESSION_DIR", "browser")
 STATE_PATH = SESSION_DIR / "buyee_state.json"
 
 
@@ -129,6 +129,39 @@ def load_session_cookies(state_path: str | Path | None = None) -> dict[str, str]
     return cookies
 
 
+def _local_storage_init_script(payload: dict[str, object]) -> str | None:
+    storage_by_origin: dict[str, dict[str, str]] = {}
+    for record in payload.get("origins", []):
+        if not isinstance(record, dict):
+            continue
+        origin = record.get("origin")
+        if not isinstance(origin, str) or not origin.startswith(("https://", "http://")):
+            continue
+        values: dict[str, str] = {}
+        for item in record.get("localStorage", []):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            value = item.get("value")
+            if isinstance(name, str) and isinstance(value, str):
+                values[name] = value
+        if values:
+            storage_by_origin[origin] = values
+    if not storage_by_origin:
+        return None
+    encoded = json.dumps(storage_by_origin, ensure_ascii=False)
+    return f"""
+        (() => {{
+            const state = {encoded};
+            const values = state[window.location.origin];
+            if (!values) return;
+            for (const [name, value] of Object.entries(values)) {{
+                window.localStorage.setItem(name, value);
+            }}
+        }})();
+    """
+
+
 def restore_session_cookies(context: BrowserContext, state_path: str | Path | None = None) -> None:
     path = Path(state_path) if state_path is not None else STATE_PATH
     if not path.exists():
@@ -156,6 +189,9 @@ def restore_session_cookies(context: BrowserContext, state_path: str | Path | No
             cookies.append(normalized)
     if cookies:
         context.add_cookies(cookies)
+    local_storage_script = _local_storage_init_script(payload)
+    if local_storage_script:
+        context.add_init_script(script=local_storage_script)
 
 
 async def restore_session_cookies_async(
@@ -187,6 +223,9 @@ async def restore_session_cookies_async(
             cookies.append(normalized)
     if cookies:
         await context.add_cookies(cookies)
+    local_storage_script = _local_storage_init_script(payload)
+    if local_storage_script:
+        await context.add_init_script(script=local_storage_script)
 
 
 def launch_manual_buyee_login() -> tuple[Playwright, BrowserContext, Page]:
