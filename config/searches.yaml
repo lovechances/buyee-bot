@@ -7,14 +7,15 @@ search_families:
       - "Number Nine"
       - "ナンバーナイン"
       - "本人期"
-    terms:
-      - "destroy"
+    medium_terms:
       - "mohair"
+      - "08AW"
+      - "09AW"
+    surgical_terms:
+      - "destroy"
       - "patchwork"
       - "A Closed Feeling"
       - "High Streets"
-      - "09AW"
-      - "08AW"
       - "タイム期"
       - "カート期"
       - "散弾銃"
@@ -23,29 +24,31 @@ search_families:
       - "Needles"
       - "Rebuild"
       - "リビルド"
-    terms:
-      - "Ozzy"
-      - "Rebuild"
+    medium_terms:
       - "vintage"
       - "distressed"
+    surgical_terms:
+      - "Ozzy"
+      - "Rebuild"
       - "music"
   - brand: "Chrome Hearts"
     priority: 82
     aliases:
       - "Chrome Hearts"
       - "クロムハーツ"
-    terms:
+    medium_terms:
       - "silver"
+      - "leather"
+    surgical_terms:
       - "925"
       - "cross patch"
-      - "leather"
       - "buckles"
   - brand: "Dior Homme"
     priority: 90
     aliases:
       - "Dior Homme"
       - "Dior Hedi"
-    terms:
+    surgical_terms:
       - "Strip"
       - "Navigate"
       - "Luster"
@@ -55,10 +58,11 @@ search_families:
     aliases:
       - "Rick Owens"
       - "Rick Owens Slab"
-    terms:
-      - "slab"
+    medium_terms:
       - "runway"
       - "leather"
+    surgical_terms:
+      - "slab"
       - "distressed"
   - brand: "Saint Laurent"
     priority: 82
@@ -66,8 +70,9 @@ search_families:
       - "Saint Laurent Paris"
       - "サンローランパリ"
       - "YSL エディ"
-    terms:
+    medium_terms:
       - "Hedi"
+    surgical_terms:
       - "Wyatt"
       - "Babycat"
   - brand: "Maison Martin Margiela"
@@ -76,7 +81,7 @@ search_families:
       - "Maison Martin Margiela"
       - "マルタンマルジェラ"
       - "マルジェラ 本人期"
-    terms:
+    medium_terms:
       - "アーティザナル"
       - "ここのえ"
       - "再構築"
@@ -85,8 +90,9 @@ search_families:
     aliases:
       - "Vetements"
       - "ヴェトモン"
-    terms:
+    medium_terms:
       - "Demna"
+    surgical_terms:
       - "Antwerpen"
       - "May the bridges"
   - brand: "IF SIX WAS NINE"
@@ -95,38 +101,61 @@ search_families:
       - "IF SIX WAS NINE"
       - "ifsixwasnine"
       - "イフシックスワズナイン"
-    terms:
+    medium_terms:
+      - "レザー"
+    surgical_terms:
       - "MUD MAX"
       - "L.G.B."
-      - "レザー"
   - brand: "Gaboratory"
     priority: 72
     aliases:
       - "Gaboratory"
       - "ガボラトリー"
       - "ガボール"
-    terms:
+    surgical_terms:
       - "925"
       - "ブルドッグ"
       - "スカル"
   - brand: "Roen"
     priority: 70
     aliases: ["Roen", "ロエン"]
-    terms: ["スカル", "Hiromu Takahara", "レザー"]
+    medium_terms: ["レザー"]
+    surgical_terms: ["スカル", "Hiromu Takahara"]
   - brand: "Balenciaga"
     priority: 74
     aliases: ["Balenciaga", "バレンシアガ"]
-    terms: ["Demna", "runway", "distressed", "strike"]
+    medium_terms: ["Demna", "runway", "distressed"]
+    surgical_terms: ["strike"]
   - brand: "Prada"
     priority: 76
     aliases: ["Prada", "プラダ", "Prada Sport", "Linea Rossa"]
-    terms: ["archive", "nylon", "1999", "technical"]
+    medium_terms: ["archive", "nylon", "technical"]
+    surgical_terms: ["1999"]
   - brand: "King Baby"
     priority: 68
     aliases: ["King Baby", "キングベイビー"]
-    terms: ["925", "skull", "cross", "リング"]
+    medium_terms: ["925", "リング"]
+    surgical_terms: ["skull", "cross"]
   - brand: "Vintage band tees"
     priority: 65
     cooldown_minutes: 240
     aliases: ["ヴィンテージ バンドT", "vintage band t-shirt", "90s バンドT"]
-    terms: ["Nirvana", "Smashing Pumpkins", "Marilyn Manson", "single stitch"]
+    medium_terms: ["single stitch"]
+    surgical_terms: ["Nirvana", "Smashing Pumpkins", "Marilyn Manson"]
+  - brand: "Alexander McQueen"
+    priority: 80
+    cooldown_minutes: 180
+    aliases:
+      - "Alexander McQueen"
+      - "アレキサンダーマックイーン"
+      - "アレキサンダー マックイーン"
+    medium_terms:
+      - "Lee McQueen"
+      - "メンズ"
+      - "tailoring"
+      - "レザー"
+    surgical_terms:
+      - "Dante"
+      - "VOSS"
+      - "Plato's Atlantis"
+      - "Widows of Culloden"

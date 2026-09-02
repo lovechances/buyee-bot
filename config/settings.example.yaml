@@ -6,6 +6,10 @@ scanner:
   query_gap_seconds: 20
   search_pages_per_query: 2
   listing_dedupe_hours: 6
+  query_layer_shares:
+    broad: 0.50
+    medium: 0.30
+    surgical: 0.20
   max_source_attempts: 3
 
 marketplaces:

@@ -92,14 +92,28 @@ def _key(*parts: str) -> str:
 
 
 def choose_query(
-    specs: list[QuerySpec], db_path: str | Path = DB_PATH, now: datetime | None = None
+    specs: list[QuerySpec],
+    db_path: str | Path = DB_PATH,
+    now: datetime | None = None,
+    layer_shares: dict[str, float] | None = None,
 ) -> QuerySpec | None:
     init_db(db_path)
     current = now or datetime.now(UTC)
-    ranked: list[tuple[float, QuerySpec]] = []
+    ranked: dict[str, list[tuple[float, QuerySpec]]] = {}
+    runs_by_layer = {"broad": 0, "medium": 0, "surgical": 0}
+    shares = {"broad": 0.5, "medium": 0.3, "surgical": 0.2}
+    for layer, value in (layer_shares or {}).items():
+        if layer in shares and float(value) > 0:
+            shares[layer] = float(value)
+    share_total = sum(shares.values())
+    shares = {layer: value / share_total for layer, value in shares.items()}
     with get_session(db_path) as session:
         for spec in specs:
             row = session.get(QueryRuntimeState, _key(spec.query.casefold()))
+            if row:
+                runs_by_layer[spec.query_layer] = (
+                    runs_by_layer.get(spec.query_layer, 0) + row.runs
+                )
             if row and row.next_eligible_at:
                 eligible = row.next_eligible_at
                 if eligible.tzinfo is None:
@@ -116,8 +130,18 @@ def choose_query(
                 adaptive = candidate_rate * 35 + alert_rate * 30 - duplicate_rate * 25
                 runs = row.runs
             exploration = 12 / (1 + runs)
-            ranked.append((spec.priority + adaptive + exploration, spec))
-    return max(ranked, key=lambda item: item[0])[1] if ranked else None
+            ranked.setdefault(spec.query_layer, []).append(
+                (spec.priority + adaptive + exploration, spec)
+            )
+    if not ranked:
+        return None
+    total_runs = sum(runs_by_layer.values())
+    selected_layer = max(
+        ranked,
+        key=lambda layer: shares.get(layer, 0.0) * (total_runs + 1)
+        - runs_by_layer.get(layer, 0),
+    )
+    return max(ranked[selected_layer], key=lambda item: item[0])[1]
 
 
 def record_query_result(
@@ -141,6 +165,11 @@ def record_query_result(
                 priority=spec.priority,
             )
             session.add(row)
+        row.query = spec.query
+        row.family = spec.family
+        row.provenance = spec.provenance
+        row.discovery_mode = spec.discovery_mode
+        row.priority = spec.priority
         row.runs += 1
         row.cards_seen += int(getattr(result, "scanned", 0))
         row.unique_seen += int(getattr(result, "unique_listings", 0))

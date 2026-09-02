@@ -33,6 +33,7 @@ from buyeeye.discovery import (
     build_query_universe,
     dedupe_listings,
     generate_search_queries,
+    query_layer_counts,
 )
 from buyeeye.evaluation import (
     assess_auth_risk,
@@ -49,6 +50,7 @@ from buyeeye.normalize import negative_term_hits, normalize_season, normalize_te
 from buyeeye.pipeline import (
     _is_relevant,
     _minutes_remaining,
+    _opportunity_kind,
     _price_is_valid,
     _route,
     _route_evaluation,
@@ -1112,6 +1114,7 @@ def test_controlled_query_universe_has_provenance_without_cartesian_explosion():
         and spec.family
         and spec.cooldown_minutes > 0
         and spec.discovery_mode in {"direct_piece", "collection_era", "hidden_mislabeled"}
+        and spec.query_layer in {"broad", "medium", "surgical"}
         for spec in universe
     )
     assert {spec.discovery_mode for spec in universe} == {
@@ -1134,8 +1137,34 @@ def test_controlled_query_universe_has_provenance_without_cartesian_explosion():
         "キングベイビー",
         "ガボラトリー",
         "ヴィンテージ バンドt",
+        "alexander mcqueen",
+        "アレキサンダーマックイーン",
     ):
         assert expected.casefold() in query_text
+    layers = query_layer_counts(universe)
+    assert all(layers[layer] > 0 for layer in ("broad", "medium", "surgical"))
+    assert next(spec for spec in universe if spec.query == "Rick Owens").query_layer == "broad"
+    assert next(
+        spec for spec in universe if spec.query == "Maison Martin Margiela アーティザナル"
+    ).query_layer == "medium"
+    assert next(
+        spec for spec in universe if spec.query == "Number (N)ine Time Migration"
+    ).query_layer == "surgical"
+
+
+def test_alexander_mcqueen_taxonomy_is_piece_specific_and_conservative():
+    archive = enrich_title("Alexander McQueen Lee McQueen bumster trousers")
+    collection = enrich_title("アレキサンダーマックイーン 96AW Dante レザージャケット")
+    diffusion = enrich_title("McQ by Alexander McQueen basic logo tee")
+
+    assert archive.brand.value == "Alexander McQueen"
+    assert archive.designer.value == "Lee Alexander McQueen"
+    assert archive.era.value == "lee_mcqueen"
+    assert archive.item_type.value == "trousers"
+    assert {signal.value for signal in archive.positive_signals} == {"bumster"}
+    assert collection.collection.value == "Dante"
+    assert collection.item_type.value == "jacket"
+    assert any(signal.value == "mcq by alexander mcqueen" for signal in diffusion.negative_signals)
 
 
 def test_query_scheduler_cooldown_and_persistent_global_dedupe(tmp_path):
@@ -1172,6 +1201,37 @@ def test_query_scheduler_cooldown_and_persistent_global_dedupe(tmp_path):
     metrics = hourly_metrics(db_path)
     assert metrics["theses"] == {"archive_watch": 1}
     assert metrics["opportunities"] == {"archive_watch": 1}
+
+
+def test_query_scheduler_enforces_broad_medium_surgical_allocation(tmp_path):
+    db_path = tmp_path / "layer-scheduler.db"
+    specs = [
+        *[
+            QuerySpec(f"broad-{index}", "test", "brand", 80, 60, query_layer="broad")
+            for index in range(5)
+        ],
+        *[
+            QuerySpec(f"medium-{index}", "test", "brand", 80, 60, query_layer="medium")
+            for index in range(3)
+        ],
+        *[
+            QuerySpec(f"surgical-{index}", "test", "brand", 80, 60, query_layer="surgical")
+            for index in range(2)
+        ],
+    ]
+    selected: list[str] = []
+    for _ in range(10):
+        spec = choose_query(
+            specs,
+            db_path,
+            layer_shares={"broad": 0.5, "medium": 0.3, "surgical": 0.2},
+        )
+        selected.append(spec.query_layer)
+        record_query_result(spec, object(), db_path)
+
+    assert selected.count("broad") == 5
+    assert selected.count("medium") == 3
+    assert selected.count("surgical") == 2
 
 
 def test_runtime_data_dir_honors_explicit_and_railway_volume_paths(monkeypatch, tmp_path):
@@ -1334,6 +1394,64 @@ def test_actionable_buyout_is_not_suppressed_by_long_time_remaining():
     assert evaluation.auction_maturity.price_actionable is True
     assert evaluation.directional.thesis == "asymmetric_value"
     assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+
+
+def test_high_heat_asymmetric_fixed_price_routes_to_buyouts_before_grails():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="high-heat-buyout",
+        url="https://buyee.jp/item/high-heat-buyout",
+        title_original=(
+            "Number (N)ine 08AW A Closed Feeling destroy mohair patchwork jacket"
+        ),
+        title_normalized="number nine a closed feeling destroy mohair patchwork jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=2500,
+        buyout_price=2500,
+        starting_price=2500,
+        seller_name="archive-seller",
+        condition="Used",
+        time_remaining="5 day(s)",
+        raw={"detail_photo_count": 6, "seller_feedback_count": 400},
+    )
+
+    evaluation = evaluate_listing(listing)
+    route = _route_evaluation(listing, evaluation)
+    thesis = "asymmetric_value"
+
+    assert evaluation.desirability.score >= 82
+    assert evaluation.directional.thesis == thesis
+    assert route[0] == "buyouts"
+    assert _opportunity_kind(route[0], thesis, evaluation) == "actionable_fixed_price"
+
+
+def test_expensive_fixed_price_grail_is_not_labeled_actionable_value():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="expensive-fixed-grail",
+        url="https://buyee.jp/item/expensive-fixed-grail",
+        title_original=(
+            "Number (N)ine 08AW A Closed Feeling destroy mohair patchwork jacket"
+        ),
+        title_normalized="number nine a closed feeling destroy mohair patchwork jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=100_000,
+        buyout_price=100_000,
+        starting_price=100_000,
+        seller_name="archive-seller",
+        condition="Used",
+        time_remaining="5 day(s)",
+        raw={"detail_photo_count": 6, "seller_feedback_count": 400},
+    )
+
+    evaluation = evaluate_listing(listing)
+    route = _route_evaluation(listing, evaluation)
+
+    assert evaluation.directional.thesis is None
+    assert route[0] == "grails"
+    assert _opportunity_kind(route[0], "archive_grail", evaluation) == "archive_grail"
 
 
 def test_open_auction_becomes_economically_actionable_inside_maturity_window():

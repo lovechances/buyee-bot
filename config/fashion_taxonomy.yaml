@@ -105,9 +105,30 @@ brands:
     designer: "Keizo Shimizu"
     strong_signals: ["rebuild", "再構築", "7 cut", "track", "butterfly", "vintage"]
     generic_signals: ["logo tee"]
+  alexander_mcqueen:
+    canonical: "Alexander McQueen"
+    aliases: ["alexander mcqueen", "アレキサンダーマックイーン", "アレキサンダー マックイーン"]
+    designer: "Lee Alexander McQueen"
+    eras:
+      lee_mcqueen: ["lee mcqueen", "本人期", "リー期"]
+    menswear_categories: ["tailoring", "jacket", "coat", "trousers", "shirt", "knitwear", "footwear", "accessory"]
+    collections:
+      - name: "Dante"
+        terms: ["dante", "96aw", "aw96"]
+      - name: "VOSS"
+        terms: ["voss", "01ss", "ss01"]
+      - name: "Widows of Culloden"
+        terms: ["widows of culloden", "06aw", "aw06"]
+      - name: "Plato's Atlantis"
+        terms: ["plato's atlantis", "platos atlantis", "10ss", "ss10"]
+    strong_signals: ["bumster", "frock coat", "tartan", "military tailoring", "distressed leather"]
+    generic_signals: ["mcq by alexander mcqueen", "diffusion", "basic", "logo tee"]
+    evidence_sources:
+      - {name: "V&A Alexander McQueen introduction", url: "https://www.vam.ac.uk/articles/alexander-mcqueen-an-introduction", supports: "Lee-era tailoring, bumster, frock coat, distressed leather"}
+      - {name: "Met Savage Beauty objects", url: "https://blog.metmuseum.org/alexandermcqueen/objects/", supports: "Dante, VOSS, Widows of Culloden, Plato's Atlantis"}
   vintage_band_tees:
     canonical: "Vintage Band Tee"
-    aliases: ["vintage band t-shirt", "ヴィンテージ バンドt", "90s バンドt", "バンドtシャツ"]
+    aliases: ["vintage band tee", "vintage band tees", "vintage band t-shirt", "ヴィンテージ バンドt", "90s バンドt", "バンドtシャツ"]
     strong_signals: ["single stitch", "シングルステッチ", "nirvana", "smashing pumpkins", "marilyn manson", "sonic youth", "nine inch nails"]
     generic_signals: ["reprint", "復刻", "bootleg style"]
 

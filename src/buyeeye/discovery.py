@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,7 @@ class QuerySpec:
     priority: int
     cooldown_minutes: int = 180
     discovery_mode: str = "direct_piece"
+    query_layer: str = "surgical"
 
 
 def _discovery_mode(provenance: str) -> str:
@@ -22,6 +24,21 @@ def _discovery_mode(provenance: str) -> str:
     if ".strong_signal" in provenance:
         return "hidden_mislabeled"
     return "direct_piece"
+
+
+def query_layer_counts(specs: list[QuerySpec]) -> dict[str, int]:
+    counts = Counter(spec.query_layer for spec in specs)
+    return {layer: counts.get(layer, 0) for layer in ("broad", "medium", "surgical")}
+
+
+def _taxonomy_family_lookup(taxonomy: dict[str, Any]) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for key, brand in taxonomy.get("brands", {}).items():
+        names = [brand.get("canonical"), *brand.get("aliases", [])]
+        for name in names:
+            if name:
+                lookup[normalize_text(str(name)).casefold()] = key
+    return lookup
 
 
 def get_search_families(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -36,7 +53,11 @@ def generate_search_queries(config: dict[str, Any]) -> list[str]:
     for family in get_search_families(config):
         brand = family.get("brand", "")
         aliases = family.get("aliases", [])
-        terms = family.get("terms", [])
+        terms = [
+            *family.get("medium_terms", []),
+            *family.get("surgical_terms", []),
+            *family.get("terms", []),
+        ]
         for alias in aliases:
             queries.append(f"{alias}")
             for term in terms:
@@ -52,26 +73,56 @@ def build_query_universe(
 ) -> list[QuerySpec]:
     """Build a controlled discovery set; deliberately avoids Cartesian combinations."""
     candidates: list[QuerySpec] = []
+    family_lookup = _taxonomy_family_lookup(taxonomy)
     for family in get_search_families(search_config):
-        brand = normalize_text(str(family.get("brand") or "unknown"))
+        brand_name = normalize_text(str(family.get("brand") or "unknown"))
+        brand = family_lookup.get(brand_name.casefold(), brand_name)
         cooldown = int(family.get("cooldown_minutes", 180))
         priority = int(family.get("priority", 70))
         aliases = [normalize_text(str(value)) for value in family.get("aliases", []) if value]
-        terms = [normalize_text(str(value)) for value in family.get("terms", []) if value]
+        medium_terms = [
+            normalize_text(str(value)) for value in family.get("medium_terms", []) if value
+        ]
+        surgical_terms = [
+            normalize_text(str(value))
+            for value in [*family.get("surgical_terms", []), *family.get("terms", [])]
+            if value
+        ]
         for alias in aliases[:4]:
             candidates.append(
-                QuerySpec(alias, "searches.alias", brand, priority, cooldown, "direct_piece")
+                QuerySpec(
+                    alias,
+                    "searches.alias",
+                    brand,
+                    priority,
+                    cooldown,
+                    "direct_piece",
+                    "broad",
+                )
             )
         anchor = aliases[0] if aliases else brand
-        for term in terms[:10]:
+        for term in medium_terms[:6]:
             candidates.append(
                 QuerySpec(
                     normalize_text(f"{anchor} {term}"),
-                    "searches.curated_term",
+                    "searches.medium_term",
+                    brand,
+                    priority,
+                    cooldown,
+                    "collection_era",
+                    "medium",
+                )
+            )
+        for term in surgical_terms[:10]:
+            candidates.append(
+                QuerySpec(
+                    normalize_text(f"{anchor} {term}"),
+                    "searches.surgical_term",
                     brand,
                     priority + 5,
                     cooldown,
                     "direct_piece",
+                    "surgical",
                 )
             )
 
@@ -80,7 +131,9 @@ def build_query_universe(
         aliases = [normalize_text(str(value)) for value in brand.get("aliases", []) if value]
         provenance = f"taxonomy.brands.{key}.canonical"
         candidates.append(
-            QuerySpec(canonical, provenance, key, 80, 240, _discovery_mode(provenance))
+            QuerySpec(
+                canonical, provenance, key, 80, 240, _discovery_mode(provenance), "broad"
+            )
         )
         for alias in aliases[:4]:
             if alias.casefold() != canonical.casefold():
@@ -93,6 +146,7 @@ def build_query_universe(
                         priority,
                         240,
                         "direct_piece",
+                        "broad",
                     )
                 )
         designer = brand.get("designer")
@@ -105,6 +159,7 @@ def build_query_universe(
                     72,
                     360,
                     "collection_era",
+                    "medium",
                 )
             )
         for collection in brand.get("collections", [])[:8]:
@@ -118,6 +173,7 @@ def build_query_universe(
                         90,
                         360,
                         "collection_era",
+                        "surgical",
                     )
                 )
             japanese_term = next(
@@ -137,6 +193,7 @@ def build_query_universe(
                         88,
                         360,
                         "collection_era",
+                        "surgical",
                     )
                 )
         for signal in brand.get("strong_signals", [])[:5]:
@@ -148,6 +205,7 @@ def build_query_universe(
                     75,
                     300,
                     "hidden_mislabeled",
+                    "surgical",
                 )
             )
 

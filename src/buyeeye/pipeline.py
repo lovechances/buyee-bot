@@ -171,6 +171,27 @@ def _route_evaluation(
     return None
 
 
+def _opportunity_kind(route: str, thesis: str, evaluation: ListingEvaluation) -> str:
+    """Describe why a routed listing is actionable, independently of its price format."""
+    if thesis == "archive_watch":
+        return "archive_watch"
+    if route == "buyouts":
+        return "actionable_fixed_price"
+    if route == "ending":
+        return "ending_soon"
+    if route == "review":
+        return "legit_review"
+    if route == "silver":
+        return "silver_jewelry"
+    if (
+        evaluation.auction_maturity.auction_type == "open_auction"
+        and evaluation.auction_maturity.price_actionable
+        and thesis in {"verified_arbitrage", "asymmetric_value"}
+    ):
+        return "mature_auction"
+    return "archive_grail"
+
+
 def _signature(listing: LiveListing) -> str:
     values = {
         "title": listing.title_original,
@@ -385,19 +406,7 @@ async def scan_once(
         result.route_counts[route] = result.route_counts.get(route, 0) + 1
         thesis = alert_thesis(route, evaluation)
         result.thesis_counts[thesis] = result.thesis_counts.get(thesis, 0) + 1
-        if thesis == "archive_watch":
-            opportunity_kind = "archive_watch"
-        elif route == "ending":
-            opportunity_kind = "ending_soon"
-        elif route == "review":
-            opportunity_kind = "legit_review"
-        elif (
-            evaluation.auction_maturity.auction_type == "open_auction"
-            and evaluation.auction_maturity.price_actionable
-        ):
-            opportunity_kind = "mature_auction"
-        else:
-            opportunity_kind = "actionable_fixed_price"
+        opportunity_kind = _opportunity_kind(route, thesis, evaluation)
         result.opportunity_counts[opportunity_kind] = (
             result.opportunity_counts.get(opportunity_kind, 0) + 1
         )

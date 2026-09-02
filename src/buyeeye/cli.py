@@ -16,7 +16,7 @@ from typing import Any
 from .browser_session import has_valid_session, launch_manual_buyee_login, save_session_state
 from .db import init_db
 from .discord_alerts import send_status_event, send_test_alert
-from .discovery import build_query_universe
+from .discovery import build_query_universe, query_layer_counts
 from .live_sources import AuthExpiredError, LiveMarketLoop, load_live_queries
 from .pipeline import health_report, scan_once
 from .runtime_state import (
@@ -158,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         taxonomy = load_yaml(CONFIG_DIR / "fashion_taxonomy.yaml")
         queries = build_query_universe(search_config, taxonomy)
         scanner = settings.get("scanner", {})
+        layer_shares = scanner.get("query_layer_shares", {})
         query_gap = int(scanner.get("query_gap_seconds", 20))
         jitter = int(scanner.get("jitter_seconds", 30))
         max_attempts = int(scanner.get("max_source_attempts", 3))
@@ -173,11 +174,20 @@ def main(argv: list[str] | None = None) -> int:
         signal.signal(signal.SIGINT, stop_handler)
         signal.signal(signal.SIGTERM, stop_handler)
         update_health(db_path, started_at=datetime.now(UTC), current_query=None)
-        logger.info("startup query_universe=%s", len(queries))
-        send_status_event(f"BuyEye started with {len(queries)} rotating discovery queries.")
+        layers = query_layer_counts(queries)
+        logger.info(
+            "startup query_universe=%s query_layers=%s target_shares=%s",
+            len(queries),
+            layers,
+            layer_shares,
+        )
+        send_status_event(
+            f"BuyEye started with {len(queries)} rotating discovery queries "
+            f"(broad={layers['broad']}, medium={layers['medium']}, surgical={layers['surgical']})."
+        )
         try:
             while not stopping:
-                spec = choose_query(queries, db_path)
+                spec = choose_query(queries, db_path, layer_shares=layer_shares)
                 if spec is None:
                     time.sleep(30)
                     continue
@@ -264,11 +274,12 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 record_query_result(spec, result, db_path)
                 logger.info(
-                    "scan query=%r family=%s pages=%s cards=%s unique=%s duplicates=%s "
+                    "scan query=%r family=%s layer=%s pages=%s cards=%s unique=%s duplicates=%s "
                     "stage_a_rejected=%s stage_b=%s enriched=%s comps=%s cache=%s/%s "
                     "final=%s alerts=%s routes=%s theses=%s opportunities=%s",
                     spec.query,
                     spec.family,
+                    spec.query_layer,
                     result.search_pages,
                     result.scanned,
                     result.unique_listings,

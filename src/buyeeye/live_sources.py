@@ -76,7 +76,12 @@ def load_live_queries(config_path: str | Path = "config/searches.yaml") -> list[
         aliases = family.get("aliases", [])
         for alias in aliases:
             queries.append(str(alias))
-        for term in family.get("terms", []):
+        terms = [
+            *family.get("medium_terms", []),
+            *family.get("surgical_terms", []),
+            *family.get("terms", []),
+        ]
+        for term in terms:
             for alias in aliases[:1]:
                 queries.append(f"{alias} {term}")
     return sorted({q.strip() for q in queries if q and q.strip()})
