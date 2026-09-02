@@ -126,6 +126,30 @@ brands:
     evidence_sources:
       - {name: "V&A Alexander McQueen introduction", url: "https://www.vam.ac.uk/articles/alexander-mcqueen-an-introduction", supports: "Lee-era tailoring, bumster, frock coat, distressed leather"}
       - {name: "Met Savage Beauty objects", url: "https://blog.metmuseum.org/alexandermcqueen/objects/", supports: "Dante, VOSS, Widows of Culloden, Plato's Atlantis"}
+  undercover:
+    canonical: "Undercover"
+    aliases: ["undercover", "under cover", "アンダーカバー", "undercoverism", "アンダーカバイズム"]
+    designer: "Jun Takahashi"
+    eras:
+      early_paris: ["03ss", "ss03", "03aw", "aw03", "04aw", "aw04", "05ss", "ss05", "05aw", "aw05"]
+      first_mens_show: ["10ss", "ss10", "less but better"]
+    menswear_categories: ["jacket", "coat", "shirt", "t_shirt", "knitwear", "trousers", "footwear", "accessory"]
+    collections:
+      - name: "SCAB"
+        terms: ["scab"]
+      - name: "PAPER DOLL"
+        terms: ["paper doll"]
+      - name: "BUT BEAUTIFUL"
+        terms: ["but beautiful"]
+      - name: "ARTS & CRAFTS"
+        terms: ["arts & crafts"]
+      - name: "LESS BUT BETTER"
+        terms: ["less but better"]
+    strong_signals: ["scab", "paper doll", "but beautiful", "arts & crafts", "less but better", "distressed", "reconstruction"]
+    generic_signals: ["uniqlo x undercover", "gu x undercover", "johnundercover", "the shepherd", "gyakusou", "ノベルティ"]
+    evidence_sources:
+      - {name: "Undercover official history", url: "https://undercoverism.com/historyofu", supports: "Jun Takahashi, 1990 founding, Paris and menswear chronology"}
+      - {name: "Tokyo Opera City Undercover retrospective", url: "https://www.operacity.jp/ag/exh181/e/list.php", supports: "SCAB, PAPER DOLL, BUT BEAUTIFUL, ARTS & CRAFTS, LESS BUT BETTER seasons"}
   vintage_band_tees:
     canonical: "Vintage Band Tee"
     aliases: ["vintage band tee", "vintage band tees", "vintage band t-shirt", "ヴィンテージ バンドt", "90s バンドt", "バンドtシャツ"]
@@ -142,7 +166,7 @@ item_types:
   denim: ["denim", "jeans", "デニム", "ジーンズ"]
   trousers: ["pants", "trousers", "パンツ", "スラックス"]
   footwear: ["boots", "sneaker", "ブーツ", "スニーカー", "シューズ"]
-  accessory: ["belt", "wallet", "keyholder", "ベルト", "財布", "キーホルダ", "バッグ"]
+  accessory: ["belt", "wallet", "keyholder", "bag", "scarf", "hat", "cap", "ベルト", "財布", "キーホルダ", "バッグ", "スカーフ", "帽子", "キャップ"]
 
 materials:
   silver: ["silver", "sterling", "925", "シルバー", "銀製"]

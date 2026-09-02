@@ -4,6 +4,13 @@ BuyEye is a lean archive-fashion sourcing intelligence daemon focused on Buyee a
 
 Open-auction bids are treated as provisional until the configurable maturity window (12 hours by default). Fixed-price buyouts remain actionable immediately. Exceptional pieces discovered earlier may surface as `ARCHIVE WATCH`, but their current bid is excluded from landed-cost, margin, and resale-multiple claims until the auction matures. The separate 60-minute threshold controls ending-soon routing.
 
+Discovery rotates through four complementary lanes: broad brand inventory, medium era/category
+context, surgical collection or motif searches, and native marketplace slices. The latter uses
+Buyee's category, current/buyout price, buy-it-now, newly-posted, and ending-soon controls configured
+in `config/market_structure.yaml`. Those price bands only decide where BuyEye looks; they are never
+used as fair-market value or injected into comp/economics decisions. Strategy identities and yield
+are persisted while listing dedupe remains global across every lane.
+
 ## Quick start
 
 1. Install Python 3.12+

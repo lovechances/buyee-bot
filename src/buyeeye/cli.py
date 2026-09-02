@@ -143,8 +143,10 @@ def main(argv: list[str] | None = None) -> int:
             f"enriched={metrics['stage_b_enriched']} comps={metrics['comp_lookups']} "
             f"comp_cache={metrics['comp_cache_hits']}/{metrics['comp_cache_misses']} "
             f"final={metrics['final_candidates']} alerts={metrics['alerts']} "
-            f"routes={metrics['routes']} theses={metrics['theses']} "
-            f"opportunities={metrics['opportunities']}"
+            f"routes={metrics['routes']} alert_routes={metrics['alert_routes']} "
+            f"theses={metrics['theses']} "
+            f"opportunities={metrics['opportunities']} "
+            f"strategies={metrics['strategy_types']}"
         )
         return 0 if report["database_ready"] else 1
 
@@ -156,9 +158,11 @@ def main(argv: list[str] | None = None) -> int:
         logger = _runtime_logger()
         search_config = load_yaml(CONFIG_DIR / "searches.yaml")
         taxonomy = load_yaml(CONFIG_DIR / "fashion_taxonomy.yaml")
-        queries = build_query_universe(search_config, taxonomy)
+        market_config = load_yaml(CONFIG_DIR / "market_structure.yaml")
+        queries = build_query_universe(search_config, taxonomy, market_config)
         scanner = settings.get("scanner", {})
         layer_shares = scanner.get("query_layer_shares", {})
+        strategy_shares = scanner.get("market_strategy_shares", {})
         query_gap = int(scanner.get("query_gap_seconds", 20))
         jitter = int(scanner.get("jitter_seconds", 30))
         max_attempts = int(scanner.get("max_source_attempts", 3))
@@ -183,11 +187,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         send_status_event(
             f"BuyEye started with {len(queries)} rotating discovery queries "
-            f"(broad={layers['broad']}, medium={layers['medium']}, surgical={layers['surgical']})."
+            f"(broad={layers['broad']}, medium={layers['medium']}, "
+            f"surgical={layers['surgical']}, market_structure={layers['market_structure']})."
         )
         try:
             while not stopping:
-                spec = choose_query(queries, db_path, layer_shares=layer_shares)
+                spec = choose_query(
+                    queries,
+                    db_path,
+                    layer_shares=layer_shares,
+                    strategy_shares=strategy_shares,
+                )
                 if spec is None:
                     time.sleep(30)
                     continue
@@ -196,9 +206,7 @@ def main(argv: list[str] | None = None) -> int:
                 last_error: Exception | None = None
                 for attempt in range(max_attempts):
                     try:
-                        result = asyncio.run(
-                            scan_once(spec.query, db_path, global_dedupe=True)
-                        )
+                        result = asyncio.run(scan_once(spec, db_path, global_dedupe=True))
                         break
                     except Exception as exc:  # noqa: BLE001
                         last_error = exc
@@ -241,7 +249,9 @@ def main(argv: list[str] | None = None) -> int:
                             f"Sustained Buyee failure after 3 queries: {type(last_error).__name__ if last_error else 'unknown'}.",
                             "error",
                         )
-                    pause = 900 if isinstance(last_error, AuthExpiredError) else min(300, 30 * failures)
+                    pause = (
+                        900 if isinstance(last_error, AuthExpiredError) else min(300, 30 * failures)
+                    )
                     for _ in range(pause):
                         if stopping:
                             break
@@ -274,12 +284,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 record_query_result(spec, result, db_path)
                 logger.info(
-                    "scan query=%r family=%s layer=%s pages=%s cards=%s unique=%s duplicates=%s "
+                    "scan query=%r family=%s layer=%s strategy=%s strategy_id=%s "
+                    "pages=%s cards=%s unique=%s duplicates=%s "
                     "stage_a_rejected=%s stage_b=%s enriched=%s comps=%s cache=%s/%s "
                     "final=%s alerts=%s routes=%s theses=%s opportunities=%s",
                     spec.query,
                     spec.family,
                     spec.query_layer,
+                    spec.strategy_type,
+                    spec.strategy_id,
                     result.search_pages,
                     result.scanned,
                     result.unique_listings,
@@ -297,7 +310,9 @@ def main(argv: list[str] | None = None) -> int:
                     result.opportunity_counts,
                 )
                 if recovery_pending:
-                    send_status_event("BuyEye recovered and completed a successful scan.", "recovery")
+                    send_status_event(
+                        "BuyEye recovered and completed a successful scan.", "recovery"
+                    )
                     recovery_pending = False
                 pause = query_gap + random.randint(0, max(0, jitter))
                 for _ in range(pause):
@@ -372,7 +387,9 @@ def main(argv: list[str] | None = None) -> int:
                 "When the page is ready and logged in, press Enter to save the browser session and close the browser: "
             )
             save_session_state(context)
-            print(f"Buyee browser session saved to {runtime_data_dir() / 'browser/buyee_state.json'}")
+            print(
+                f"Buyee browser session saved to {runtime_data_dir() / 'browser/buyee_state.json'}"
+            )
             print(f"Current page title: {page.title()}")
         finally:
             context.close()

@@ -15,6 +15,7 @@ from .comp_sources import ObservedUSSoldSource, YahooEndedSource
 from .db import DB_PATH, get_alert_state, save_alert_state, save_listings
 from .detail_enrichment import BuyeeDetailService, DetailRepository
 from .discord_alerts import alert_thesis, send_listing_alert
+from .discovery import QuerySpec
 from .evaluation import ListingEvaluation, evaluate_listing
 from .fashion import enrich_title
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
@@ -34,6 +35,7 @@ class ScanResult:
     rejected_invalid: int = 0
     below_threshold: int = 0
     route_counts: dict[str, int] | None = None
+    alert_route_counts: dict[str, int] | None = None
     thesis_counts: dict[str, int] | None = None
     opportunity_counts: dict[str, int] | None = None
     comp_candidates: int = 0
@@ -206,31 +208,44 @@ def _signature(listing: LiveListing) -> str:
         "auth_risk": listing.auth_risk,
         "comp_confidence": listing.comp_confidence,
         "comp_sources": ((listing.raw or {}).get("intelligence") or {}).get("comp_sources", []),
-        "auction_maturity": ((listing.raw or {}).get("intelligence") or {}).get(
-            "auction_maturity"
-        ),
+        "auction_maturity": ((listing.raw or {}).get("intelligence") or {}).get("auction_maturity"),
     }
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
 async def scan_once(
-    query: str,
+    query: str | QuerySpec,
     db_path: str | Path = DB_PATH,
     send_alerts: bool = True,
     global_dedupe: bool = False,
 ) -> ScanResult:
     settings = load_settings()
+    spec = (
+        query
+        if isinstance(query, QuerySpec)
+        else QuerySpec(
+            query=query,
+            provenance="manual.scan_once",
+            family="manual",
+            priority=0,
+            strategy_type="semantic_manual",
+        )
+    )
+    query_text = spec.query
     source = BuyeeAuthenticatedSource(
-        max_pages=int(settings.get("scanner", {}).get("search_pages_per_query", 2))
+        max_pages=int(settings.get("scanner", {}).get("search_pages_per_query", 2)),
+        search_filters=spec.search_filters,
+        discovery_context=spec.discovery_observation(),
     )
     loop = LiveMarketLoop(sources=[source])
-    listings = await loop.run_once(query, persist=False)
+    listings = await loop.run_once(query_text, persist=False)
     ending_threshold = int(settings.get("alert", {}).get("ending_threshold_minutes", 60))
     result = ScanResult(
         scanned=len(listings),
         unique_listings=len(listings),
         search_pages=source.last_page_count,
         route_counts={},
+        alert_route_counts={},
         thesis_counts={},
         opportunity_counts={},
     )
@@ -241,11 +256,11 @@ async def scan_once(
                 listing.source,
                 listing.source_listing_id,
                 _signature(listing),
-                query,
+                query_text,
                 db_path,
-                freshness_hours=int(
-                    settings.get("scanner", {}).get("listing_dedupe_hours", 6)
-                ),
+                freshness_hours=int(settings.get("scanner", {}).get("listing_dedupe_hours", 6)),
+                strategy_id=spec.strategy_id,
+                strategy_type=spec.strategy_type,
             )
             if seen.is_duplicate:
                 result.duplicates += 1
@@ -307,7 +322,9 @@ async def scan_once(
             )
         )
         try:
-            result.stage_b_enriched, result.stage_b_failed = await detail_service.enrich(stage_b_listings)
+            result.stage_b_enriched, result.stage_b_failed = await detail_service.enrich(
+                stage_b_listings
+            )
         except Exception:  # noqa: BLE001 - Stage B must fail closed without stopping scans.
             result.stage_b_failed = len(stage_b_listings)
         for listing in stage_b_listings:
@@ -331,9 +348,7 @@ async def scan_once(
                 comp_candidates = await comp_service.retrieve(
                     evaluation.profile,
                     minimum_candidates=int(
-                        settings.get("comps", {}).get(
-                            "minimum_candidates_before_broadening", 5
-                        )
+                        settings.get("comps", {}).get("minimum_candidates_before_broadening", 5)
                     ),
                 )
             except (httpx.HTTPError, OSError, ValueError):
@@ -342,9 +357,7 @@ async def scan_once(
                 japan_candidates = await japan_comp_service.retrieve(
                     evaluation.profile,
                     minimum_candidates=int(
-                        settings.get("comps", {}).get(
-                            "minimum_candidates_before_broadening", 5
-                        )
+                        settings.get("comps", {}).get("minimum_candidates_before_broadening", 5)
                     ),
                 )
             except (httpx.HTTPError, OSError, ValueError):
@@ -394,9 +407,7 @@ async def scan_once(
             listing,
             evaluation,
             ending_threshold,
-            archive_watch_min_heat=int(
-                settings.get("alert", {}).get("archive_watch_min_heat", 70)
-            ),
+            archive_watch_min_heat=int(settings.get("alert", {}).get("archive_watch_min_heat", 70)),
         )
         if routed is None:
             result.below_threshold += 1
@@ -423,6 +434,7 @@ async def scan_once(
         if sent:
             save_alert_state(listing.source, listing.source_listing_id, signature, route, db_path)
             result.new_alerts += 1
+            result.alert_route_counts[route] = result.alert_route_counts.get(route, 0) + 1
         else:
             result.failed_alerts += 1
     result.new_rows, result.updated_rows = save_listings(listings, db_path)

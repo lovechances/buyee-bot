@@ -7,9 +7,14 @@ scanner:
   search_pages_per_query: 2
   listing_dedupe_hours: 6
   query_layer_shares:
-    broad: 0.50
-    medium: 0.30
-    surgical: 0.20
+    broad: 0.35
+    medium: 0.20
+    surgical: 0.10
+    market_structure: 0.35
+  market_strategy_shares:
+    market_buyout: 0.45
+    market_ending: 0.45
+    market_price_band: 0.10
   max_source_attempts: 3
 
 marketplaces:

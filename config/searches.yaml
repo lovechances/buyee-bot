@@ -159,3 +159,22 @@ search_families:
       - "VOSS"
       - "Plato's Atlantis"
       - "Widows of Culloden"
+
+  - brand: "Undercover"
+    priority: 82
+    cooldown_minutes: 180
+    aliases:
+      - "UNDERCOVER"
+      - "アンダーカバー"
+      - "UNDER COVER"
+      - "UNDERCOVERISM"
+    medium_terms:
+      - "Jun Takahashi"
+      - "高橋盾"
+      - "メンズ"
+    surgical_terms:
+      - "SCAB"
+      - "PAPER DOLL"
+      - "BUT BEAUTIFUL"
+      - "ARTS & CRAFTS"
+      - "LESS BUT BETTER"

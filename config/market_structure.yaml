@@ -1,0 +1,156 @@
+version: 1
+provenance: manual_seed_v1
+
+# Yahoo/JDirectItems category identifiers consumed by Buyee's public category path.
+categories:
+  mens_fashion: {id: "23176", label: "Fashion > Men's Fashion"}
+  mens_fashion_goods: {id: "2084005270", label: "Men's Fashion > Fashion Goods"}
+  mens_bags: {id: "2084006467", label: "Fashion > Men's Bags"}
+  mens_shoes: {id: "23200", label: "Fashion > Men's Shoes"}
+  mens_accessories: {id: "2084005358", label: "Accessories & Watches > Men's Accessories"}
+
+# These are discovery slices, never resale estimates or alert thresholds. Shared profiles
+# keep the initial seed set small enough to audit and refine from production yield.
+band_profiles:
+  low:
+    bands:
+      ultra_cheap: {min_jpy: 300, max_jpy: 2500}
+      bargain: {min_jpy: 2501, max_jpy: 9000}
+      moderate: {min_jpy: 9001, max_jpy: 18000}
+  accessible:
+    bands:
+      ultra_cheap: {min_jpy: 300, max_jpy: 5000}
+      bargain: {min_jpy: 5001, max_jpy: 15000}
+      moderate: {min_jpy: 15001, max_jpy: 30000}
+  standard:
+    bands:
+      ultra_cheap: {min_jpy: 300, max_jpy: 8000}
+      bargain: {min_jpy: 8001, max_jpy: 25000}
+      moderate: {min_jpy: 25001, max_jpy: 50000}
+  premium:
+    bands:
+      ultra_cheap: {min_jpy: 300, max_jpy: 8000}
+      bargain: {min_jpy: 8001, max_jpy: 40000}
+      moderate: {min_jpy: 40001, max_jpy: 80000}
+  luxury:
+    bands:
+      ultra_cheap: {min_jpy: 300, max_jpy: 12000}
+      bargain: {min_jpy: 12001, max_jpy: 35000}
+      moderate: {min_jpy: 35001, max_jpy: 75000}
+  silver:
+    bands:
+      ultra_cheap: {min_jpy: 300, max_jpy: 10000}
+      bargain: {min_jpy: 10001, max_jpy: 35000}
+      moderate: {min_jpy: 35001, max_jpy: 80000}
+
+defaults:
+  cooldown_minutes:
+    market_buyout: 75
+    market_ending: 45
+    market_price_band: 240
+  priority:
+    market_buyout: 88
+    market_ending: 86
+    market_price_band: 72
+
+market_families:
+  - family: number_nine
+    query: "Number (N)ine"
+    priority_adjustment: 6
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [buyout, ending, price_band], negative_space: true, closing_hour: true}
+
+  - family: margiela
+    query: "Maison Margiela"
+    priority_adjustment: 5
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [buyout, ending, price_band], negative_space: true, closing_hour: true}
+      - {group: mens_fashion_goods, profile: standard, intents: [buyout]}
+
+  - family: dior_homme
+    query: "Dior Homme"
+    priority_adjustment: 5
+    categories:
+      - {group: mens_fashion, profile: luxury, intents: [buyout, ending, price_band]}
+
+  - family: saint_laurent
+    query: "Saint Laurent Paris"
+    priority_adjustment: 3
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [buyout, ending]}
+
+  - family: vetements
+    query: "Vetements"
+    priority_adjustment: 2
+    categories:
+      - {group: mens_fashion, profile: premium, intents: [buyout, ending]}
+
+  - family: rick_owens
+    query: "Rick Owens"
+    priority_adjustment: 3
+    categories:
+      - {group: mens_fashion, profile: luxury, intents: [buyout, ending]}
+      - {group: mens_shoes, profile: luxury, intents: [buyout]}
+
+  - family: chrome_hearts
+    query: "Chrome Hearts"
+    priority_adjustment: 1
+    categories:
+      - {group: mens_accessories, profile: silver, intents: [buyout, ending]}
+
+  - family: if_six_was_nine
+    query: "IF SIX WAS NINE"
+    priority_adjustment: 2
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [buyout, ending, price_band]}
+
+  - family: roen
+    query: "Roen"
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [buyout, ending]}
+
+  - family: needles
+    query: "Needles"
+    priority_adjustment: 2
+    categories:
+      - {group: mens_fashion, profile: low, intents: [buyout, ending], negative_space: true, closing_hour: true}
+
+  - family: undercover
+    query: "UNDERCOVER"
+    priority_adjustment: 3
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [buyout, ending, price_band]}
+
+  - family: balenciaga
+    query: "Balenciaga"
+    priority_adjustment: 1
+    categories:
+      - {group: mens_fashion, profile: luxury, intents: [buyout, ending]}
+
+  - family: prada
+    query: "Prada"
+    priority_adjustment: 1
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [buyout, ending]}
+      - {group: mens_bags, profile: standard, intents: [buyout]}
+
+  - family: alexander_mcqueen
+    query: "Alexander McQueen"
+    priority_adjustment: 1
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [buyout, ending]}
+
+  - family: gaboratory
+    query: "Gaboratory"
+    categories:
+      - {group: mens_accessories, profile: silver, intents: [buyout, ending]}
+
+  - family: king_baby
+    query: "King Baby"
+    categories:
+      - {group: mens_accessories, profile: silver, intents: [buyout, ending]}
+
+  - family: vintage_band_tees
+    query: "ヴィンテージ バンドT"
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [buyout, ending]}

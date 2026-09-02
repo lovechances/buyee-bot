@@ -20,6 +20,7 @@ from .browser_session import (
     restore_session_cookies_async,
 )
 from .db import DB_PATH, save_listings
+from .discovery import MarketplaceSearchFilters
 from .normalize import normalize_brand, normalize_text
 
 
@@ -89,21 +90,46 @@ def load_live_queries(config_path: str | Path = "config/searches.yaml") -> list[
 
 
 class BuyeeAuthenticatedSource(ListingSource):
-    def __init__(self, max_pages: int = 1):
+    def __init__(
+        self,
+        max_pages: int = 1,
+        search_filters: MarketplaceSearchFilters | None = None,
+        discovery_context: dict[str, Any] | None = None,
+    ):
         self.max_pages = max(1, min(max_pages, 5))
         self.last_page_count = 0
+        self.search_filters = search_filters
+        self.discovery_context = discovery_context or {}
 
     @staticmethod
-    def _search_url(query: str | None) -> str:
+    def _search_url(
+        query: str | None,
+        search_filters: MarketplaceSearchFilters | None = None,
+    ) -> str:
         if not query:
             return "https://buyee.jp/jdirectitems/auction"
-        return f"https://buyee.jp/item/search/query/{quote(query, safe='')}"
+        url = f"https://buyee.jp/item/search/query/{quote(query, safe='')}"
+        if search_filters and search_filters.category_id:
+            url += f"/category/{search_filters.category_id}"
+        if search_filters:
+            encoded = search_filters.encoded_query()
+            if encoded:
+                url += f"?{encoded}"
+        return url
+
+    def _annotate_discovery(self, listings: list[LiveListing]) -> list[LiveListing]:
+        if not self.discovery_context:
+            return listings
+        for listing in listings:
+            listing.raw = {
+                **(listing.raw or {}),
+                "discovery": self.discovery_context,
+            }
+        return listings
 
     @staticmethod
     def _empty_page_state(body_text: str) -> str:
-        if "Logout" not in body_text and re.search(
-            r"(?i)\b(?:log in|login|sign in)\b", body_text
-        ):
+        if "Logout" not in body_text and re.search(r"(?i)\b(?:log in|login|sign in)\b", body_text):
             return "auth_expired"
         if re.search(r"(?i)no (?:items|results)|0 (?:items|results)|該当する商品", body_text):
             return "no_results"
@@ -117,7 +143,7 @@ class BuyeeAuthenticatedSource(ListingSource):
             result = self._fetch_via_browser(query)
             return await result if hasattr(result, "__await__") else result
 
-        url = self._search_url(query)
+        url = self._search_url(query, self.search_filters)
         try:
             async with httpx.AsyncClient(
                 timeout=20.0, follow_redirects=True, cookies=cookies
@@ -131,7 +157,7 @@ class BuyeeAuthenticatedSource(ListingSource):
         listings = self._parse_listing_html(response.text, query)
         if listings:
             self.last_page_count = 1
-            return listings
+            return self._annotate_discovery(listings)
         result = self._fetch_via_browser(query)
         return await result if hasattr(result, "__await__") else result
 
@@ -139,7 +165,7 @@ class BuyeeAuthenticatedSource(ListingSource):
         from playwright.async_api import Error as PlaywrightError
         from playwright.async_api import async_playwright
 
-        url = self._search_url(query)
+        url = self._search_url(query, self.search_filters)
 
         ensure_browser_dir()
         async with async_playwright() as p:
@@ -239,7 +265,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                             raise ParserAnomalyError(
                                 "search page contained no recognizable listing cards"
                             )
-                return self._items_from_browser_payload(all_rows, query)
+                return self._annotate_discovery(self._items_from_browser_payload(all_rows, query))
             finally:
                 await browser.close()
 
@@ -291,7 +317,8 @@ class BuyeeAuthenticatedSource(ListingSource):
     @staticmethod
     def _extract_buyout_price(text: str) -> int | None:
         match = re.search(
-            r"(?i)(?:Buy\s*Now|Buyout|Buy\s*Out)\s*(?:[:\-]?)\s*(?:¥|JPY|YEN)?\s*([0-9][0-9,]*)",
+            r"(?i)(?:Buy\s*Now|Buyout(?:\s*Price)?|Buy\s*Out(?:\s*Price)?)"
+            r"\s*(?:[:\-]?)\s*(?:¥|JPY|YEN)?\s*([0-9][0-9,]*)",
             text,
         )
         if match:
@@ -301,9 +328,13 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _extract_bid_count(text: str) -> int | None:
-        match = re.search(r"(?i)([0-9]+)\s*(?:bids?|bid count)", text)
+        match = re.search(
+            r"(?i)(?:([0-9]+)\s*(?:bids?|bid count)|"
+            r"(?:number of bids|bid count)\s*[:\-]?\s*([0-9]+))",
+            text,
+        )
         if match:
-            return int(match.group(1))
+            return int(match.group(1) or match.group(2))
         return None
 
     @staticmethod
