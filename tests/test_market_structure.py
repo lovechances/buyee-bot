@@ -18,7 +18,7 @@ from buyeeye.discovery import (
     build_query_universe,
     query_layer_counts,
 )
-from buyeeye.evaluation import evaluate_listing
+from buyeeye.evaluation import evaluate_listing, score_desirability
 from buyeeye.fashion import enrich_title
 from buyeeye.live_sources import BuyeeAuthenticatedSource, LiveListing
 from buyeeye.models import Comp
@@ -536,11 +536,18 @@ def test_additive_runtime_migration_accepts_existing_query_rows(tmp_path):
 
 def test_undercover_is_first_class_but_subline_and_collab_evidence_is_conservative():
     archive = enrich_title("UNDERCOVER 2003SS SCAB distressed jacket Jun Takahashi")
+    ordinary_collection_piece = enrich_title("UNDERCOVER 2003SS SCAB graphic t-shirt")
     collaboration = enrich_title("UNIQLO x UNDERCOVER basic logo t-shirt")
 
     assert archive.brand.value == "Undercover"
     assert archive.designer.value == "Jun Takahashi"
     assert archive.collection.value == "SCAB"
     assert archive.item_type.value == "jacket"
-    assert any(signal.value == "scab" for signal in archive.positive_signals)
+    assert any(signal.value == "distressed" for signal in archive.positive_signals)
+    assert not any(signal.value == "scab" for signal in archive.positive_signals)
+    assert ordinary_collection_piece.collection.value == "SCAB"
+    assert score_desirability(
+        ordinary_collection_piece,
+        "UNDERCOVER 2003SS SCAB graphic t-shirt",
+    ).score < 70
     assert any("uniqlo x undercover" in signal.value for signal in collaboration.negative_signals)
