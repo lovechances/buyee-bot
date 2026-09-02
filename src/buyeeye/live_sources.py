@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 import yaml
@@ -281,6 +281,16 @@ class BuyeeAuthenticatedSource(ListingSource):
         return compact[-32:] if len(compact) > 32 else compact
 
     @staticmethod
+    def _is_primary_search_result(href: str, query: str | None) -> bool:
+        """Exclude explicit Buyee recommendation/history modules from query results."""
+        if not query:
+            return True
+        conversion_types = parse_qs(urlsplit(href).query).get("conversionType", [])
+        return not conversion_types or all(
+            value == "jdirectitems_auction_DirectSearch" for value in conversion_types
+        )
+
+    @staticmethod
     def _extract_card_title(row: dict[str, Any]) -> str:
         for key in (
             "title",
@@ -353,7 +363,11 @@ class BuyeeAuthenticatedSource(ListingSource):
         for row in rows:
             href = row.get("href", "")
             text = str(row.get("text") or "")
-            if not href or not text:
+            if (
+                not href
+                or not text
+                or not BuyeeAuthenticatedSource._is_primary_search_result(href, query)
+            ):
                 continue
             item_id = BuyeeAuthenticatedSource._item_id_from_href(href)
             if not item_id or item_id in seen:
@@ -410,7 +424,11 @@ class BuyeeAuthenticatedSource(ListingSource):
         for item in candidates[:40]:
             href = item.get("href") or ""
             text = item.get_text(" ", strip=True)
-            if not href or not text:
+            if (
+                not href
+                or not text
+                or not BuyeeAuthenticatedSource._is_primary_search_result(href, query)
+            ):
                 continue
             item_id = BuyeeAuthenticatedSource._item_id_from_href(href)
             if not item_id or item_id in seen:

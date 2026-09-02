@@ -516,13 +516,13 @@ def test_buyee_authenticated_source_uses_browser_fallback_on_empty_http_200(monk
 def test_buyee_browser_payload_parser_extracts_live_listing_fields_from_real_dom():
     rows = [
         {
-            "href": "https://buyee.jp/item/jdirectitems/auction/s1242650927?conversionType=yac_top_recommend_list",
+            "href": "https://buyee.jp/item/jdirectitems/auction/s1242650927?conversionType=jdirectitems_auction_DirectSearch",
             "text": "Time Remaining 6 day(s) 3,300 YEN (US$21.65)",
             "title": "Number (N)ine overshirt",
             "image_url": "https://example.com/overshirt.jpg",
         },
         {
-            "href": "https://buyee.jp/item/jdirectitems/auction/c1242648160?conversionType=yac_top_recommend_list",
+            "href": "https://buyee.jp/item/jdirectitems/auction/c1242648160?conversionType=jdirectitems_auction_DirectSearch",
             "text": "Time Remaining 13 hour(s) 4,000 YEN (US$26.24)",
             "image_url": "https://example.com/other.jpg",
         },

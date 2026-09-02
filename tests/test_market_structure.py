@@ -119,6 +119,32 @@ def test_real_buyee_buyout_price_label_is_parsed_from_fixture():
     assert listings[0].buyout_indicator == "buyout"
 
 
+def test_query_results_exclude_browsing_history_and_recommendation_cards():
+    rows = json.loads(
+        (ROOT / "tests" / "fixtures" / "buyee_search_cards.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    listings = BuyeeAuthenticatedSource._items_from_browser_payload(
+        rows, "Maison Margiela"
+    )
+
+    assert [listing.source_listing_id for listing in listings] == ["d123456789"]
+    assert listings[0].title_original == "Maison Margiela archive graphic T-shirt"
+
+
+def test_http_search_parser_excludes_non_result_modules_from_fixture():
+    html = (ROOT / "tests" / "fixtures" / "buyee_search_page.html").read_text(
+        encoding="utf-8"
+    )
+
+    listings = BuyeeAuthenticatedSource._parse_listing_html(html, "Maison Margiela")
+
+    assert [listing.source_listing_id for listing in listings] == ["d123456789"]
+    assert listings[0].buyout_price == 8000
+
+
 def test_market_universe_keeps_same_keyword_slices_with_distinct_provenance():
     searches = load_yaml(ROOT / "config" / "searches.yaml")
     taxonomy = load_yaml(ROOT / "config" / "fashion_taxonomy.yaml")
