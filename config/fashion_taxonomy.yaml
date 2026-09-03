@@ -2,7 +2,7 @@ version: 1
 provenance: manual_v1_research
 
 relationship_terms:
-  homage_reference: ["inspired by", "homage", "style", "type", "タイプ"]
+  homage_reference: ["inspired by", "homage", "style", "type", "オマージュ", "タイプ"]
 
 brands:
   number_nine:

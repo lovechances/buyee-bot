@@ -8,6 +8,7 @@ from buyeeye.discovery import MarketplaceSearchFilters, QuerySpec
 from buyeeye.evaluation import DesirabilityResult, evaluate_listing
 from buyeeye.fashion import enrich_title, expand_discovery_terms
 from buyeeye.live_sources import LiveListing
+from buyeeye.pipeline import _post_detail_decision
 from buyeeye.stage_a import assess_stage_a, select_stage_a_candidates
 
 
@@ -792,6 +793,35 @@ def test_homage_relationship_rejects_but_stereotype_remains_core() -> None:
     assert homage_assessment.reject_reason == "homage_or_reference"
     assert harmless_assessment.piece_relationship == "core"
     assert harmless_assessment.eligible is True
+
+
+def test_japanese_chrome_hearts_homage_fails_closed_before_and_after_detail() -> None:
+    settings = _settings()
+    listing = _listing(
+        "japanese-chrome-homage",
+        "オマージュ バングル ブレスレット #クロムハーツ レナードカムフォート",
+        brand="Chrome Hearts",
+        category="jewelry",
+        current_price=12_000,
+        buyout_price=12_000,
+    )
+    listing.raw["stage_b"] = {"status": "enriched", "observed": {}}
+    evaluation = evaluate_listing(listing, settings=settings)
+    assessment = assess_stage_a(
+        listing,
+        evaluation,
+        _market_spec("chrome_hearts", "market_buyout", maximum_jpy=20_000),
+        settings,
+    )
+    post_detail = _post_detail_decision(listing, evaluation)
+
+    assert evaluation.profile.relationship
+    assert evaluation.profile.relationship.value == "homage_reference"
+    assert evaluation.profile.relationship.matched_term == "オマージュ"
+    assert assessment.eligible is False
+    assert assessment.reject_reason == "homage_or_reference"
+    assert post_detail.route is None
+    assert post_detail.rejection_reason == "homage_or_secondary_brand"
 
 
 def test_size_or_dimension_x_does_not_create_a_collaboration_relationship() -> None:

@@ -242,12 +242,21 @@ def _post_detail_decision(
     economics = evaluation.economics
     risk = evaluation.auth_risk.level
     profile = evaluation.profile
+    homage_reference = bool(
+        profile.relationship and profile.relationship.value == "homage_reference"
+    )
     low_priority_collaboration = bool(
         profile.relationship
         and profile.relationship.provenance.endswith(".collaboration_low_priority")
     )
     if risk == "do_not_touch":
         return PostDetailDecision(None, "severe authentication evidence", "severe_auth_risk")
+    if homage_reference:
+        return PostDetailDecision(
+            None,
+            "explicit homage/reference wording is not a core branded piece",
+            "homage_or_secondary_brand",
+        )
     if low_priority_collaboration and evaluation.directional.thesis != "asymmetric_value":
         return PostDetailDecision(
             None,
