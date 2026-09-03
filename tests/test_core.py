@@ -1571,6 +1571,69 @@ def test_balenciaga_sport_is_secondary_but_distinct_low_cost_piece_can_ping():
     assert _route_evaluation(listing, evaluation)[0] == "buyouts"
 
 
+def test_cheap_diffusion_path_keeps_piece_and_price_boundaries():
+    def diffusion_listing(source_id: str, title: str, price: int) -> LiveListing:
+        return LiveListing(
+            source="buyee",
+            source_listing_id=source_id,
+            url=f"https://buyee.jp/item/{source_id}",
+            title_original=title,
+            title_normalized=title.casefold(),
+            brand=None,
+            category="menswear",
+            current_price=price,
+            buyout_price=price,
+            starting_price=price,
+            seller_name="seller",
+            condition="Used",
+            raw={
+                "stage_b": {"status": "enriched", "observed": {}},
+                "detail_photo_count": 6,
+                "seller_feedback_count": 500,
+                "discovery": {
+                    "query_layer": "market_structure",
+                    "search_filters": {"max_buyout_price_jpy": 35_000},
+                },
+            },
+        )
+
+    plain = evaluate_listing(
+        diffusion_listing(
+            "balenciaga-sport-plain",
+            "BALENCIAGA SPORT バレンシアガ 無地 長袖シャツ M",
+            8_000,
+        )
+    )
+    at_boundary_listing = diffusion_listing(
+        "balenciaga-sport-boundary",
+        "BALENCIAGA SPORT バレンシアガ 総柄 長袖シャツ M",
+        10_000,
+    )
+    at_boundary = evaluate_listing(at_boundary_listing)
+    above_boundary = evaluate_listing(
+        diffusion_listing(
+            "balenciaga-sport-over-boundary",
+            "BALENCIAGA SPORT バレンシアガ 総柄 長袖シャツ M",
+            10_001,
+        )
+    )
+    mcq_listing = diffusion_listing(
+        "mcq-distinct-jeans",
+        "McQ Alexander McQueen 加工 刺繍 スリム デニム パンツ",
+        5_500,
+    )
+    mcq = evaluate_listing(mcq_listing)
+
+    assert plain.profile.relationship.value == "diffusion"
+    assert plain.directional.thesis is None
+    assert at_boundary.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(at_boundary_listing, at_boundary)[0] == "buyouts"
+    assert above_boundary.directional.thesis is None
+    assert mcq.profile.relationship.value == "diffusion"
+    assert mcq.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(mcq_listing, mcq)[0] == "buyouts"
+
+
 def test_new_with_tags_cannot_rescue_a_generic_cheap_basic():
     listing = LiveListing(
         source="buyee",
