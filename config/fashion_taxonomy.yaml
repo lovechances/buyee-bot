@@ -107,7 +107,8 @@ brands:
     generic_signals: ["logo tee"]
   alexander_mcqueen:
     canonical: "Alexander McQueen"
-    aliases: ["alexander mcqueen", "mcq", "アレキサンダーマックイーン", "アレキサンダー マックイーン"]
+    aliases: ["alexander mcqueen", "アレキサンダーマックイーン", "アレキサンダー マックイーン"]
+    recognition_aliases: ["mcq"]
     designer: "Lee Alexander McQueen"
     eras:
       lee_mcqueen: ["lee mcqueen", "本人期", "リー期"]

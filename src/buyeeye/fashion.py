@@ -84,8 +84,12 @@ def enrich_title(title: str, hinted_brand: str | None = None) -> FashionProfile:
     matched_brand: dict[str, Any] | None = None
 
     for brand_key, record in taxonomy.get("brands", {}).items():
+        recognition_terms = [
+            *record.get("aliases", []),
+            *record.get("recognition_aliases", []),
+        ]
         match = next(
-            (str(alias) for alias in record.get("aliases", []) if _term_matches(text, str(alias))),
+            (str(alias) for alias in recognition_terms if _term_matches(text, str(alias))),
             None,
         )
         if not match:

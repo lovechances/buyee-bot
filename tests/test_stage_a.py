@@ -6,7 +6,7 @@ import pytest
 
 from buyeeye.discovery import MarketplaceSearchFilters, QuerySpec
 from buyeeye.evaluation import DesirabilityResult, evaluate_listing
-from buyeeye.fashion import enrich_title
+from buyeeye.fashion import enrich_title, expand_discovery_terms
 from buyeeye.live_sources import LiveListing
 from buyeeye.stage_a import assess_stage_a, select_stage_a_candidates
 
@@ -365,6 +365,9 @@ def test_known_mcq_card_gets_bounded_low_price_inspection() -> None:
     assert assessment.eligible is True
     assert assessment.primary_path == "market_value"
     assert set(assessment.eligible_paths) == {"market_value", "unknown_interesting"}
+    assert "mcq" not in {
+        term["term"].casefold() for term in expand_discovery_terms("alexander_mcqueen")
+    }
 
 
 def test_known_undercover_card_uses_engineer_boot_identity() -> None:
