@@ -43,6 +43,10 @@ pricing:
 alert:
   ending_threshold_minutes: 60
   auction_alert_max_remaining_hours: 12
+  same_listing_cooldown_hours: 12
+  material_price_drop_fraction: 0.15
+  material_price_drop_min_jpy: 1000
+  material_price_drop_absolute_jpy: 5000
   archive_watch_min_heat: 70
   buyout_min_score: 78
   ending_min_score: 70

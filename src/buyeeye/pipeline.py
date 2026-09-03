@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,14 @@ import httpx
 from .browser_session import has_valid_session
 from .comp_cache import CompRepository, CompService
 from .comp_sources import ObservedUSSoldSource, YahooEndedSource
-from .db import DB_PATH, get_alert_state, save_alert_state, save_listings
+from .db import (
+    DB_PATH,
+    AlertState,
+    backfill_alert_material_state,
+    get_alert_state,
+    save_alert_state,
+    save_listings,
+)
 from .detail_enrichment import BuyeeDetailService, DetailRepository
 from .discord_alerts import alert_thesis, send_listing_alert
 from .discovery import QuerySpec
@@ -88,6 +96,27 @@ class PostDetailDecision:
     route: str | None
     reason: str
     rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class AlertMaterialSnapshot:
+    route: str
+    thesis: str
+    price_jpy: int | None
+    price_kind: str | None
+    maturity_state: str
+    identity: str
+    identity_confidence: str
+    risk_state: str
+    evidence_state: str
+    verified_median_jpy: int | None
+
+
+@dataclass(frozen=True)
+class AlertEventDecision:
+    should_alert: bool
+    event: str
+    legacy_backfill: bool = False
 
 
 def _directional_why(evaluation: ListingEvaluation) -> str:
@@ -403,23 +432,171 @@ def _opportunity_kind(route: str, thesis: str, evaluation: ListingEvaluation) ->
     return "archive_grail"
 
 
-def _signature(listing: LiveListing) -> str:
+def _observation_maturity_state(
+    listing: LiveListing,
+    settings: dict[str, Any] | None = None,
+) -> str:
+    if listing.buyout_price is not None:
+        return "fixed_buyout"
+    remaining = _minutes_remaining(listing.time_remaining)
+    if remaining is None:
+        return "unknown"
+    alert = (settings or {}).get("alert", {})
+    if remaining <= int(alert.get("ending_threshold_minutes", 60)):
+        return "ending"
+    if remaining <= int(alert.get("auction_alert_max_remaining_hours", 12)) * 60:
+        return "mature"
+    return "early"
+
+
+def _signature(
+    listing: LiveListing,
+    settings: dict[str, Any] | None = None,
+) -> str:
+    """Hash source state that merits reevaluation, excluding display-only drift."""
     values = {
-        "title": listing.title_original,
+        "title": " ".join((listing.title_original or "").casefold().split()),
         "price": listing.current_price,
         "buyout": listing.buyout_price,
         "starting": listing.starting_price,
-        "time": listing.time_remaining,
         "bid_count": listing.bid_count,
-        "watch_count": listing.watch_count,
-        "image": listing.image_url,
-        "opportunity": listing.opportunity_score,
-        "auth_risk": listing.auth_risk,
-        "comp_confidence": listing.comp_confidence,
-        "comp_sources": ((listing.raw or {}).get("intelligence") or {}).get("comp_sources", []),
-        "auction_maturity": ((listing.raw or {}).get("intelligence") or {}).get("auction_maturity"),
+        "maturity_state": _observation_maturity_state(listing, settings),
     }
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
+
+
+def _alert_material_snapshot(
+    listing: LiveListing,
+    evaluation: ListingEvaluation,
+    route: str,
+    thesis: str,
+    settings: dict[str, Any] | None = None,
+) -> AlertMaterialSnapshot:
+    profile = evaluation.profile
+    relationship = profile.relationship.value if profile.relationship else "uncertain"
+    participants = (
+        ",".join(profile.relationship.participants)
+        if profile.relationship and profile.relationship.participants
+        else ""
+    )
+    identity = "|".join(
+        str(value or "-").casefold()
+        for value in (
+            profile.brand.value if profile.brand else None,
+            relationship,
+            profile.item_type.value if profile.item_type else None,
+            profile.collection.value if profile.collection else None,
+            profile.era.value if profile.era else None,
+            participants,
+        )
+    )
+    maturity_state = _observation_maturity_state(listing, settings)
+    if listing.buyout_price is not None:
+        price_jpy = listing.buyout_price
+        price_kind = "buyout"
+    elif evaluation.auction_maturity.price_actionable:
+        price_jpy = listing.current_price
+        price_kind = "current_bid"
+    else:
+        price_jpy = None
+        price_kind = None
+    verified = evaluation.valuation.confidence in {"medium", "high"}
+    return AlertMaterialSnapshot(
+        route=route,
+        thesis=thesis,
+        price_jpy=price_jpy,
+        price_kind=price_kind,
+        maturity_state=maturity_state,
+        identity=identity,
+        identity_confidence=evaluation.identity.confidence,
+        risk_state=evaluation.auth_risk.level,
+        evidence_state="verified_us_sold" if verified else "us_resale_unverified",
+        verified_median_jpy=(evaluation.comps.median_jpy if verified else None),
+    )
+
+
+def _alert_event_decision(
+    previous: AlertState | None,
+    current: AlertMaterialSnapshot,
+    *,
+    now: datetime | None = None,
+    cooldown_hours: float = 12,
+    price_drop_fraction: float = 0.15,
+    price_drop_min_jpy: int = 1_000,
+    price_drop_absolute_jpy: int = 5_000,
+) -> AlertEventDecision:
+    """Decide explicit user-action events; route/display drift is never sufficient."""
+    if previous is None:
+        return AlertEventDecision(True, "initial_alert")
+    if previous.material_state_version is None:
+        return AlertEventDecision(False, "legacy_state_backfill", legacy_backfill=True)
+
+    # Ending soon is the one time-critical transition allowed to bypass the
+    # defensive cooldown. Normal 6h -> 5h countdown drift remains one state.
+    if (
+        current.route == "ending"
+        and current.maturity_state == "ending"
+        and previous.last_material_maturity_state != "ending"
+    ):
+        return AlertEventDecision(True, "entered_ending_soon")
+
+    event: str | None = None
+    if (
+        current.price_kind == "buyout"
+        and previous.last_material_price_kind != "buyout"
+    ):
+        event = "buyout_became_available"
+    elif (
+        current.price_jpy is not None
+        and previous.last_material_price_jpy is not None
+        and current.price_kind == previous.last_material_price_kind
+        and current.price_jpy < previous.last_material_price_jpy
+    ):
+        drop = previous.last_material_price_jpy - current.price_jpy
+        fraction = drop / max(1, previous.last_material_price_jpy)
+        if (
+            (drop >= price_drop_min_jpy and fraction >= price_drop_fraction)
+            or drop >= price_drop_absolute_jpy
+        ):
+            event = "material_price_drop"
+
+    risk_order = {"do_not_touch": 3, "high": 2, "medium": 1, "low": 0}
+    if event is None and risk_order.get(previous.last_material_risk_state or "", 0) > (
+        risk_order.get(current.risk_state, 0)
+    ):
+        event = "risk_materially_improved"
+    if (
+        event is None
+        and current.identity_confidence == "high"
+        and previous.last_material_identity
+        and previous.last_material_identity != current.identity
+    ):
+        event = "identity_materially_changed"
+    if (
+        event is None
+        and previous.last_material_evidence_state != "verified_us_sold"
+        and current.evidence_state == "verified_us_sold"
+    ):
+        event = "verified_us_evidence_obtained"
+    if (
+        event is None
+        and current.evidence_state == "verified_us_sold"
+        and current.verified_median_jpy
+        and previous.last_verified_median_jpy
+    ):
+        movement = abs(current.verified_median_jpy - previous.last_verified_median_jpy)
+        if movement / max(1, previous.last_verified_median_jpy) >= 0.25:
+            event = "verified_us_value_materially_changed"
+    if event is None:
+        return AlertEventDecision(False, "unchanged_material_state")
+
+    current_time = now or datetime.now(UTC)
+    last_alert = previous.last_alert_at
+    if last_alert.tzinfo is None:
+        last_alert = last_alert.replace(tzinfo=UTC)
+    if last_alert > current_time - timedelta(hours=max(0.0, cooldown_hours)):
+        return AlertEventDecision(False, f"cooldown:{event}")
+    return AlertEventDecision(True, event)
 
 
 async def scan_once(
@@ -481,7 +658,7 @@ async def scan_once(
             seen = mark_listing_seen(
                 listing.source,
                 listing.source_listing_id,
-                _signature(listing),
+                _signature(listing, settings),
                 query_text,
                 db_path,
                 freshness_hours=int(settings.get("scanner", {}).get("listing_dedupe_hours", 6)),
@@ -832,7 +1009,7 @@ async def scan_once(
         result.opportunity_counts[opportunity_kind] = (
             result.opportunity_counts.get(opportunity_kind, 0) + 1
         )
-        signature = _signature(listing)
+        signature = _signature(listing, settings)
         if stage_b_status == "enriched":
             assert result.post_detail_decisions is not None
             result.post_detail_decisions.append(
@@ -856,17 +1033,66 @@ async def scan_once(
                     "thesis": thesis,
                 }
             )
+        if not send_alerts:
+            continue
         previous = before[listing.source_listing_id]
-        if previous is not None and previous.signature == signature:
+        material = _alert_material_snapshot(listing, evaluation, route, thesis, settings)
+        alert_settings = settings.get("alert", {})
+        alert_event = _alert_event_decision(
+            previous,
+            material,
+            cooldown_hours=float(
+                alert_settings.get("same_listing_cooldown_hours", 12)
+            ),
+            price_drop_fraction=float(
+                alert_settings.get("material_price_drop_fraction", 0.15)
+            ),
+            price_drop_min_jpy=int(
+                alert_settings.get("material_price_drop_min_jpy", 1_000)
+            ),
+            price_drop_absolute_jpy=int(
+                alert_settings.get("material_price_drop_absolute_jpy", 5_000)
+            ),
+        )
+        if alert_event.legacy_backfill:
+            backfill_alert_material_state(
+                listing.source,
+                listing.source_listing_id,
+                db_path,
+                thesis=material.thesis,
+                material_price_jpy=material.price_jpy,
+                material_price_kind=material.price_kind,
+                material_maturity_state=material.maturity_state,
+                material_identity=material.identity,
+                material_risk_state=material.risk_state,
+                material_evidence_state=material.evidence_state,
+                verified_median_jpy=material.verified_median_jpy,
+            )
             result.suppressed_alerts += 1
             continue
-        if not send_alerts:
+        if not alert_event.should_alert:
+            result.suppressed_alerts += 1
             continue
         sent, _, _ = send_listing_alert(
             listing, route, reason, evaluation.desirability.score, evaluation
         )
         if sent:
-            save_alert_state(listing.source, listing.source_listing_id, signature, route, db_path)
+            save_alert_state(
+                listing.source,
+                listing.source_listing_id,
+                signature,
+                route,
+                db_path,
+                thesis=material.thesis,
+                material_price_jpy=material.price_jpy,
+                material_price_kind=material.price_kind,
+                material_maturity_state=material.maturity_state,
+                material_identity=material.identity,
+                material_risk_state=material.risk_state,
+                material_evidence_state=material.evidence_state,
+                verified_median_jpy=material.verified_median_jpy,
+                alert_event=alert_event.event,
+            )
             result.new_alerts += 1
             family_funnel(assessment.detected_family)["alerts"] += 1
             result.alert_route_counts[route] = result.alert_route_counts.get(route, 0) + 1

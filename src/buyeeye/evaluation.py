@@ -158,12 +158,43 @@ _DIRECTIONAL_DESIGN_TERMS = (
     "staff",
     "tailored",
     "runway",
+    "single stitch",
     "グラデーション",
     "再構築",
     "刺繍",
     "加工",
     "変形",
     "総柄",
+    "シングルステッチ",
+)
+
+# These terms are useful search/taxonomy context, but they do not establish
+# that the specific garment is substantively interesting. In particular, a
+# seller writing "archive" or naming a famous band cannot turn a plain basic
+# into an asymmetric-value alert.
+_DIRECTIONAL_CONTEXT_ONLY_SIGNALS = {
+    "archive",
+    "sport",
+    "nirvana",
+    "smashing pumpkins",
+    "marilyn manson",
+    "sonic youth",
+    "nine inch nails",
+}
+
+_VINTAGE_BAND_PRODUCTION_TERMS = (
+    "70s",
+    "80s",
+    "90s",
+    "single stitch",
+    "シングルステッチ",
+    "copyright",
+    "コピーライト",
+    "made in usa",
+    "screen stars",
+    "brockum",
+    "giant tag",
+    "当時物",
 )
 
 
@@ -185,8 +216,16 @@ def _piece_signals(profile: FashionProfile, evidence_text: str) -> tuple[str, ..
     signals = {
         term for term in _DIRECTIONAL_DESIGN_TERMS if _phrase_present(evidence_text, term)
     }
-    signals.update(signal.value for signal in profile.positive_signals)
+    signals.update(
+        signal.value
+        for signal in profile.positive_signals
+        if signal.value.casefold() not in _DIRECTIONAL_CONTEXT_ONLY_SIGNALS
+    )
     return tuple(sorted(signals))
+
+
+def _has_vintage_band_production_evidence(evidence_text: str) -> bool:
+    return any(_phrase_present(evidence_text, term) for term in _VINTAGE_BAND_PRODUCTION_TERMS)
 
 
 def assess_identity_confidence(
@@ -424,7 +463,39 @@ def assess_directional_opportunity(
 
     score = max(0, min(100, score))
     archive_context = bool(profile.collection or profile.era)
-    substantive = bool(archive_context or design_signals)
+    notable_material = bool(
+        profile.material
+        and profile.material.value in {"silver", "leather", "mohair", "cashmere"}
+    )
+    strong_collaboration = bool(
+        profile.relationship
+        and profile.relationship.value == "collaboration"
+        and not relationship_provenance.endswith(".collaboration_low_priority")
+    )
+    substantive = bool(
+        archive_context or design_signals or notable_material or strong_collaboration
+    )
+    quality_floor = bool(
+        substantive
+        and (
+            not generic
+            or archive_context
+            or notable_material
+            or len(design_signals) >= 2
+        )
+    )
+    is_vintage_band_tee = bool(
+        profile.brand and profile.brand.value == "Vintage Band Tee"
+    )
+    vintage_band_quality = bool(
+        is_vintage_band_tee
+        and _has_vintage_band_production_evidence(evidence_text)
+        and design_signals
+        and not generic
+    )
+    if is_vintage_band_tee:
+        substantive = vintage_band_quality
+        quality_floor = vintage_band_quality
     contextual_price_ok = bool(
         discovery_fraction is not None
         and discovery_fraction
@@ -436,6 +507,8 @@ def assess_directional_opportunity(
         and substantive
     )
     relationship_ok = relationship in {"core", "collaboration", "diffusion"}
+    if is_vintage_band_tee:
+        relationship_ok = vintage_band_quality
     if relationship == "diffusion":
         relationship_ok = bool(
             substantive
@@ -455,6 +528,7 @@ def assess_directional_opportunity(
         and profile.item_type
         and profile.category
         and substantive
+        and quality_floor
         and relationship_ok
         and auth.level != "do_not_touch"
         and score >= minimum_score
@@ -463,7 +537,7 @@ def assess_directional_opportunity(
     thesis = "asymmetric_value" if qualifies else None
     if economics.landed_cost_jpy is None:
         confidence = "unavailable"
-    elif substantive and relationship_ok and not generic:
+    elif substantive and quality_floor and relationship_ok and not generic:
         confidence = "high" if score >= 82 else "medium" if score >= 60 else "low"
     else:
         confidence = "low"
@@ -472,6 +546,8 @@ def assess_directional_opportunity(
         if valuation.confidence in {"medium", "high"}
         else "us_resale_unverified"
     )
+    if not quality_floor:
+        reasons.append("insufficient substantive piece-quality evidence")
     return DirectionalOpportunityResult(
         score,
         confidence,

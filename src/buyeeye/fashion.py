@@ -202,6 +202,16 @@ def _classify_relationship(
             matched_collaboration,
             _collaboration_participants(matched_collaboration),
         )
+    if brand_key == "vintage_band_tees":
+        # A recognized band subject is not a mainline fashion-house
+        # relationship. Production/tag/era evidence must establish the value
+        # of the specific tee later in evaluation.
+        return PieceRelationship(
+            "uncertain",
+            0.7,
+            "taxonomy.brands.vintage_band_tees.subject_identity",
+            matched_term,
+        )
     if matched_core_alias:
         return PieceRelationship(
             "core",

@@ -200,7 +200,7 @@ materials:
 negative_terms:
   irrelevant: ["poster", "figure", "doll", "toy", "phone case", "ポスター", "フィギュア", "人形", "ぬいぐるみ", "スマホケース"]
   counterfeit: ["replica", "fake", "faux", "inspired", "style", "type", "レプリカ", "コピー", "タイプ", "ノーブランド", "社外品"]
-  generic: ["basic", "logo tee", "ノベルティ", "販促", "付録"]
+  generic: ["basic", "logo tee", "plain", "simple", "シンプル", "無地", "ノベルティ", "販促", "付録"]
 
 corpus_sources:
   - {name: "4G Seller", role: "taste", state: "observed"}

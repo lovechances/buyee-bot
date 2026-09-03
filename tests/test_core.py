@@ -19,7 +19,7 @@ from buyeeye.comp_sources import (
     YahooEndedSource,
     build_comp_queries,
 )
-from buyeeye.db import Listing, get_session, save_listings
+from buyeeye.db import Listing, get_alert_state, get_session, save_alert_state, save_listings
 from buyeeye.detail_enrichment import (
     BuyeeDetailService,
     DetailObservation,
@@ -979,12 +979,74 @@ def test_scan_suppresses_unchanged_qualifying_alert(monkeypatch, tmp_path):
     db_path = tmp_path / "dedupe.db"
 
     first = asyncio.run(scan_once("Number (N)ine", db_path))
-    second = asyncio.run(scan_once("Number (N)ine", db_path))
+    listing.time_remaining = "1 day(s)"
+    listing.image_url = "https://example.com/refreshed-image.jpg"
+    listing.watch_count = 99
+    listing.opportunity_score = 91
+    second = asyncio.run(scan_once("Number Nine archive", db_path))
 
     assert first.new_alerts == 1
     assert second.new_alerts == 0
     assert second.suppressed_alerts == 1
     assert second.updated_rows == 1
+
+
+def test_scan_backfills_historical_alert_without_deployment_reflood(monkeypatch, tmp_path):
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="historical-overnight-alert",
+        url="https://buyee.jp/item/historical-overnight-alert",
+        title_original=(
+            "Number (N)ine 08AW A Closed Feeling destroy mohair patchwork jacket"
+        ),
+        title_normalized="number nine a closed feeling destroy mohair patchwork jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=4_000,
+        buyout_price=4_000,
+        starting_price=4_000,
+        seller_name=None,
+        condition="Used",
+        time_remaining="2 day(s)",
+    )
+
+    async def fake_run_once(self, query, persist=False):
+        return [listing]
+
+    async def fake_detail(self, listings):
+        return 0, len(listings)
+
+    async def fake_comps(self, profile, minimum_candidates=8):
+        return []
+
+    sent = []
+    monkeypatch.setattr("buyeeye.pipeline.LiveMarketLoop.run_once", fake_run_once)
+    monkeypatch.setattr("buyeeye.pipeline.BuyeeDetailService.enrich", fake_detail)
+    monkeypatch.setattr("buyeeye.pipeline.CompService.retrieve", fake_comps)
+    monkeypatch.setattr(
+        "buyeeye.pipeline.send_listing_alert",
+        lambda *args: sent.append(args) or (True, 204, 0.01),
+    )
+    db_path = tmp_path / "historical-alert.db"
+    save_alert_state(
+        "buyee",
+        listing.source_listing_id,
+        "overnight-volatile-hash",
+        "buyouts",
+        db_path,
+    )
+    before = get_alert_state("buyee", listing.source_listing_id, db_path)
+
+    result = asyncio.run(scan_once("Number (N)ine", db_path))
+    after = get_alert_state("buyee", listing.source_listing_id, db_path)
+
+    assert result.new_alerts == 0
+    assert result.suppressed_alerts == 1
+    assert sent == []
+    assert before and after
+    assert after.last_alert_at == before.last_alert_at
+    assert after.material_state_version == 1
+    assert after.last_alert_event == "legacy_state_backfill"
 
 
 def test_detail_payload_preserves_raw_observations():
@@ -1414,6 +1476,128 @@ def test_generic_margiela_at_normal_price_without_comps_is_suppressed():
 
     assert evaluation.directional.thesis is None
     assert _route_evaluation(listing, evaluation) is None
+
+
+def test_generic_cheap_prada_sport_polo_needs_substantive_piece_evidence():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="prada-simple-polo",
+        url="https://buyee.jp/item/prada-simple-polo",
+        title_original="PRADA SPORT 00s archive simple polo shirt",
+        title_normalized="prada sport archive simple polo shirt",
+        brand="Prada",
+        category="menswear",
+        current_price=9_800,
+        buyout_price=9_800,
+        starting_price=9_800,
+        seller_name=None,
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_buyout_price_jpy": 25_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.discovery_price_fraction == 0.392
+    assert evaluation.directional.thesis is None
+    assert "insufficient substantive piece-quality evidence" in evaluation.directional.reasons
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_generic_cheap_mcqueen_cotton_tee_does_not_qualify_from_price_alone():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="mcqueen-plain-tee",
+        url="https://buyee.jp/item/mcqueen-plain-tee",
+        title_original="Alexander McQueen plain cotton t-shirt",
+        title_normalized="alexander mcqueen plain cotton t shirt",
+        brand="Alexander McQueen",
+        category="menswear",
+        current_price=9_800,
+        buyout_price=9_800,
+        starting_price=9_800,
+        seller_name=None,
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_buyout_price_jpy": 20_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.identity.confidence == "high"
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_generic_modern_band_tee_is_not_core_or_asymmetric_value():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="modern-nirvana-tee",
+        url="https://buyee.jp/item/modern-nirvana-tee",
+        title_original="NIRVANA半袖バンドTシャツ ニコちゃん ロック スマイル バンT",
+        title_normalized="nirvana band t shirt smile",
+        brand="Vintage Band Tee",
+        category="menswear",
+        current_price=2_506,
+        buyout_price=2_506,
+        starting_price=2_506,
+        seller_name=None,
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_buyout_price_jpy": 15_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship.value == "uncertain"
+    assert evaluation.directional.discovery_price_fraction == 0.1671
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_vintage_band_tee_with_production_and_graphic_evidence_can_still_qualify():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="real-vintage-band-tee",
+        url="https://buyee.jp/item/real-vintage-band-tee",
+        title_original="90s NIRVANA vintage band t-shirt graphic single stitch made in USA",
+        title_normalized="90s nirvana vintage band t shirt graphic single stitch made in usa",
+        brand="Vintage Band Tee",
+        category="menswear",
+        current_price=3_000,
+        buyout_price=3_000,
+        starting_price=3_000,
+        seller_name=None,
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_buyout_price_jpy": 15_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship.value == "uncertain"
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
 
 
 def test_archive_grail_can_route_without_resale_proof():

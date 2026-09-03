@@ -51,6 +51,16 @@ class AlertState(SQLModel, table=True):
     source_listing_id: str
     signature: str
     route: str
+    thesis: str | None = None
+    material_state_version: int | None = None
+    last_material_price_jpy: int | None = None
+    last_material_price_kind: str | None = None
+    last_material_maturity_state: str | None = None
+    last_material_identity: str | None = None
+    last_material_risk_state: str | None = None
+    last_material_evidence_state: str | None = None
+    last_verified_median_jpy: int | None = None
+    last_alert_event: str | None = None
     last_alert_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -162,7 +172,18 @@ def save_alert_state(
     signature: str,
     route: str,
     path: str | Path = DB_PATH,
+    *,
+    thesis: str | None = None,
+    material_price_jpy: int | None = None,
+    material_price_kind: str | None = None,
+    material_maturity_state: str | None = None,
+    material_identity: str | None = None,
+    material_risk_state: str | None = None,
+    material_evidence_state: str | None = None,
+    verified_median_jpy: int | None = None,
+    alert_event: str | None = None,
 ) -> None:
+    material_supplied = material_identity is not None
     with get_session(path) as session:
         state = session.exec(
             select(AlertState).where(
@@ -176,10 +197,69 @@ def save_alert_state(
                 source_listing_id=source_listing_id,
                 signature=signature,
                 route=route,
+                thesis=thesis if material_supplied else None,
+                material_state_version=1 if material_supplied else None,
+                last_material_price_jpy=material_price_jpy,
+                last_material_price_kind=material_price_kind,
+                last_material_maturity_state=material_maturity_state,
+                last_material_identity=material_identity,
+                last_material_risk_state=material_risk_state,
+                last_material_evidence_state=material_evidence_state,
+                last_verified_median_jpy=verified_median_jpy,
+                last_alert_event=alert_event,
             )
             session.add(state)
         else:
             state.signature = signature
             state.route = route
+            if material_supplied:
+                state.thesis = thesis
+                state.material_state_version = 1
+                state.last_material_price_jpy = material_price_jpy
+                state.last_material_price_kind = material_price_kind
+                state.last_material_maturity_state = material_maturity_state
+                state.last_material_identity = material_identity
+                state.last_material_risk_state = material_risk_state
+                state.last_material_evidence_state = material_evidence_state
+                state.last_verified_median_jpy = verified_median_jpy
+                state.last_alert_event = alert_event
             state.last_alert_at = datetime.now(UTC)
         session.commit()
+
+
+def backfill_alert_material_state(
+    source: str,
+    source_listing_id: str,
+    path: str | Path = DB_PATH,
+    *,
+    thesis: str,
+    material_price_jpy: int | None,
+    material_price_kind: str | None,
+    material_maturity_state: str,
+    material_identity: str,
+    material_risk_state: str,
+    material_evidence_state: str,
+    verified_median_jpy: int | None,
+) -> bool:
+    """Acknowledge legacy alerts at their current state without changing alert time."""
+    with get_session(path) as session:
+        state = session.exec(
+            select(AlertState).where(
+                AlertState.source == source,
+                AlertState.source_listing_id == source_listing_id,
+            )
+        ).first()
+        if state is None or state.material_state_version is not None:
+            return False
+        state.thesis = thesis
+        state.material_state_version = 1
+        state.last_material_price_jpy = material_price_jpy
+        state.last_material_price_kind = material_price_kind
+        state.last_material_maturity_state = material_maturity_state
+        state.last_material_identity = material_identity
+        state.last_material_risk_state = material_risk_state
+        state.last_material_evidence_state = material_evidence_state
+        state.last_verified_median_jpy = verified_median_jpy
+        state.last_alert_event = "legacy_state_backfill"
+        session.commit()
+        return True
