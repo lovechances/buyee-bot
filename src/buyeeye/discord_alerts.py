@@ -440,9 +440,5 @@ def send_status_event(message: str, level: str = "info") -> tuple[bool, int | st
     url = _webhooks().get("status", "")
     if not url:
         return False, "status_unconfigured", 0.0
-    colors = {"info": 5814783, "warning": 16753920, "error": 15158332, "recovery": 5763719}
-    payload = {
-        "content": "BuyEye status",
-        "embeds": [{"description": message, "color": colors.get(level, 5814783)}],
-    }
-    return _send_webhook(url, payload)
+    _ = level  # Kept for compatibility; status copy is intentionally plain and quiet.
+    return _send_webhook(url, {"content": message})

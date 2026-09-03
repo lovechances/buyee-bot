@@ -16,7 +16,7 @@ from typing import Any
 
 from .browser_session import has_valid_session, launch_manual_buyee_login, save_session_state
 from .db import init_db
-from .discord_alerts import send_status_event, send_test_alert
+from .discord_alerts import send_test_alert
 from .discovery import build_query_universe, query_layer_counts
 from .live_sources import AuthExpiredError, LiveMarketLoop, load_live_queries
 from .pipeline import health_report, scan_once
@@ -34,6 +34,13 @@ from .settings import (
     load_yaml,
     runtime_data_dir,
     runtime_state_path,
+)
+from .status_monitor import (
+    MAJOR_UPDATE_MESSAGES,
+    announce_major_update,
+    record_auth_failure,
+    record_scanning_success,
+    record_source_failure,
 )
 
 
@@ -79,6 +86,8 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("health")
     subparsers.add_parser("setup-session")
     subparsers.add_parser("send-test-alert")
+    status_event = subparsers.add_parser("status-event")
+    status_event.add_argument("event", choices=sorted(MAJOR_UPDATE_MESSAGES))
     subparsers.add_parser("backtest")
 
     intel = subparsers.add_parser("intelligence")
@@ -170,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if report["database_ready"] else 1
 
+    if args.command == "status-event":
+        result = announce_major_update(args.event, db_path)
+        print(f"BuyEye status event: {result.outcome}")
+        return 0 if result.emitted or result.outcome == "deduped" else 1
+
     if args.command == "run":
         lock_handle = _acquire_runtime_lock()
         if lock_handle is None:
@@ -188,8 +202,6 @@ def main(argv: list[str] | None = None) -> int:
         max_attempts = int(scanner.get("max_source_attempts", 3))
         stopping = False
         zero_result_streak = 0
-        recovery_pending = False
-        auth_warning_sent = False
 
         def stop_handler(_signum: int, _frame: Any) -> None:
             nonlocal stopping
@@ -204,11 +216,6 @@ def main(argv: list[str] | None = None) -> int:
             len(queries),
             layers,
             layer_shares,
-        )
-        send_status_event(
-            f"BuyEye started with {len(queries)} rotating discovery queries "
-            f"(broad={layers['broad']}, medium={layers['medium']}, "
-            f"surgical={layers['surgical']}, market_structure={layers['market_structure']})."
         )
         try:
             while not stopping:
@@ -247,12 +254,6 @@ def main(argv: list[str] | None = None) -> int:
                             browser_restart_count=get_health(db_path).browser_restart_count + 1,
                         )
                         if isinstance(exc, AuthExpiredError):
-                            if not auth_warning_sent:
-                                send_status_event(
-                                    "Buyee authentication expired. Run `buyeeye setup-session`; discovery is backing off.",
-                                    "warning",
-                                )
-                                auth_warning_sent = True
                             break
                         if attempt + 1 < max_attempts:
                             time.sleep(wait_seconds)
@@ -273,11 +274,10 @@ def main(argv: list[str] | None = None) -> int:
                         db_path,
                         failed=True,
                     )
-                    if failures == 3:
-                        send_status_event(
-                            f"Sustained Buyee failure after 3 queries: {type(last_error).__name__ if last_error else 'unknown'}.",
-                            "error",
-                        )
+                    if isinstance(last_error, AuthExpiredError):
+                        record_auth_failure(db_path)
+                    else:
+                        record_source_failure(failures, db_path)
                     pause = (
                         900 if isinstance(last_error, AuthExpiredError) else min(300, 30 * failures)
                     )
@@ -291,19 +291,12 @@ def main(argv: list[str] | None = None) -> int:
                     zero_result_streak += 1
                     if zero_result_streak == 3:
                         update_health(db_path, last_parser_anomaly=datetime.now(UTC))
-                        send_status_event(
-                            "Three consecutive zero-result searches; scanning paused briefly for source/parser health.",
-                            "warning",
-                        )
                 else:
                     zero_result_streak = 0
-                    auth_warning_sent = False
                 recovery_counts = dict(getattr(result, "recovery_counts", {}) or {})
                 recovery_counts["source_retries"] = max(0, attempts_made - 1)
                 result.recovery_counts = recovery_counts
                 prior = get_health(db_path)
-                if prior.consecutive_source_failures:
-                    recovery_pending = True
                 update_health(
                     db_path,
                     current_query=None,
@@ -364,11 +357,8 @@ def main(argv: list[str] | None = None) -> int:
                     getattr(result, "logic_reconsidered", 0),
                     getattr(result, "post_detail_decisions", []),
                 )
-                if recovery_pending:
-                    send_status_event(
-                        "BuyEye recovered and completed a successful scan.", "recovery"
-                    )
-                    recovery_pending = False
+                if result.scanned > 0:
+                    record_scanning_success(db_path)
                 pause = query_gap + random.randint(0, max(0, jitter))
                 for _ in range(pause):
                     if stopping:
@@ -377,8 +367,6 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             update_health(db_path, current_query=None)
             logger.info("shutdown graceful=%s", stopping)
-            if not stopping:
-                send_status_event("BuyEye stopped unexpectedly.", "error")
             lock_handle.close()
         return 0
 

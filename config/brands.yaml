@@ -1,37 +1,25 @@
 brands:
   - Number (N)ine
-  - Number Nine
   - Takahiromiyashita TheSoloist.
   - Undercover
   - Kapital
   - Hysteric Glamour
   - IF SIX WAS NINE
   - L.G.B.
-  - Le Grand Bleu
   - Roen
-  - Julius
   - Mastermind Japan
-  - Blackmeans
   - Needles
   - Rebuild by Needles
   - Yohji Yamamoto
   - Comme des Garçons Homme Plus
   - Junya Watanabe
   - Issey Miyake
-  - General Research
-  - 20471120
-  - beauty:beast
   - Final Home
-  - Neighborhood
-  - Bounty Hunter
-  - Wacko Maria
   - Dior Homme
   - Saint Laurent
   - Raf Simons
   - Helmut Lang
   - Maison Martin Margiela
-  - Ann Demeulemeester
-  - Carol Christian Poell
   - Jean Paul Gaultier
   - Vivienne Westwood
   - Rick Owens
@@ -41,8 +29,6 @@ brands:
   - Gucci
   - Dolce & Gabbana
   - Roberto Cavalli
-  - Marithé François Girbaud
-  - Plein Sud
   - Oakley
   - Vetements
   - Balenciaga
@@ -50,11 +36,8 @@ brands:
   - Y/Project
   - ALYX
   - Chrome Hearts
-  - Gabor
   - Gaboratory
   - King Baby
-  - Goro's
-  - Needles
 alias_map:
   "NUMBER (N)INE": "Number (N)ine"
   "NUMBER NINE": "Number (N)ine"
@@ -63,4 +46,6 @@ alias_map:
   "Saint Laurent Hedi": "Saint Laurent"
   "Maison Margiela": "Maison Martin Margiela"
   "Maison Martin Margiela": "Maison Martin Margiela"
+  "Le Grand Bleu": "L.G.B."
+  "LGB": "L.G.B."
   "Rebuild": "Rebuild by Needles"

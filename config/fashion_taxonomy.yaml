@@ -99,7 +99,7 @@ brands:
     strong_signals: ["hiromu takahara", "スカル", "skull", "leopard"]
   gaboratory:
     canonical: "Gaboratory"
-    aliases: ["gaboratory", "gabor", "ガボラトリー", "ガボール"]
+    aliases: ["gaboratory", "ガボラトリー", "ガボール"]
     strong_signals: ["bulldog", "skull", "lion", "keeper", "925", "sterling"]
     auth_sensitive: true
   king_baby:

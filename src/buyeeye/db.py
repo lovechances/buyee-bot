@@ -64,6 +64,16 @@ class AlertState(SQLModel, table=True):
     last_alert_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class StatusIncidentState(SQLModel, table=True):
+    """Persistent, single-row dedupe state for quiet operational notices."""
+
+    id: int = Field(default=1, primary_key=True)
+    outage_announced: bool = False
+    auth_required_announced: bool = False
+    auth_failure_streak: int = 0
+    release_keys_json: str = "[]"
+
+
 def init_db(path: str | Path = DB_PATH) -> None:
     database_path = Path(path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
