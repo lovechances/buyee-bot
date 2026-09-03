@@ -1539,7 +1539,7 @@ def test_generic_cheap_mcqueen_cotton_tee_does_not_qualify_from_price_alone():
     assert _route_evaluation(listing, evaluation) is None
 
 
-def test_balenciaga_sport_licensed_line_does_not_inherit_mainline_buyout_signal():
+def test_balenciaga_sport_is_secondary_but_distinct_low_cost_piece_can_ping():
     listing = LiveListing(
         source="buyee",
         source_listing_id="balenciaga-sport-shirt",
@@ -1567,8 +1567,8 @@ def test_balenciaga_sport_licensed_line_does_not_inherit_mainline_buyout_signal(
     evaluation = evaluate_listing(listing)
 
     assert evaluation.profile.relationship.value == "diffusion"
-    assert evaluation.directional.thesis is None
-    assert _route_evaluation(listing, evaluation) is None
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
 
 
 def test_new_with_tags_cannot_rescue_a_generic_cheap_basic():

@@ -97,6 +97,7 @@ directional_opportunity:
   minimum_score: 72
   exceptional_actionable_price_jpy: 10000
   exceptional_actionable_minimum_score: 62
+  exceptional_diffusion_minimum_score: 58
   exceptional_landed_usd: 30
   max_landed_usd: 65
   favorable_condition_bonus: 6

@@ -504,6 +504,9 @@ def assess_directional_opportunity(
     exceptional_actionable_minimum_score = int(
         config.get("exceptional_actionable_minimum_score", 62)
     )
+    exceptional_diffusion_minimum_score = int(
+        config.get("exceptional_diffusion_minimum_score", 58)
+    )
     favorable_condition_bonus = int(config.get("favorable_condition_bonus", 6))
     relationship = profile.relationship.value if profile.relationship else "uncertain"
     relationship_provenance = profile.relationship.provenance if profile.relationship else ""
@@ -676,11 +679,16 @@ def assess_directional_opportunity(
         reasons.append(
             "actionable acquisition price is inside the bounded low-downside threshold"
         )
+    exceptional_relationship_minimum = (
+        exceptional_diffusion_minimum_score
+        if relationship == "diffusion"
+        else exceptional_actionable_minimum_score
+    )
     score_is_sufficient = bool(
         score >= minimum_score
         or (
             exceptional_acquisition_ok
-            and score >= exceptional_actionable_minimum_score
+            and score >= exceptional_relationship_minimum
         )
     )
     relationship_ok = relationship in {"core", "collaboration", "diffusion"}
@@ -689,7 +697,13 @@ def assess_directional_opportunity(
     if relationship == "diffusion":
         relationship_ok = bool(
             substantive
-            and score >= int(config.get("diffusion_minimum_score", 85))
+            and (
+                score >= int(config.get("diffusion_minimum_score", 85))
+                or (
+                    exceptional_acquisition_ok
+                    and score >= exceptional_diffusion_minimum_score
+                )
+            )
         )
     elif relationship == "collaboration" and relationship_provenance.endswith(
         ".collaboration_low_priority"

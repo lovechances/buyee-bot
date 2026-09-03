@@ -46,6 +46,10 @@ and Stage B women's-category or non-fashion-object evidence stops a menswear rou
 receive none of these benefits. A vintage band tee needs at least two independent age/production
 observations; “single stitch” alone is not sufficient.
 
+Secondary/licensed lines do not inherit mainline prestige or sold evidence. A distinct, non-generic
+piece from one can still earn a low-downside sourcing alert inside the exceptional actionable-price
+boundary, through a separate stricter relationship path rather than being mislabeled mainline.
+
 Final archive discovery can also use the combination of a named era/collection and specific design
 evidence after successful detail enrichment. A bare year or season shorthand is context, not a
 named archive identity. Silver/jewelry likewise needs directional value, credible sold economics,
