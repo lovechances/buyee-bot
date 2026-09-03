@@ -28,8 +28,16 @@ class QueryRuntimeState(SQLModel, table=True):
     unique_seen: int = 0
     duplicates: int = 0
     stage_a_rejected: int = 0
+    # New counters stay nullable so SQLite can add them safely to a populated
+    # production table; all readers treat legacy NULL values as zero.
+    stage_a_brand_confirmed: int | None = Field(default=0)
+    stage_a_category_valid: int | None = Field(default=0)
+    stage_a_eligible: int | None = Field(default=0)
+    stage_a_capped: int | None = Field(default=0)
     stage_b_candidates: int = 0
     stage_b_enriched: int = 0
+    stage_b_failed: int | None = Field(default=0)
+    stage_b_rejected: int | None = Field(default=0)
     final_candidates: int = 0
     alerts: int = 0
     failures: int = 0
@@ -51,6 +59,7 @@ class SeenListing(SQLModel, table=True):
     first_strategy_type: str | None = None
     last_strategy_id: str | None = None
     last_strategy_type: str | None = None
+    stage_a_outcomes_json: str | None = None
     sightings: int = 1
 
 
@@ -85,8 +94,19 @@ class ScanEvent(SQLModel, table=True):
     unique_seen: int = 0
     duplicates: int = 0
     stage_a_rejected: int = 0
+    # NULL identifies pre-upgrade rows so new recognition rates never use a
+    # mixed legacy denominator during a rolling deployment window.
+    stage_a_telemetry_version: int | None = Field(default=None)
+    stage_a_brand_confirmed: int | None = Field(default=0)
+    stage_a_category_valid: int | None = Field(default=0)
+    stage_a_eligible: int | None = Field(default=0)
+    stage_a_capped: int | None = Field(default=0)
+    stage_a_paths_json: str | None = None
+    stage_a_reject_reasons_json: str | None = None
     stage_b_candidates: int = 0
     stage_b_enriched: int = 0
+    stage_b_failed: int | None = Field(default=0)
+    stage_b_rejected: int | None = Field(default=0)
     comp_lookups: int = 0
     comp_cache_hits: int = 0
     comp_cache_misses: int = 0
@@ -96,6 +116,7 @@ class ScanEvent(SQLModel, table=True):
     alert_routes_json: str | None = None
     theses_json: str | None = None
     opportunities_json: str | None = None
+    detected_family_funnel_json: str | None = None
 
 
 @dataclass
@@ -295,13 +316,31 @@ def record_query_result(
         row.stage_a_rejected = (row.stage_a_rejected or 0) + int(
             getattr(result, "stage_a_rejected", 0)
         )
-        row.stage_b_candidates += int(getattr(result, "stage_b_candidates", 0))
+        row.stage_a_brand_confirmed = (row.stage_a_brand_confirmed or 0) + int(
+            getattr(result, "stage_a_brand_confirmed", 0)
+        )
+        row.stage_a_category_valid = (row.stage_a_category_valid or 0) + int(
+            getattr(result, "stage_a_category_valid", 0)
+        )
+        row.stage_a_eligible = (row.stage_a_eligible or 0) + int(
+            getattr(result, "stage_a_eligible", 0)
+        )
+        row.stage_a_capped = (row.stage_a_capped or 0) + int(getattr(result, "stage_a_capped", 0))
+        row.stage_b_candidates = (row.stage_b_candidates or 0) + int(
+            getattr(result, "stage_b_candidates", 0)
+        )
         row.stage_b_enriched = (row.stage_b_enriched or 0) + int(
             getattr(result, "stage_b_enriched", 0)
         )
-        row.final_candidates += int(getattr(result, "final_candidates", 0))
-        row.alerts += int(getattr(result, "new_alerts", 0))
-        row.failures += int(failed)
+        row.stage_b_failed = (row.stage_b_failed or 0) + int(getattr(result, "stage_b_failed", 0))
+        row.stage_b_rejected = (row.stage_b_rejected or 0) + int(
+            getattr(result, "stage_b_rejected", 0)
+        )
+        row.final_candidates = (row.final_candidates or 0) + int(
+            getattr(result, "final_candidates", 0)
+        )
+        row.alerts = (row.alerts or 0) + int(getattr(result, "new_alerts", 0))
+        row.failures = (row.failures or 0) + int(failed)
         row.last_run_at = now
         row.next_eligible_at = now + timedelta(minutes=spec.cooldown_minutes)
         session.add(
@@ -322,19 +361,31 @@ def record_query_result(
                 unique_seen=int(getattr(result, "unique_listings", 0)),
                 duplicates=int(getattr(result, "duplicates", 0)),
                 stage_a_rejected=int(getattr(result, "stage_a_rejected", 0)),
+                stage_a_telemetry_version=1,
+                stage_a_brand_confirmed=int(getattr(result, "stage_a_brand_confirmed", 0)),
+                stage_a_category_valid=int(getattr(result, "stage_a_category_valid", 0)),
+                stage_a_eligible=int(getattr(result, "stage_a_eligible", 0)),
+                stage_a_capped=int(getattr(result, "stage_a_capped", 0)),
+                stage_a_paths_json=json.dumps(getattr(result, "stage_a_path_counts", {}) or {}),
+                stage_a_reject_reasons_json=json.dumps(
+                    getattr(result, "stage_a_reject_counts", {}) or {}
+                ),
                 stage_b_candidates=int(getattr(result, "stage_b_candidates", 0)),
                 stage_b_enriched=int(getattr(result, "stage_b_enriched", 0)),
+                stage_b_failed=int(getattr(result, "stage_b_failed", 0)),
+                stage_b_rejected=int(getattr(result, "stage_b_rejected", 0)),
                 comp_lookups=int(getattr(result, "comp_queried", 0)),
                 comp_cache_hits=int(getattr(result, "comp_cache_hits", 0)),
                 comp_cache_misses=int(getattr(result, "comp_cache_misses", 0)),
                 final_candidates=int(getattr(result, "final_candidates", 0)),
                 alerts=int(getattr(result, "new_alerts", 0)),
                 routes_json=json.dumps(getattr(result, "route_counts", {}) or {}),
-                alert_routes_json=json.dumps(
-                    getattr(result, "alert_route_counts", {}) or {}
-                ),
+                alert_routes_json=json.dumps(getattr(result, "alert_route_counts", {}) or {}),
                 theses_json=json.dumps(getattr(result, "thesis_counts", {}) or {}),
                 opportunities_json=json.dumps(getattr(result, "opportunity_counts", {}) or {}),
+                detected_family_funnel_json=json.dumps(
+                    getattr(result, "detected_family_funnel", {}) or {}
+                ),
             )
         )
         session.commit()
@@ -349,6 +400,7 @@ def mark_listing_seen(
     freshness_hours: int = 6,
     strategy_id: str | None = None,
     strategy_type: str | None = None,
+    family: str | None = None,
 ) -> DedupeResult:
     init_db(db_path)
     now = datetime.now(UTC)
@@ -379,7 +431,21 @@ def mark_listing_seen(
         if processed.tzinfo is None:
             processed = processed.replace(tzinfo=UTC)
         unchanged = row.signature == signature
-        duplicate = unchanged and processed > now - timedelta(hours=freshness_hours)
+        fresh_duplicate = unchanged and processed > now - timedelta(hours=freshness_hours)
+        context = f"{family or 'unattributed'}:{strategy_type or 'legacy_unattributed'}"
+        outcomes = json.loads(row.stage_a_outcomes_json or "{}")
+        if not isinstance(outcomes, dict):
+            outcomes = {}
+        if not unchanged:
+            outcomes = {}
+            row.stage_a_outcomes_json = None
+        context_outcome = outcomes.get(context)
+        stage_a_revisit = bool(
+            fresh_duplicate
+            and "selected" not in outcomes.values()
+            and (context_outcome == "capped" or (outcomes and context_outcome is None))
+        )
+        duplicate = fresh_duplicate and not stage_a_revisit
         row.last_seen_at = now
         row.sightings += 1
         if not row.first_query:
@@ -394,6 +460,31 @@ def mark_listing_seen(
             row.last_processed_at = now
         session.commit()
         return DedupeResult(duplicate, unchanged)
+
+
+def record_stage_a_outcomes(
+    outcomes: dict[tuple[str, str], str],
+    db_path: str | Path = DB_PATH,
+    *,
+    strategy_type: str | None = None,
+    family: str | None = None,
+) -> None:
+    """Persist bounded inspection outcomes without changing global listing identity."""
+    if not outcomes:
+        return
+    init_db(db_path)
+    context = f"{family or 'unattributed'}:{strategy_type or 'legacy_unattributed'}"
+    with get_session(db_path) as session:
+        for (source, source_listing_id), outcome in outcomes.items():
+            row = session.get(SeenListing, _key(source, source_listing_id))
+            if row is None:
+                continue
+            stage_a_outcomes = json.loads(row.stage_a_outcomes_json or "{}")
+            if not isinstance(stage_a_outcomes, dict):
+                stage_a_outcomes = {}
+            stage_a_outcomes[context] = outcome
+            row.stage_a_outcomes_json = json.dumps(stage_a_outcomes, sort_keys=True)
+        session.commit()
 
 
 def update_health(db_path: str | Path = DB_PATH, **values: object) -> None:
@@ -434,8 +525,16 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
         "unique": 0,
         "duplicates": 0,
         "stage_a_rejected": 0,
+        "stage_a_telemetry_scans": 0,
+        "stage_a_telemetry_unique": 0,
+        "stage_a_brand_confirmed": 0,
+        "stage_a_category_valid": 0,
+        "stage_a_eligible": 0,
+        "stage_a_capped": 0,
         "stage_b_candidates": 0,
         "stage_b_enriched": 0,
+        "stage_b_failed": 0,
+        "stage_b_rejected": 0,
         "comp_lookups": 0,
         "comp_cache_hits": 0,
         "comp_cache_misses": 0,
@@ -446,6 +545,9 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
         "theses": {},
         "opportunities": {},
         "strategy_types": {},
+        "stage_a_paths": {},
+        "stage_a_reject_reasons": {},
+        "detected_family_funnel": {},
     }
     numeric = [
         key
@@ -453,11 +555,16 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
         if key
         not in {
             "queries",
+            "stage_a_telemetry_scans",
+            "stage_a_telemetry_unique",
             "routes",
             "alert_routes",
             "theses",
             "opportunities",
             "strategy_types",
+            "stage_a_paths",
+            "stage_a_reject_reasons",
+            "detected_family_funnel",
         }
     ]
     routes: dict[str, int] = {}
@@ -465,15 +572,29 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
     theses: dict[str, int] = {}
     opportunities: dict[str, int] = {}
     strategy_types: dict[str, int] = {}
+    stage_a_paths: dict[str, int] = {}
+    stage_a_reject_reasons: dict[str, int] = {}
+    detected_family_funnel: dict[str, dict[str, int]] = {}
     for row in rows:
+        if row.stage_a_telemetry_version:
+            totals["stage_a_telemetry_scans"] = int(totals["stage_a_telemetry_scans"]) + 1
+            totals["stage_a_telemetry_unique"] = int(totals["stage_a_telemetry_unique"]) + (
+                row.unique_seen or 0
+            )
         mapping = {
             "search_pages": row.search_pages,
             "cards": row.cards_seen,
             "unique": row.unique_seen,
             "duplicates": row.duplicates,
             "stage_a_rejected": row.stage_a_rejected,
+            "stage_a_brand_confirmed": row.stage_a_brand_confirmed or 0,
+            "stage_a_category_valid": row.stage_a_category_valid or 0,
+            "stage_a_eligible": row.stage_a_eligible or 0,
+            "stage_a_capped": row.stage_a_capped or 0,
             "stage_b_candidates": row.stage_b_candidates,
             "stage_b_enriched": row.stage_b_enriched,
+            "stage_b_failed": row.stage_b_failed or 0,
+            "stage_b_rejected": row.stage_b_rejected or 0,
             "comp_lookups": row.comp_lookups,
             "comp_cache_hits": row.comp_cache_hits,
             "comp_cache_misses": row.comp_cache_misses,
@@ -492,11 +613,22 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             opportunities[kind] = opportunities.get(kind, 0) + int(count)
         strategy_type = row.strategy_type or "legacy_unattributed"
         strategy_types[strategy_type] = strategy_types.get(strategy_type, 0) + 1
+        for path, count in json.loads(row.stage_a_paths_json or "{}").items():
+            stage_a_paths[path] = stage_a_paths.get(path, 0) + int(count)
+        for reason, count in json.loads(row.stage_a_reject_reasons_json or "{}").items():
+            stage_a_reject_reasons[reason] = stage_a_reject_reasons.get(reason, 0) + int(count)
+        for family, funnel in json.loads(row.detected_family_funnel_json or "{}").items():
+            family_bucket = detected_family_funnel.setdefault(family, {})
+            for stage, count in funnel.items():
+                family_bucket[stage] = family_bucket.get(stage, 0) + int(count)
     totals["routes"] = routes
     totals["alert_routes"] = alert_routes
     totals["theses"] = theses
     totals["opportunities"] = opportunities
     totals["strategy_types"] = strategy_types
+    totals["stage_a_paths"] = stage_a_paths
+    totals["stage_a_reject_reasons"] = stage_a_reject_reasons
+    totals["detected_family_funnel"] = detected_family_funnel
     return totals
 
 
@@ -534,24 +666,48 @@ def strategy_metrics(
                 "cards": 0,
                 "unique": 0,
                 "duplicates": 0,
+                "brand_confirmed": 0,
+                "category_valid": 0,
+                "stage_a_eligible": 0,
+                "stage_a_capped": 0,
+                "stage_a_telemetry_scans": 0,
+                "stage_a_telemetry_unique": 0,
                 "stage_a_pass": 0,
                 "stage_b": 0,
                 "stage_b_enriched": 0,
+                "stage_b_failed": 0,
+                "stage_b_rejected": 0,
                 "finals": 0,
                 "alerts": 0,
                 "routes": {},
                 "alert_routes": {},
+                "stage_a_paths": {},
+                "stage_a_reject_reasons": {},
+                "detected_family_funnel": {},
             },
         )
         bucket["scans"] = int(bucket["scans"]) + 1
         bucket["cards"] = int(bucket["cards"]) + row.cards_seen
         bucket["unique"] = int(bucket["unique"]) + row.unique_seen
         bucket["duplicates"] = int(bucket["duplicates"]) + row.duplicates
+        if row.stage_a_telemetry_version:
+            bucket["stage_a_telemetry_scans"] = int(bucket["stage_a_telemetry_scans"]) + 1
+            bucket["stage_a_telemetry_unique"] = int(bucket["stage_a_telemetry_unique"]) + (
+                row.unique_seen or 0
+            )
+        bucket["brand_confirmed"] = int(bucket["brand_confirmed"]) + (
+            row.stage_a_brand_confirmed or 0
+        )
+        bucket["category_valid"] = int(bucket["category_valid"]) + (row.stage_a_category_valid or 0)
+        bucket["stage_a_eligible"] = int(bucket["stage_a_eligible"]) + (row.stage_a_eligible or 0)
+        bucket["stage_a_capped"] = int(bucket["stage_a_capped"]) + (row.stage_a_capped or 0)
         bucket["stage_a_pass"] = int(bucket["stage_a_pass"]) + max(
             0, row.unique_seen - (row.stage_a_rejected or 0)
         )
         bucket["stage_b"] = int(bucket["stage_b"]) + row.stage_b_candidates
         bucket["stage_b_enriched"] = int(bucket["stage_b_enriched"]) + (row.stage_b_enriched or 0)
+        bucket["stage_b_failed"] = int(bucket["stage_b_failed"]) + (row.stage_b_failed or 0)
+        bucket["stage_b_rejected"] = int(bucket["stage_b_rejected"]) + (row.stage_b_rejected or 0)
         bucket["finals"] = int(bucket["finals"]) + row.final_candidates
         bucket["alerts"] = int(bucket["alerts"]) + row.alerts
         routes = bucket["routes"]
@@ -562,14 +718,35 @@ def strategy_metrics(
         if isinstance(alert_routes, dict):
             for route, count in json.loads(row.alert_routes_json or "{}").items():
                 alert_routes[route] = alert_routes.get(route, 0) + int(count)
+        paths = bucket["stage_a_paths"]
+        if isinstance(paths, dict):
+            for path, count in json.loads(row.stage_a_paths_json or "{}").items():
+                paths[path] = paths.get(path, 0) + int(count)
+        reasons = bucket["stage_a_reject_reasons"]
+        if isinstance(reasons, dict):
+            for reason, count in json.loads(row.stage_a_reject_reasons_json or "{}").items():
+                reasons[reason] = reasons.get(reason, 0) + int(count)
+        detected = bucket["detected_family_funnel"]
+        if isinstance(detected, dict):
+            for family, funnel in json.loads(row.detected_family_funnel_json or "{}").items():
+                family_bucket = detected.setdefault(family, {})
+                for stage, count in funnel.items():
+                    family_bucket[stage] = family_bucket.get(stage, 0) + int(count)
     for bucket in grouped.values():
         unique = int(bucket["unique"])
         denominator = unique if unique > 0 else 1
-        bucket["stage_a_pass_rate"] = (
-            int(bucket["stage_a_pass"]) / denominator if unique else 0.0
+        telemetry_unique = int(bucket["stage_a_telemetry_unique"])
+        telemetry_denominator = telemetry_unique if telemetry_unique > 0 else 1
+        bucket["stage_a_pass_rate"] = int(bucket["stage_a_pass"]) / denominator if unique else 0.0
+        bucket["brand_confirmed_rate"] = (
+            int(bucket["brand_confirmed"]) / telemetry_denominator if telemetry_unique else 0.0
+        )
+        bucket["category_valid_rate"] = (
+            int(bucket["category_valid"]) / telemetry_denominator if telemetry_unique else 0.0
+        )
+        bucket["stage_a_eligible_rate"] = (
+            int(bucket["stage_a_eligible"]) / telemetry_denominator if telemetry_unique else 0.0
         )
         bucket["stage_b_rate"] = int(bucket["stage_b"]) / denominator if unique else 0.0
-        bucket["final_candidate_rate"] = (
-            int(bucket["finals"]) / denominator if unique else 0.0
-        )
+        bucket["final_candidate_rate"] = int(bucket["finals"]) / denominator if unique else 0.0
     return grouped

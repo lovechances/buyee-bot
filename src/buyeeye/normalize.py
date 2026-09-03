@@ -38,7 +38,7 @@ def japanese_aliases() -> list[str]:
 def negative_term_hits(text: str | None) -> list[str]:
     if not text:
         return []
-    lowered = text.lower()
+    lowered = normalize_text(text).casefold()
     negative_terms = [
         "fake",
         "replica",
@@ -56,6 +56,14 @@ def negative_term_hits(text: str | None) -> list[str]:
     ]
     hits: list[str] = []
     for term in negative_terms:
-        if term in lowered:
+        if any(character.isascii() and character.isalnum() for character in term):
+            matched = re.search(
+                rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])",
+                lowered,
+                flags=re.IGNORECASE,
+            )
+        else:
+            matched = term in lowered
+        if matched:
             hits.append(term)
     return hits

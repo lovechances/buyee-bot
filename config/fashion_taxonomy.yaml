@@ -107,7 +107,7 @@ brands:
     generic_signals: ["logo tee"]
   alexander_mcqueen:
     canonical: "Alexander McQueen"
-    aliases: ["alexander mcqueen", "アレキサンダーマックイーン", "アレキサンダー マックイーン"]
+    aliases: ["alexander mcqueen", "mcq", "アレキサンダーマックイーン", "アレキサンダー マックイーン"]
     designer: "Lee Alexander McQueen"
     eras:
       lee_mcqueen: ["lee mcqueen", "本人期", "リー期"]
@@ -159,19 +159,23 @@ brands:
     generic_signals: ["reprint", "復刻", "bootleg style"]
 
 item_types:
-  jewelry: ["ring", "necklace", "bracelet", "pendant", "chain", "リング", "ネックレス", "ブレスレット", "ペンダント", "チェーン"]
-  jacket: ["jacket", "blazer", "ライダース", "ジャケット", "ブルゾン"]
-  coat: ["coat", "parka", "コート", "モッズコート"]
-  knitwear: ["knit", "mohair", "cardigan", "ニット", "モヘア", "カーディガン"]
-  t_shirt: ["t-shirt", "t shirt", "tee", "tシャツ", "カットソー"]
-  shirt: ["shirt", "シャツ"]
-  denim: ["denim", "jeans", "デニム", "ジーンズ"]
-  trousers: ["pants", "trousers", "パンツ", "スラックス"]
-  footwear: ["boots", "sneaker", "ブーツ", "スニーカー", "シューズ"]
-  accessory: ["belt", "wallet", "keyholder", "bag", "scarf", "hat", "cap", "ベルト", "財布", "キーホルダ", "バッグ", "スカーフ", "帽子", "キャップ"]
+  jewelry: ["ring", "necklace", "bracelet", "pendant", "chain", "earring", "リング", "ネックレス", "ブレスレット", "ペンダント", "チェーン", "ピアス"]
+  jacket: ["jacket", "blazer", "bomber", "coach jacket", "trucker jacket", "ライダース", "ジャケット", "ブルゾン", "スタジャン", "テーラード", "Gジャン"]
+  coat: ["coat", "parka", "trench", "overcoat", "raincoat", "コート", "モッズコート", "トレンチ", "レインコート"]
+  knitwear: ["knitwear", "knit", "sweater", "jumper", "mohair", "cardigan", "ニット", "セーター", "モヘア", "カーディガン"]
+  hoodie: ["hoodie", "hooded sweatshirt", "sweatshirt", "sweat shirt", "hooded", "パーカー", "フーディ", "スウェット", "トレーナー"]
+  t_shirt: ["t-shirt", "t shirt", "tshirt", "tee", "long sleeve tee", "tシャツ", "カットソー", "ロンT"]
+  shirt: ["shirt", "button-up", "button up", "button-down", "button down", "open collar", "シャツ", "開襟"]
+  denim: ["denim", "jeans", "jean", "デニム", "ジーンズ", "Gパン"]
+  trousers: ["pants", "trousers", "trouser", "slacks", "cargo pants", "shorts", "パンツ", "スラックス", "カーゴ", "ショーツ", "ボトムス"]
+  footwear: ["engineer boots", "boots", "boot", "sneaker", "shoes", "loafer", "derby", "sandals", "エンジニアブーツ", "ブーツ", "スニーカー", "シューズ", "ローファー", "サンダル"]
+  bag: ["shoulder bag", "crossbody bag", "tote bag", "backpack", "duffle bag", "bag", "ショルダーバッグ", "トートバッグ", "バックパック", "バッグ", "鞄", "リュック"]
+  belt: ["belt", "ベルト"]
+  wallet: ["wallet", "card holder", "coin case", "財布", "カードケース", "コインケース"]
+  accessory: ["keyholder", "scarf", "hat", "cap", "tie", "gloves", "sunglasses", "キーホルダ", "スカーフ", "帽子", "キャップ", "ネクタイ", "手袋", "サングラス"]
 
 materials:
-  silver: ["silver", "sterling", "925", "シルバー", "銀製"]
+  silver: ["sterling silver", "silver", "sterling", "sv925", "s925", "925", "シルバー", "銀製"]
   leather: ["leather", "calf", "horsehide", "レザー", "革", "馬革"]
   mohair: ["mohair", "モヘア"]
   cashmere: ["cashmere", "カシミヤ"]

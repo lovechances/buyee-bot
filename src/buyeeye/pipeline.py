@@ -19,8 +19,15 @@ from .discovery import QuerySpec
 from .evaluation import ListingEvaluation, evaluate_listing
 from .fashion import enrich_title
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
-from .runtime_state import mark_listing_seen
+from .runtime_state import mark_listing_seen, record_stage_a_outcomes
 from .settings import load_settings
+from .stage_a import (
+    assess_stage_a,
+    brand_is_confirmed,
+    category_is_valid,
+    detected_family,
+    select_stage_a_candidates,
+)
 
 
 @dataclass
@@ -41,9 +48,16 @@ class ScanResult:
     comp_candidates: int = 0
     comps_accepted: int = 0
     stage_a_rejected: int = 0
+    stage_a_brand_confirmed: int = 0
+    stage_a_category_valid: int = 0
+    stage_a_eligible: int = 0
+    stage_a_capped: int = 0
+    stage_a_path_counts: dict[str, int] | None = None
+    stage_a_reject_counts: dict[str, int] | None = None
     stage_b_candidates: int = 0
     stage_b_enriched: int = 0
     stage_b_failed: int = 0
+    stage_b_rejected: int = 0
     comp_queried: int = 0
     final_candidates: int = 0
     unique_listings: int = 0
@@ -53,6 +67,7 @@ class ScanResult:
     comp_cache_misses: int = 0
     japan_comp_candidates: int = 0
     japan_comps_accepted: int = 0
+    detected_family_funnel: dict[str, dict[str, int]] | None = None
 
 
 def _minutes_remaining(value: str | None) -> int | None:
@@ -248,6 +263,9 @@ async def scan_once(
         alert_route_counts={},
         thesis_counts={},
         opportunity_counts={},
+        stage_a_path_counts={},
+        stage_a_reject_counts={},
+        detected_family_funnel={},
     )
     if global_dedupe:
         unique: list[LiveListing] = []
@@ -261,6 +279,7 @@ async def scan_once(
                 freshness_hours=int(settings.get("scanner", {}).get("listing_dedupe_hours", 6)),
                 strategy_id=spec.strategy_id,
                 strategy_type=spec.strategy_type,
+                family=spec.family,
             )
             if seen.is_duplicate:
                 result.duplicates += 1
@@ -290,30 +309,117 @@ async def scan_once(
         item.source_listing_id: get_alert_state(item.source, item.source_listing_id, db_path)
         for item in listings
     }
-    preliminary: dict[str, ListingEvaluation] = {}
+    stage_a_assessments = []
     valid_listings: list[LiveListing] = []
+
+    def family_funnel(family: str | None) -> dict[str, int]:
+        key = family or "unresolved"
+        assert result.detected_family_funnel is not None
+        return result.detected_family_funnel.setdefault(
+            key,
+            {
+                "seen": 0,
+                "brand_confirmed": 0,
+                "category_valid": 0,
+                "stage_a_candidates": 0,
+                "stage_b_enriched": 0,
+                "stage_b_failed": 0,
+                "stage_b_rejected": 0,
+                "finals": 0,
+                "alerts": 0,
+            },
+        )
+
     for listing in listings:
+        evaluation = evaluate_listing(listing, settings=settings)
+        family = detected_family(evaluation)
+        funnel = family_funnel(family)
+        funnel["seen"] += 1
+        confirmed = brand_is_confirmed(
+            evaluation,
+            float(settings.get("stage_a", {}).get("minimum_brand_confidence", 0.95)),
+        )
+        category_valid = category_is_valid(listing, evaluation, spec)
+        if confirmed:
+            result.stage_a_brand_confirmed += 1
+            funnel["brand_confirmed"] += 1
+        if category_valid:
+            result.stage_a_category_valid += 1
+            funnel["category_valid"] += 1
         if not _is_relevant(listing):
             result.rejected_irrelevant += 1
-            result.stage_a_rejected += 1
+            reason = (
+                "missing_title"
+                if not listing.title_original
+                else "irrelevant_signal"
+                if any(
+                    signal.value.startswith("irrelevant:")
+                    for signal in evaluation.profile.negative_signals
+                )
+                else "brand_unresolved"
+            )
+            assert result.stage_a_reject_counts is not None
+            result.stage_a_reject_counts[reason] = result.stage_a_reject_counts.get(reason, 0) + 1
             continue
         if not _price_is_valid(listing):
             result.rejected_invalid += 1
-            result.stage_a_rejected += 1
+            assert result.stage_a_reject_counts is not None
+            result.stage_a_reject_counts["invalid_price"] = (
+                result.stage_a_reject_counts.get("invalid_price", 0) + 1
+            )
             continue
-        evaluation = evaluate_listing(listing, settings=settings)
-        preliminary[listing.source_listing_id] = evaluation
         valid_listings.append(listing)
+        assessment = assess_stage_a(listing, evaluation, spec, settings)
+        stage_a_assessments.append(assessment)
 
-    stage_b_threshold = int(settings.get("detail", {}).get("minimum_heat", 40))
+    selected_assessments, capped_assessments = select_stage_a_candidates(
+        stage_a_assessments,
+        spec,
+        settings,
+    )
+    selected_ids = {assessment.listing_id for assessment in selected_assessments}
+    capped_ids = {assessment.listing_id for assessment in capped_assessments}
+    assessment_by_id = {assessment.listing_id: assessment for assessment in stage_a_assessments}
     stage_b_listings = [
-        listing
-        for listing in valid_listings
-        if preliminary[listing.source_listing_id].desirability.score >= stage_b_threshold
-        and preliminary[listing.source_listing_id].auth_risk.level != "do_not_touch"
+        listing for listing in valid_listings if listing.source_listing_id in selected_ids
     ]
+    result.stage_a_eligible = sum(assessment.eligible for assessment in stage_a_assessments)
+    result.stage_a_capped = len(capped_assessments)
     result.stage_b_candidates = len(stage_b_listings)
-    result.stage_a_rejected += len(valid_listings) - len(stage_b_listings)
+    result.stage_a_rejected = max(0, result.unique_listings - len(stage_b_listings))
+    for listing in valid_listings:
+        assessment = assessment_by_id[listing.source_listing_id]
+        selected = listing.source_listing_id in selected_ids
+        capped = listing.source_listing_id in capped_ids
+        listing.raw = {
+            **(listing.raw or {}),
+            "stage_a": assessment.observation(selected=selected, capped=capped),
+        }
+        if selected:
+            path = assessment.primary_path or "unknown"
+            assert result.stage_a_path_counts is not None
+            result.stage_a_path_counts[path] = result.stage_a_path_counts.get(path, 0) + 1
+            family_funnel(assessment.detected_family)["stage_a_candidates"] += 1
+        else:
+            reason = "candidate_budget" if capped else assessment.reject_reason or "ineligible"
+            assert result.stage_a_reject_counts is not None
+            result.stage_a_reject_counts[reason] = result.stage_a_reject_counts.get(reason, 0) + 1
+    if global_dedupe:
+        record_stage_a_outcomes(
+            {
+                (listing.source, listing.source_listing_id): (
+                    "selected"
+                    if listing.source_listing_id in selected_ids
+                    else "capped"
+                    if listing.source_listing_id in capped_ids
+                    else "ineligible"
+                )
+                for listing in valid_listings
+            },
+            db_path,
+            strategy_type=spec.strategy_type,
+            family=spec.family,
+        )
     if stage_b_listings:
         detail_service = BuyeeDetailService(
             DetailRepository(
@@ -333,6 +439,12 @@ async def scan_once(
                     **(listing.raw or {}),
                     "stage_b": {"status": "failed", "error_type": "DetailUnavailable"},
                 }
+            assessment = assessment_by_id[listing.source_listing_id]
+            status = ((listing.raw or {}).get("stage_b") or {}).get("status")
+            if status == "enriched":
+                family_funnel(assessment.detected_family)["stage_b_enriched"] += 1
+            elif status == "failed":
+                family_funnel(assessment.detected_family)["stage_b_failed"] += 1
 
     stage_b_ids = {listing.source_listing_id for listing in stage_b_listings}
     comp_threshold = int(settings.get("comps", {}).get("minimum_heat_for_lookup", 40))
@@ -403,6 +515,8 @@ async def scan_once(
                 "price_actionable": evaluation.auction_maturity.price_actionable,
             },
         }
+        if listing.source_listing_id not in stage_b_ids:
+            continue
         routed = _route_evaluation(
             listing,
             evaluation,
@@ -411,9 +525,15 @@ async def scan_once(
         )
         if routed is None:
             result.below_threshold += 1
+            if ((listing.raw or {}).get("stage_b") or {}).get("status") == "enriched":
+                result.stage_b_rejected += 1
+                assessment = assessment_by_id[listing.source_listing_id]
+                family_funnel(assessment.detected_family)["stage_b_rejected"] += 1
             continue
         route, reason = routed
         result.final_candidates += 1
+        assessment = assessment_by_id[listing.source_listing_id]
+        family_funnel(assessment.detected_family)["finals"] += 1
         result.route_counts[route] = result.route_counts.get(route, 0) + 1
         thesis = alert_thesis(route, evaluation)
         result.thesis_counts[thesis] = result.thesis_counts.get(thesis, 0) + 1
@@ -434,6 +554,7 @@ async def scan_once(
         if sent:
             save_alert_state(listing.source, listing.source_listing_id, signature, route, db_path)
             result.new_alerts += 1
+            family_funnel(assessment.detected_family)["alerts"] += 1
             result.alert_route_counts[route] = result.alert_route_counts.get(route, 0) + 1
         else:
             result.failed_alerts += 1

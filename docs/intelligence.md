@@ -7,6 +7,19 @@ BuyEye evaluates two independent questions:
 
 Neither a target-brand match nor a low asking price answers both questions.
 
+Stage A asks a narrower third question: **is this card plausibly worth a detail-page fetch?**
+The 40-point closet-heat gate remains the archive path, but it is no longer the only inspection
+path. Card-only evidence can also admit a deliberately bounded market buyout, mature auction,
+silver/jewelry candidate, or unusually cheap unknown when brand and fashion-category context are
+credible and there is no explicit counterfeit veto. Discovery price bands only rank inspection
+context; they never become FMV or alert eligibility.
+
+Market Stage A work is capped both per query and as a fraction of valid cards. Uncertain identity
+exploration and silver have their own caps. Globally deduped cards are normally processed once;
+an ineligible card may be reconsidered under a genuinely different family/strategy context, and a
+capped card remains eligible to rotate into the bounded detail budget. A selected card stays
+globally deduped until its listing state changes or freshness expires.
+
 ## Evidence layers
 
 - `config/fashion_taxonomy.yaml` is manually curated production knowledge.

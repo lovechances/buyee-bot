@@ -139,14 +139,24 @@ def main(argv: list[str] | None = None) -> int:
             "Last hour: "
             f"queries={metrics['queries']} pages={metrics['search_pages']} cards={metrics['cards']} "
             f"unique={metrics['unique']} duplicates={metrics['duplicates']} "
+            f"stage_a_telemetry_scans={metrics['stage_a_telemetry_scans']} "
+            f"stage_a_telemetry_unique={metrics['stage_a_telemetry_unique']} "
+            f"brand_confirmed={metrics['stage_a_brand_confirmed']} "
+            f"category_valid={metrics['stage_a_category_valid']} "
+            f"stage_a_eligible={metrics['stage_a_eligible']} "
+            f"stage_a_capped={metrics['stage_a_capped']} "
             f"stage_a_rejected={metrics['stage_a_rejected']} stage_b={metrics['stage_b_candidates']} "
-            f"enriched={metrics['stage_b_enriched']} comps={metrics['comp_lookups']} "
+            f"enriched={metrics['stage_b_enriched']} failed={metrics['stage_b_failed']} "
+            f"post_detail_rejected={metrics['stage_b_rejected']} comps={metrics['comp_lookups']} "
             f"comp_cache={metrics['comp_cache_hits']}/{metrics['comp_cache_misses']} "
             f"final={metrics['final_candidates']} alerts={metrics['alerts']} "
             f"routes={metrics['routes']} alert_routes={metrics['alert_routes']} "
             f"theses={metrics['theses']} "
             f"opportunities={metrics['opportunities']} "
-            f"strategies={metrics['strategy_types']}"
+            f"strategies={metrics['strategy_types']} "
+            f"stage_a_paths={metrics['stage_a_paths']} "
+            f"stage_a_rejects={metrics['stage_a_reject_reasons']} "
+            f"families={metrics['detected_family_funnel']}"
         )
         return 0 if report["database_ready"] else 1
 
@@ -286,7 +296,10 @@ def main(argv: list[str] | None = None) -> int:
                 logger.info(
                     "scan query=%r family=%s layer=%s strategy=%s strategy_id=%s "
                     "pages=%s cards=%s unique=%s duplicates=%s "
-                    "stage_a_rejected=%s stage_b=%s enriched=%s comps=%s cache=%s/%s "
+                    "brand_confirmed=%s category_valid=%s stage_a_eligible=%s "
+                    "stage_a_capped=%s stage_a_rejected=%s stage_a_paths=%s stage_a_rejects=%s "
+                    "stage_b=%s enriched=%s failed=%s post_detail_rejected=%s "
+                    "comps=%s cache=%s/%s "
                     "final=%s alerts=%s routes=%s theses=%s opportunities=%s",
                     spec.query,
                     spec.family,
@@ -297,9 +310,17 @@ def main(argv: list[str] | None = None) -> int:
                     result.scanned,
                     result.unique_listings,
                     result.duplicates,
+                    result.stage_a_brand_confirmed,
+                    result.stage_a_category_valid,
+                    result.stage_a_eligible,
+                    result.stage_a_capped,
                     result.stage_a_rejected,
+                    result.stage_a_path_counts,
+                    result.stage_a_reject_counts,
                     result.stage_b_candidates,
                     result.stage_b_enriched,
+                    result.stage_b_failed,
+                    result.stage_b_rejected,
                     result.comp_queried,
                     result.comp_cache_hits,
                     result.comp_cache_misses,
@@ -338,8 +359,14 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"query={query!r} pages={result.search_pages} scanned={result.scanned} "
             f"unique={result.unique_listings} stage_a_rejected={result.stage_a_rejected} "
+            f"brand_confirmed={result.stage_a_brand_confirmed} "
+            f"category_valid={result.stage_a_category_valid} "
+            f"stage_a_eligible={result.stage_a_eligible} stage_a_capped={result.stage_a_capped} "
+            f"stage_a_paths={result.stage_a_path_counts} "
+            f"stage_a_rejects={result.stage_a_reject_counts} "
             f"stage_b_candidates={result.stage_b_candidates} "
             f"stage_b_enriched={result.stage_b_enriched} stage_b_failed={result.stage_b_failed} "
+            f"stage_b_rejected={result.stage_b_rejected} "
             f"comp_queried={result.comp_queried} final_candidates={result.final_candidates} "
             f"alerts=0 routes={result.route_counts} theses={result.thesis_counts} "
             f"opportunities={result.opportunity_counts}"
@@ -360,7 +387,11 @@ def main(argv: list[str] | None = None) -> int:
             f"new_rows={result.new_rows} updated_rows={result.updated_rows} alerts={result.new_alerts} "
             f"suppressed={result.suppressed_alerts} failed_alerts={result.failed_alerts} "
             f"stage_a_rejected={result.stage_a_rejected} stage_b_candidates={result.stage_b_candidates} "
+            f"stage_a_eligible={result.stage_a_eligible} stage_a_capped={result.stage_a_capped} "
+            f"stage_a_paths={result.stage_a_path_counts} "
+            f"stage_a_rejects={result.stage_a_reject_counts} "
             f"stage_b_enriched={result.stage_b_enriched} stage_b_failed={result.stage_b_failed} "
+            f"stage_b_rejected={result.stage_b_rejected} "
             f"comp_queried={result.comp_queried} comp_candidates={result.comp_candidates} "
             f"comps_accepted={result.comps_accepted} japan_comp_candidates={result.japan_comp_candidates} "
             f"japan_comps_accepted={result.japan_comps_accepted} comp_cache_hits={result.comp_cache_hits} "

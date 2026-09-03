@@ -61,6 +61,22 @@ detail:
   minimum_heat: 40
   cache_ttl_hours: 24
 
+# Card-only inspection eligibility. These thresholds choose which listings earn
+# a detail fetch; they do not alter valuation, final routing, or alert standards.
+stage_a:
+  archive_heat_threshold: 40
+  minimum_brand_confidence: 0.95
+  market_minimum_heat: 18
+  silver_minimum_heat: 30
+  unknown_absolute_buyout_max_jpy: 10000
+  unknown_max_band_fraction: 0.40
+  max_candidates_per_query: 6
+  max_market_candidates_per_query: 3
+  max_market_candidate_rate: 0.03
+  path_caps:
+    unknown_interesting: 1
+    silver_jewelry: 2
+
 directional_opportunity:
   minimum_heat: 55
   exceptional_landed_usd: 30
