@@ -8,6 +8,7 @@ from typing import Any
 
 from .fashion import FashionProfile, enrich_title, is_generic_signal
 from .models import Comp
+from .normalize import normalize_text
 from .valuation import estimate_landed_cost_jpy
 
 
@@ -140,29 +141,53 @@ def assess_auction_maturity(
 
 
 _DIRECTIONAL_DESIGN_TERMS = (
+    "all-over",
+    "all over",
+    "aids",
+    "applique",
+    "appliqué",
     "asymmetric",
     "asymmetrical",
     "back logo",
     "back print",
+    "bondage",
     "deconstructed",
+    "destroy",
     "distressed",
     "embroidered",
     "embroidery",
     "gradient",
     "graphic",
+    "jacquard",
     "one button",
     "1b",
+    "paneled",
+    "panelled",
     "patchwork",
+    "painted",
+    "patterned",
     "processed",
     "reconstruction",
-    "staff",
     "tailored",
     "runway",
     "single stitch",
+    "skull",
+    "アップリケ",
+    "デストロイ",
+    "エイズ",
+    "ジャカード",
+    "ジャガード",
     "グラデーション",
+    "パネル",
+    "パッチワーク",
+    "ペンキ",
+    "ボンテージ",
+    "スカル",
     "再構築",
     "刺繍",
     "加工",
+    "ドクロ",
+    "切替",
     "変形",
     "総柄",
     "シングルステッチ",
@@ -197,6 +222,44 @@ _VINTAGE_BAND_PRODUCTION_TERMS = (
     "当時物",
 )
 
+_CONDITION_EVIDENCE_TERMS = (
+    "new with tags",
+    "nwt",
+    "deadstock",
+    "unworn",
+    "unused",
+    "新品未使用",
+    "未使用品",
+    "新品",
+    "タグ付き",
+    "タグ付",
+    "デッドストック",
+)
+
+_GENERIC_ARCHIVE_SHORTHAND = re.compile(
+    r"(?i)(?:\d{4}|\d{2}(?:ss|aw|fw)|(?:ss|aw|fw)\d{2})"
+)
+
+_EXPLICIT_NON_MENSWEAR_TERMS = (
+    "women's",
+    "womens",
+    "women fashion",
+    "women's fashion",
+    "ladies",
+    "レディース",
+    "女性用",
+)
+
+_POOR_CONDITION_TERMS = (
+    "bad condition",
+    "poor condition",
+    "heavily damaged",
+    "junk",
+    "ジャンク",
+    "全体的に状態が悪い",
+    "状態が悪い",
+)
+
 
 def _phrase_present(text: str, phrase: str) -> bool:
     lowered = text.casefold()
@@ -225,7 +288,64 @@ def _piece_signals(profile: FashionProfile, evidence_text: str) -> tuple[str, ..
 
 
 def _has_vintage_band_production_evidence(evidence_text: str) -> bool:
-    return any(_phrase_present(evidence_text, term) for term in _VINTAGE_BAND_PRODUCTION_TERMS)
+    # One seller-supplied construction phrase (especially "single stitch")
+    # is too weak to distinguish an actual period tee from a modern cut-off.
+    # Require two independent age/production observations before treating a
+    # band subject as vintage sourcing evidence.
+    return (
+        sum(
+            _phrase_present(evidence_text, term)
+            for term in _VINTAGE_BAND_PRODUCTION_TERMS
+        )
+        >= 2
+    )
+
+
+def has_specific_archive_context(profile: FashionProfile) -> bool:
+    """Return archive evidence stronger than a bare year or season shorthand."""
+    return any(
+        evidence
+        and not _GENERIC_ARCHIVE_SHORTHAND.fullmatch(
+            normalize_text(evidence.matched_term).replace(" ", "")
+        )
+        for evidence in (profile.era, profile.collection)
+    )
+
+
+def _has_favorable_condition_evidence(condition: str | None, evidence_text: str) -> bool:
+    condition_text = normalize_text(condition or "").casefold()
+    if condition_text in {"new", "unused", "unworn", "new with tags", "nwt"}:
+        return True
+    combined = " ".join(value for value in (condition_text, evidence_text) if value)
+    return any(_phrase_present(combined, term) for term in _CONDITION_EVIDENCE_TERMS)
+
+
+def _has_poor_condition_evidence(condition: str | None) -> bool:
+    normalized = normalize_text(condition or "").casefold()
+    return any(_phrase_present(normalized, term) for term in _POOR_CONDITION_TERMS)
+
+
+def has_explicit_non_menswear_evidence(listing: Any) -> bool:
+    """Use richer Stage B category evidence to reject explicit women's inventory."""
+    observed = ((getattr(listing, "raw", None) or {}).get("stage_b") or {}).get(
+        "observed", {}
+    )
+    hierarchy = observed.get("category_hierarchy", [])
+    text = normalize_text(
+        " ".join(
+            [
+                str(getattr(listing, "title_original", "") or ""),
+                *(str(value) for value in hierarchy if value),
+            ]
+        )
+    ).casefold()
+    return any(_phrase_present(text, term) for term in _EXPLICIT_NON_MENSWEAR_TERMS)
+
+
+def has_specific_design_evidence(piece_signals: Iterable[str]) -> bool:
+    """Distinguish construction/motif evidence from collection-name repetition."""
+    design_terms = {normalize_text(term).casefold() for term in _DIRECTIONAL_DESIGN_TERMS}
+    return any(normalize_text(signal).casefold() in design_terms for signal in piece_signals)
 
 
 def assess_identity_confidence(
@@ -378,6 +498,13 @@ def assess_directional_opportunity(
     minimum_score = int(config.get("minimum_score", 72))
     archive_context_fraction = float(config.get("archive_context_max_fraction", 0.85))
     ordinary_context_fraction = float(config.get("ordinary_context_max_fraction", 0.45))
+    exceptional_actionable_price = int(
+        config.get("exceptional_actionable_price_jpy", 10_000)
+    )
+    exceptional_actionable_minimum_score = int(
+        config.get("exceptional_actionable_minimum_score", 62)
+    )
+    favorable_condition_bonus = int(config.get("favorable_condition_bonus", 6))
     relationship = profile.relationship.value if profile.relationship else "uncertain"
     relationship_provenance = profile.relationship.provenance if profile.relationship else ""
     design_signals = _piece_signals(profile, evidence_text)
@@ -393,6 +520,10 @@ def assess_directional_opportunity(
         is_generic_signal(signal, profile.relationship)
         for signal in profile.negative_signals
     )
+    irrelevant = any(
+        signal.value.startswith("irrelevant:") for signal in profile.negative_signals
+    )
+    poor_condition = _has_poor_condition_evidence(getattr(listing, "condition", None))
 
     score = {"high": 30, "medium": 18, "low": 8}[identity.confidence]
     reasons = [f"{identity.confidence}-confidence fashion identity"]
@@ -451,6 +582,12 @@ def assess_directional_opportunity(
     if generic:
         score -= 25
         reasons.append("generic/basic detail evidence")
+    if irrelevant:
+        score = 0
+        reasons.append("non-fashion object evidence")
+    if poor_condition:
+        score -= 12
+        reasons.append("explicit poor-condition evidence")
     if relationship_provenance.endswith(".collaboration_low_priority"):
         score -= 18
         reasons.append("mass-market or secondary-brand collaboration context")
@@ -461,8 +598,7 @@ def assess_directional_opportunity(
     elif auth.level == "do_not_touch":
         score = 0
 
-    score = max(0, min(100, score))
-    archive_context = bool(profile.collection or profile.era)
+    archive_context = has_specific_archive_context(profile)
     notable_material = bool(
         profile.material
         and profile.material.value in {"silver", "leather", "mohair", "cashmere"}
@@ -496,6 +632,20 @@ def assess_directional_opportunity(
     if is_vintage_band_tee:
         substantive = vintage_band_quality
         quality_floor = vintage_band_quality
+    favorable_condition = bool(
+        substantive
+        and quality_floor
+        and not generic
+        and auth.level != "do_not_touch"
+        and not poor_condition
+        and _has_favorable_condition_evidence(
+            getattr(listing, "condition", None), evidence_text
+        )
+    )
+    if favorable_condition:
+        score += favorable_condition_bonus
+        reasons.append("favorable new/unworn condition supports an already substantive piece")
+    score = max(0, min(100, score))
     contextual_price_ok = bool(
         discovery_fraction is not None
         and discovery_fraction
@@ -505,6 +655,33 @@ def assess_directional_opportunity(
         landed_usd is not None
         and landed_usd <= max_landed
         and substantive
+    )
+    actionable_price = getattr(listing, "buyout_price", None)
+    if actionable_price is None and economics.landed_cost_jpy is not None:
+        actionable_price = getattr(listing, "current_price", None)
+    exceptional_acquisition_ok = bool(
+        economics.landed_cost_jpy is not None
+        and actionable_price is not None
+        and 0 < int(actionable_price) <= exceptional_actionable_price
+        and substantive
+        and quality_floor
+        and (
+            has_specific_design_evidence(design_signals)
+            or notable_material
+            or strong_collaboration
+        )
+        and not poor_condition
+    )
+    if exceptional_acquisition_ok:
+        reasons.append(
+            "actionable acquisition price is inside the bounded low-downside threshold"
+        )
+    score_is_sufficient = bool(
+        score >= minimum_score
+        or (
+            exceptional_acquisition_ok
+            and score >= exceptional_actionable_minimum_score
+        )
     )
     relationship_ok = relationship in {"core", "collaboration", "diffusion"}
     if is_vintage_band_tee:
@@ -531,8 +708,10 @@ def assess_directional_opportunity(
         and quality_floor
         and relationship_ok
         and auth.level != "do_not_touch"
-        and score >= minimum_score
-        and (contextual_price_ok or absolute_downside_ok)
+        and not irrelevant
+        and not has_explicit_non_menswear_evidence(listing)
+        and score_is_sufficient
+        and (contextual_price_ok or absolute_downside_ok or exceptional_acquisition_ok)
     )
     thesis = "asymmetric_value" if qualifies else None
     if economics.landed_cost_jpy is None:
@@ -604,7 +783,7 @@ def score_desirability(profile: FashionProfile, title: str, condition: str | Non
     if irrelevant:
         score = 0
         warnings.append("non-fashion or irrelevant item language")
-    if condition and any(term in condition.lower() for term in ("poor", "junk", "ジャンク")):
+    if _has_poor_condition_evidence(condition):
         score -= 15
         warnings.append("poor-condition wording")
     if profile.brand and not (profile.era or profile.collection or distinct_signals):

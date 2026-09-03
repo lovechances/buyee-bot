@@ -11,6 +11,9 @@ OUTAGE_MESSAGE = "BuyEye is temporarily down and not scanning."
 RECOVERY_MESSAGE = "BuyEye recovered and is scanning normally again."
 AUTH_REQUIRED_MESSAGE = "BuyEye needs its Buyee login refreshed."
 MAJOR_UPDATE_MESSAGES = {
+    "alert-quality-recall-v2": (
+        "BuyEye update: alert quality and opportunity finding have been improved."
+    ),
     "status-monitoring-v1": "BuyEye update: status monitoring is now live.",
 }
 

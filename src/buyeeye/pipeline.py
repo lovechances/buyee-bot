@@ -24,7 +24,13 @@ from .db import (
 from .detail_enrichment import BuyeeDetailService, DetailRepository
 from .discord_alerts import alert_thesis, send_listing_alert
 from .discovery import QuerySpec
-from .evaluation import ListingEvaluation, evaluate_listing
+from .evaluation import (
+    ListingEvaluation,
+    evaluate_listing,
+    has_explicit_non_menswear_evidence,
+    has_specific_archive_context,
+    has_specific_design_evidence,
+)
 from .fashion import enrich_title, is_generic_signal
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
 from .runtime_state import (
@@ -41,7 +47,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "overnight-directional-v1"
+DECISION_LOGIC_VERSION = "quality-recall-v2"
 
 
 @dataclass
@@ -213,6 +219,9 @@ def _dominant_post_detail_rejection(
         is_generic_signal(signal, profile.relationship)
         for signal in profile.negative_signals
     )
+    irrelevant = any(
+        signal.value.startswith("irrelevant:") for signal in profile.negative_signals
+    )
     if not listing.title_original or not any(
         price is not None
         for price in (listing.current_price, listing.buyout_price, listing.starting_price)
@@ -224,11 +233,16 @@ def _dominant_post_detail_rejection(
         evaluation.auction_maturity.price_actionable
     ):
         return "immature_auction"
-    if not profile.category or profile.category.value not in {
-        "menswear",
-        "accessory",
-        "jewelry",
-    }:
+    if (
+        irrelevant
+        or has_explicit_non_menswear_evidence(listing)
+        or not profile.category
+        or profile.category.value not in {
+            "menswear",
+            "accessory",
+            "jewelry",
+        }
+    ):
         return "category_mismatch"
     if relationship == "homage_reference" or relationship_provenance.endswith(
         ".collaboration_low_priority"
@@ -266,6 +280,9 @@ def _post_detail_decision(
     ending_threshold_minutes: int = 60,
     archive_watch_min_heat: int = 70,
     silver_min_heat: int = 50,
+    grail_min_heat: int = 82,
+    archive_directional_min_heat: int = 55,
+    archive_directional_min_score: int = 75,
 ) -> PostDetailDecision:
     heat = evaluation.desirability.score
     economics = evaluation.economics
@@ -278,6 +295,13 @@ def _post_detail_decision(
         profile.relationship
         and profile.relationship.provenance.endswith(".collaboration_low_priority")
     )
+    generic = any(
+        is_generic_signal(signal, profile.relationship)
+        for signal in profile.negative_signals
+    )
+    irrelevant = any(
+        signal.value.startswith("irrelevant:") for signal in profile.negative_signals
+    )
     if risk == "do_not_touch":
         return PostDetailDecision(None, "severe authentication evidence", "severe_auth_risk")
     if homage_reference:
@@ -285,6 +309,18 @@ def _post_detail_decision(
             None,
             "explicit homage/reference wording is not a core branded piece",
             "homage_or_secondary_brand",
+        )
+    if irrelevant:
+        return PostDetailDecision(
+            None,
+            "detail evidence identifies a non-fashion object",
+            "category_mismatch",
+        )
+    if has_explicit_non_menswear_evidence(listing):
+        return PostDetailDecision(
+            None,
+            "detail category explicitly identifies non-menswear inventory",
+            "category_mismatch",
         )
     if low_priority_collaboration and evaluation.directional.thesis != "asymmetric_value":
         return PostDetailDecision(
@@ -332,13 +368,14 @@ def _post_detail_decision(
         and profile.category.value == "jewelry"
         and profile.material
         and profile.material.value == "silver"
+        and heat >= silver_min_heat
         and (
-            heat >= silver_min_heat
-            or evaluation.directional.thesis == "asymmetric_value"
+            evaluation.directional.thesis == "asymmetric_value"
             or (
                 economics.opportunity_score >= 70
                 and economics.comp_confidence in {"medium", "high"}
             )
+            or heat >= grail_min_heat
         )
     ):
         return PostDetailDecision(
@@ -368,7 +405,25 @@ def _post_detail_decision(
         return PostDetailDecision(
             "ending", "qualifying opportunity ending within the configured threshold"
         )
-    if heat >= 82:
+    if (
+        ((listing.raw or {}).get("stage_b") or {}).get("status") == "enriched"
+        and evaluation.identity.confidence == "high"
+        and evaluation.directional.confidence in {"medium", "high"}
+        and evaluation.directional.score >= archive_directional_min_score
+        and heat >= archive_directional_min_heat
+        and has_specific_archive_context(profile)
+        and bool(evaluation.directional.piece_signals)
+        and has_specific_design_evidence(evaluation.directional.piece_signals)
+        and not generic
+        and profile.item_type
+        and profile.category
+        and profile.category.value in {"menswear", "accessory"}
+    ):
+        return PostDetailDecision(
+            "grails",
+            "strong named archive identity and piece-specific evidence",
+        )
+    if heat >= grail_min_heat:
         return PostDetailDecision("grails", "high piece-specific closet heat")
     if (
         economics.opportunity_score >= 70
@@ -397,6 +452,9 @@ def _route_evaluation(
     ending_threshold_minutes: int = 60,
     archive_watch_min_heat: int = 70,
     silver_min_heat: int = 50,
+    grail_min_heat: int = 82,
+    archive_directional_min_heat: int = 55,
+    archive_directional_min_score: int = 75,
 ) -> tuple[str, str] | None:
     """Compatibility wrapper preserving the one-primary-route public behavior."""
     decision = _post_detail_decision(
@@ -405,6 +463,9 @@ def _route_evaluation(
         ending_threshold_minutes,
         archive_watch_min_heat,
         silver_min_heat,
+        grail_min_heat,
+        archive_directional_min_heat,
+        archive_directional_min_score,
     )
     if decision.route is None:
         return None
@@ -938,6 +999,13 @@ async def scan_once(
             ending_threshold,
             archive_watch_min_heat=int(settings.get("alert", {}).get("archive_watch_min_heat", 70)),
             silver_min_heat=int(settings.get("alert", {}).get("silver_min_score", 50)),
+            grail_min_heat=int(settings.get("alert", {}).get("grail_min_score", 82)),
+            archive_directional_min_heat=int(
+                settings.get("alert", {}).get("archive_directional_min_heat", 55)
+            ),
+            archive_directional_min_score=int(
+                settings.get("alert", {}).get("archive_directional_min_score", 75)
+            ),
         )
         stage_b_status = ((listing.raw or {}).get("stage_b") or {}).get("status")
         if stage_b_status == "enriched":

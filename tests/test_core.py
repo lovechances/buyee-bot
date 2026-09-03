@@ -1539,6 +1539,283 @@ def test_generic_cheap_mcqueen_cotton_tee_does_not_qualify_from_price_alone():
     assert _route_evaluation(listing, evaluation) is None
 
 
+def test_new_with_tags_cannot_rescue_a_generic_cheap_basic():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="generic-nwt-basic",
+        url="https://buyee.jp/item/generic-nwt-basic",
+        title_original="Maison Margiela basic logo t-shirt NWT",
+        title_normalized="maison margiela basic logo t shirt nwt",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=3_500,
+        buyout_price=3_500,
+        starting_price=3_500,
+        seller_name="seller",
+        condition="New with tags",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis is None
+    assert not any("favorable new/unworn" in reason for reason in evaluation.directional.reasons)
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_detail_hanger_object_cannot_use_a_garment_token_for_cheap_recall():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="margiela-pants-hanger",
+        url="https://buyee.jp/item/margiela-pants-hanger",
+        title_original="Maison Margiela パンツハンガー マルジェラアーティザナル",
+        title_normalized="maison margiela pants hanger artisanal",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=5_000,
+        buyout_price=5_000,
+        starting_price=5_000,
+        seller_name="seller",
+        condition="No obvious damages/dirt",
+        raw={
+            "stage_b": {
+                "status": "enriched",
+                "observed": {
+                    "category_hierarchy": [
+                        "Auction",
+                        "Fashion",
+                        "By Label",
+                        "Martin Margiela",
+                        "Other",
+                    ],
+                },
+            },
+            "detail_photo_count": 3,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert any(
+        signal.value.startswith("irrelevant:")
+        for signal in evaluation.profile.negative_signals
+    )
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_explicit_womens_detail_category_cannot_enter_menswear_buyouts():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="womens-ysl-sunglasses",
+        url="https://buyee.jp/item/womens-ysl-sunglasses",
+        title_original="イヴサンローラン サングラス グラデーションレンズ レディース",
+        title_normalized="yves saint laurent gradient sunglasses womens",
+        brand="Saint Laurent",
+        category="accessory",
+        current_price=2_800,
+        buyout_price=2_800,
+        starting_price=2_800,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {
+                "status": "enriched",
+                "observed": {
+                    "category_hierarchy": [
+                        "Auction",
+                        "Fashion",
+                        "Yves Saint Laurent",
+                        "Women's",
+                        "Other",
+                    ],
+                },
+            },
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_explicit_bad_condition_cannot_use_exceptional_price_escape():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="damaged-prada-sneakers",
+        url="https://buyee.jp/item/damaged-prada-sneakers",
+        title_original="PRADA SPORT mesh leather sneakers men's",
+        title_normalized="prada sport mesh leather sneakers mens",
+        brand="Prada",
+        category="menswear",
+        current_price=6_480,
+        buyout_price=6_480,
+        starting_price=6_480,
+        seller_name="seller",
+        condition="In bad condition overall",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert "poor-condition wording" in evaluation.desirability.warnings
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_named_era_cannot_make_a_plain_cheap_basic_exceptional_by_itself():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="number-nine-plain-v-neck",
+        url="https://buyee.jp/item/number-nine-plain-v-neck",
+        title_original="宮下期 NUMBER (N)INE VネックTシャツ 3 黒 フェード アーカイブ",
+        title_normalized="miyashita number nine plain v neck t shirt",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=7_200,
+        buyout_price=7_200,
+        starting_price=7_200,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.era is not None
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_condition_rich_patterned_niche_piece_uses_bounded_steal_path():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="needles-patterned-nwt",
+        url="https://buyee.jp/item/needles-patterned-nwt",
+        title_original="Needles patterned shorts",
+        title_normalized="needles patterned shorts",
+        brand="Needles",
+        category="menswear",
+        current_price=3_500,
+        buyout_price=3_500,
+        starting_price=3_500,
+        seller_name="seller",
+        condition="New with tags",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert "patterned" in evaluation.directional.piece_signals
+    assert any("favorable new/unworn" in reason for reason in evaluation.directional.reasons)
+    assert evaluation.directional.score < 72
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+
+
+def test_real_roen_and_needles_steal_shapes_remain_route_eligible():
+    cases = (
+        (
+            "roen-production-steal",
+            "新品送料無料 Rat Roen スカルデニムジャケットＭ ブルー Gジャン ストーン",
+            3_990,
+            15_000,
+        ),
+        (
+            "needles-production-steal",
+            "Needles ニードルス 幾何学 総柄 ショートパンツ EJ073 インナー付 水陸両用 ショーツ M",
+            3_500,
+            10_000,
+        ),
+    )
+    for listing_id, title, price, discovery_ceiling in cases:
+        listing = LiveListing(
+            source="buyee",
+            source_listing_id=listing_id,
+            url=f"https://buyee.jp/item/{listing_id}",
+            title_original=title,
+            title_normalized=title.casefold(),
+            brand="",
+            category="menswear",
+            current_price=price,
+            buyout_price=price,
+            starting_price=price,
+            seller_name="seller",
+            condition="Used",
+            raw={
+                "stage_b": {"status": "enriched", "observed": {}},
+                "detail_photo_count": 5,
+                "seller_feedback_count": 300,
+                "discovery": {
+                    "query_layer": "market_structure",
+                    "search_filters": {
+                        "max_buyout_price_jpy": discovery_ceiling,
+                    },
+                },
+            },
+        )
+
+        evaluation = evaluate_listing(listing)
+
+        assert evaluation.directional.thesis == "asymmetric_value"
+        assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+
+
+def test_low_actionable_price_can_rescue_specific_margiela_without_fabricating_fmv():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="margiela-aids-low-downside",
+        url="https://buyee.jp/item/margiela-aids-low-downside",
+        title_original="メゾンマルジェラ Tシャツ エイズT 半袖 Vネック",
+        title_normalized="メゾンマルジェラ tシャツ エイズt 半袖 vネック",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=7_800,
+        buyout_price=7_800,
+        starting_price=7_800,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {
+                "status": "enriched",
+                "observed": {
+                    "description_original": "Martin Margiela AIDS T-shirt archive graphic",
+                },
+            },
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.discovery_price_fraction is None
+    assert evaluation.valuation.confidence == "unavailable"
+    assert evaluation.economics.resale_median_jpy is None
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+
+
 def test_generic_modern_band_tee_is_not_core_or_asymmetric_value():
     listing = LiveListing(
         source="buyee",
@@ -1566,6 +1843,38 @@ def test_generic_modern_band_tee_is_not_core_or_asymmetric_value():
 
     assert evaluation.profile.relationship.value == "uncertain"
     assert evaluation.directional.discovery_price_fraction == 0.1671
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_single_stitch_alone_does_not_prove_a_vintage_band_tee():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="single-stitch-only-nirvana",
+        url="https://buyee.jp/item/single-stitch-only-nirvana",
+        title_original=(
+            "NIRVANA band t-shirt single stitch cut-off off-white single stitch"
+        ),
+        title_normalized="nirvana band t shirt single stitch cut off",
+        brand="Vintage Band Tee",
+        category="menswear",
+        current_price=2_980,
+        buyout_price=2_980,
+        starting_price=2_980,
+        seller_name=None,
+        condition="A little damaged/dirty",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_buyout_price_jpy": 15_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert "single stitch" in evaluation.directional.piece_signals
     assert evaluation.directional.thesis is None
     assert _route_evaluation(listing, evaluation) is None
 
@@ -1625,6 +1934,128 @@ def test_archive_grail_can_route_without_resale_proof():
         "grails",
         "early archive discovery; current bid is provisional",
     )
+
+
+def test_named_archive_piece_can_survive_without_exact_us_value_or_cheap_price():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="time-migration-denim-shirt",
+        url="https://buyee.jp/item/time-migration-denim-shirt",
+        title_original=(
+            "01SS 即決 NUMBER(N)INE ナンバーナイン タイム期 TIME MIGRATION "
+            "Jeff ＆ スカル ドクロ 刺繍 8分袖 ダンガリーデニムシャツ メンズ 2"
+        ),
+        title_normalized="number nine 01ss time migration skull embroidered denim shirt",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=23_888,
+        buyout_price=23_888,
+        starting_price=23_888,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.valuation.confidence == "unavailable"
+    assert evaluation.directional.thesis is None
+    assert evaluation.desirability.score < 82
+    assert _route_evaluation(listing, evaluation) == (
+        "grails",
+        "strong named archive identity and piece-specific evidence",
+    )
+
+
+def test_bondage_construction_can_support_named_archive_discovery():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="number-nine-bondage",
+        url="https://buyee.jp/item/number-nine-bondage",
+        title_original=(
+            "ナンバーナイン 03AW カート期 ウールチェック ボンテージパンツ 3 "
+            "NUMBER (N)INE 2003AW TOUCH ME I'M SICK Wool Check Bondage Pants"
+        ),
+        title_normalized="number nine 03aw kurt bondage pants",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=48_000,
+        buyout_price=48_000,
+        starting_price=48_000,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert "bondage" in evaluation.directional.piece_signals
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation)[0] == "grails"
+
+
+def test_bare_season_shorthand_cannot_create_named_archive_rescue():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="bare-season-basic",
+        url="https://buyee.jp/item/bare-season-basic",
+        title_original="Number (N)ine 03AW wool trousers",
+        title_normalized="number nine 03aw wool trousers",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=48_000,
+        buyout_price=48_000,
+        starting_price=48_000,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.collection is not None
+    assert evaluation.profile.collection.matched_term.casefold() == "03aw"
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_collection_name_alone_is_not_piece_specific_archive_evidence():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="strip-name-only",
+        url="https://buyee.jp/item/strip-name-only",
+        title_original="Dior Homme 04SS STRIP jeans size 30",
+        title_normalized="dior homme 04ss strip jeans size 30",
+        brand="Dior Homme",
+        category="menswear",
+        current_price=250_000,
+        buyout_price=250_000,
+        starting_price=250_000,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 5,
+            "seller_feedback_count": 300,
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert "strip" in evaluation.directional.piece_signals
+    assert evaluation.desirability.score < 82
+    assert _route_evaluation(listing, evaluation) is None
 
 
 def test_auth_sensitive_silver_with_implausible_price_routes_to_review():
@@ -1727,11 +2158,48 @@ def test_supported_silver_piece_uses_silver_route_when_specific_auth_gaps_are_ab
         },
     )
 
+    comps = [
+        Comp("ebay_sold", listing.title_original, price, 1.0, 30)
+        for price in (80_000, 90_000, 100_000)
+    ]
+    evaluation = evaluate_listing(listing, comps)
+
+    assert evaluation.auth_risk.level == "medium"
+    assert evaluation.desirability.score >= 50
+    assert evaluation.economics.comp_confidence == "medium"
+    assert evaluation.economics.opportunity_score >= 70
+    assert _route_evaluation(listing, evaluation)[0] == "silver"
+
+
+def test_expensive_medium_risk_silver_without_value_evidence_is_suppressed():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="chrome-dealer-dagger",
+        url="https://buyee.jp/item/chrome-dealer-dagger",
+        title_original="クロムハーツ リング 18.5号 DAGGER ダガー シルバーリング 中古 SS07",
+        title_normalized="クロムハーツ リング dagger ダガー シルバーリング 中古 ss07",
+        brand="Chrome Hearts",
+        category="jewelry",
+        current_price=288_288,
+        buyout_price=288_288,
+        starting_price=288_288,
+        seller_name="established-dealer",
+        condition="Used",
+        raw={
+            "detail_photo_count": 8,
+            "seller_feedback_count": 1_000,
+            "seller_feedback_percent": 99.4,
+            "stage_b": {"status": "enriched", "observed": {}},
+        },
+    )
+
     evaluation = evaluate_listing(listing)
 
     assert evaluation.auth_risk.level == "medium"
     assert evaluation.desirability.score >= 50
-    assert _route_evaluation(listing, evaluation)[0] == "silver"
+    assert evaluation.economics.comp_confidence == "none"
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
 
 
 def test_controlled_query_universe_has_provenance_without_cartesian_explosion():
@@ -2138,7 +2606,7 @@ def test_ending_soon_remains_distinct_from_auction_maturity():
     assert _route_evaluation(listing, evaluation)[0] == "ending"
 
 
-def test_low_heat_directional_auction_uses_ending_route_inside_sixty_minutes():
+def test_vetements_staff_basic_does_not_use_cheap_ending_price_as_piece_quality():
     listing = LiveListing(
         source="buyee",
         source_listing_id="directional-ending",
@@ -2167,8 +2635,9 @@ def test_low_heat_directional_auction_uses_ending_route_inside_sixty_minutes():
     evaluation = evaluate_listing(listing)
 
     assert evaluation.desirability.score < 70
-    assert evaluation.directional.thesis == "asymmetric_value"
-    assert _route_evaluation(listing, evaluation)[0] == "ending"
+    assert evaluation.directional.thesis is None
+    assert "insufficient substantive piece-quality evidence" in evaluation.directional.reasons
+    assert _route_evaluation(listing, evaluation) is None
 
 
 def test_early_archive_watch_omits_provisional_flip_economics(monkeypatch):

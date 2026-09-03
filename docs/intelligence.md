@@ -37,6 +37,21 @@ Comp matching requires brand agreement and then checks category, item type, coll
 
 Opportunity uses landed cost, sold-comp median, estimated resale fees, net resale, margins, and multiple. Missing sold comps produce an unscored opportunity rather than invented profit.
 
+Directional sourcing value remains separate from exact resale value. A very low actionable
+acquisition price can support an asymmetric thesis only when identity, item/category, and
+substantive piece evidence are already present; the low-price path has its own stricter bounded
+score and never creates FMV. Favorable new/unworn condition adds a small sourcing bonus only after
+that same piece-quality floor is met. Explicitly poor condition cannot use the cheap-price escape,
+and Stage B women's-category or non-fashion-object evidence stops a menswear route. Plain basics
+receive none of these benefits. A vintage band tee needs at least two independent age/production
+observations; “single stitch” alone is not sufficient.
+
+Final archive discovery can also use the combination of a named era/collection and specific design
+evidence after successful detail enrichment. A bare year or season shorthand is context, not a
+named archive identity. Silver/jewelry likewise needs directional value, credible sold economics,
+or exceptional grail-level piece heat; ordinary expensive dealer inventory does not route from a
+medium heat score alone.
+
 Authentication output is risk triage, never authentication. Observable counterfeit wording, implausible price, weak seller evidence, and missing photo coverage increase risk. Sparse listing data increases uncertainty.
 
 ## Promotion policy

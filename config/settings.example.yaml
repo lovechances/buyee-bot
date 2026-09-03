@@ -48,6 +48,8 @@ alert:
   material_price_drop_min_jpy: 1000
   material_price_drop_absolute_jpy: 5000
   archive_watch_min_heat: 70
+  archive_directional_min_heat: 55
+  archive_directional_min_score: 75
   buyout_min_score: 78
   ending_min_score: 70
   grail_min_score: 82
@@ -93,8 +95,11 @@ stage_a:
 
 directional_opportunity:
   minimum_score: 72
+  exceptional_actionable_price_jpy: 10000
+  exceptional_actionable_minimum_score: 62
   exceptional_landed_usd: 30
   max_landed_usd: 65
+  favorable_condition_bonus: 6
   ordinary_context_max_fraction: 0.45
   archive_context_max_fraction: 0.85
   diffusion_minimum_score: 85

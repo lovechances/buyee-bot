@@ -65,7 +65,7 @@ brands:
     designer: "Martin Margiela"
     eras:
       martin_era: ["本人期", "ここのえ", "初期", "martin era"]
-    strong_signals: ["artisanal", "アーティザナル", "0 10", "010", "replica line", "再構築", "足袋", "tabi", "AIDS", "archive graphic"]
+    strong_signals: ["artisanal", "アーティザナル", "0 10", "010", "replica line", "再構築", "足袋", "tabi", "AIDS", "エイズ", "archive graphic"]
     generic_signals: ["mm6", "logo tee"]
     relationships:
       diffusion: ["mm6"]
@@ -76,7 +76,7 @@ brands:
     eras:
       demna_era: ["demna", "デムナ", "2014", "2015", "2016", "2017", "2018"]
     strong_signals: ["antwerpen", "metal logo", "may the bridges", "titanic", "polizei", "runway"]
-    generic_signals: ["logo tee", "reprint"]
+    generic_signals: ["logo tee", "reprint", "staff"]
   balenciaga:
     canonical: "Balenciaga"
     aliases: ["balenciaga", "バレンシアガ"]
@@ -198,7 +198,7 @@ materials:
   denim: ["denim", "デニム"]
 
 negative_terms:
-  irrelevant: ["poster", "figure", "doll", "toy", "phone case", "ポスター", "フィギュア", "人形", "ぬいぐるみ", "スマホケース"]
+  irrelevant: ["poster", "figure", "doll", "toy", "phone case", "pants hanger", "ポスター", "フィギュア", "人形", "ぬいぐるみ", "スマホケース", "パンツハンガー"]
   counterfeit: ["replica", "fake", "faux", "inspired", "style", "type", "レプリカ", "コピー", "タイプ", "ノーブランド", "社外品"]
   generic: ["basic", "logo tee", "plain", "simple", "シンプル", "無地", "ノベルティ", "販促", "付録"]
 
