@@ -1539,6 +1539,38 @@ def test_generic_cheap_mcqueen_cotton_tee_does_not_qualify_from_price_alone():
     assert _route_evaluation(listing, evaluation) is None
 
 
+def test_balenciaga_sport_licensed_line_does_not_inherit_mainline_buyout_signal():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="balenciaga-sport-shirt",
+        url="https://buyee.jp/item/balenciaga-sport-shirt",
+        title_original="BALENCIAGA SPORT バレンシアガ 総柄 長袖シャツ ペイズリー柄 M",
+        title_normalized="balenciaga sport patterned paisley shirt",
+        brand="Balenciaga",
+        category="menswear",
+        current_price=8_000,
+        buyout_price=8_000,
+        starting_price=8_000,
+        seller_name="seller",
+        condition="No obvious damages/dirt",
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "detail_photo_count": 10,
+            "seller_feedback_count": 2_331,
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_current_price_jpy": 35_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship.value == "diffusion"
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
 def test_new_with_tags_cannot_rescue_a_generic_cheap_basic():
     listing = LiveListing(
         source="buyee",

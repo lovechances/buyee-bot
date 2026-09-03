@@ -83,6 +83,8 @@ brands:
     designer: "Demna Gvasalia"
     strong_signals: ["steroid", "bulldozer", "strike", "paris sneaker", "runway", "distressed"]
     generic_signals: ["campaign logo", "basic tee"]
+    relationships:
+      diffusion: ["balenciaga sport", "balenciaga sports", "バレンシアガ スポーツ", "バレンシアガスポーツ"]
   prada:
     canonical: "Prada"
     aliases: ["prada", "プラダ"]
