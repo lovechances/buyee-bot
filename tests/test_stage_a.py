@@ -23,6 +23,14 @@ def _settings(**stage_a_overrides: object) -> dict[str, object]:
         "max_market_candidates_per_query": 3,
         "max_market_candidate_rate": 0.03,
         "path_caps": {"unknown_interesting": 1, "silver_jewelry": 2},
+        "relationship_rank_adjustments": {
+            "core": 12,
+            "collaboration": -4,
+            "diffusion": -12,
+            "uncertain": -14,
+            "homage_reference": -30,
+        },
+        "low_priority_collaboration_adjustment": -8,
     }
     stage_a.update(stage_a_overrides)
     return {
@@ -359,12 +367,17 @@ def test_known_mcq_card_gets_bounded_low_price_inspection() -> None:
         settings,
     )
 
-    assert evaluation.desirability.score == 18
+    assert evaluation.desirability.score == 10
+    assert evaluation.profile.relationship
+    assert evaluation.profile.relationship.value == "diffusion"
+    assert evaluation.profile.designer is None
+    assert evaluation.profile.collection is None
     assert evaluation.profile.season and evaluation.profile.season.value == "15SS"
     assert evaluation.profile.item_type is None
     assert assessment.eligible is True
-    assert assessment.primary_path == "market_value"
-    assert set(assessment.eligible_paths) == {"market_value", "unknown_interesting"}
+    assert assessment.primary_path == "unknown_interesting"
+    assert assessment.eligible_paths == ("unknown_interesting",)
+    assert assessment.piece_relationship == "diffusion"
     assert "mcq" not in {
         term["term"].casefold() for term in expand_discovery_terms("alexander_mcqueen")
     }
@@ -556,7 +569,7 @@ def test_prior_production_market_near_misses_have_conservative_card_outcomes() -
                 buyout_price=3_800,
             ),
             _market_spec("alexander_mcqueen", "market_buyout"),
-            "market_value",
+            "unknown_interesting",
         ),
         (
             _listing(
@@ -597,7 +610,243 @@ def test_prior_production_market_near_misses_have_conservative_card_outcomes() -
         "d1239838430": "market_value",
         "f1216156045": "market_value",
         "t1231271479": "market_value",
-        "p1231987775": "market_value",
+        "p1231987775": "unknown_interesting",
         "j1242941908": None,
         "v1140788266": None,
     }
+
+
+def test_piece_relationship_classifies_core_diffusion_collaboration_and_homage() -> None:
+    core = enrich_title("Alexander McQueen Lee McQueen bumster trousers")
+    diffusion = enrich_title("McQ Alexander McQueen 15SS Arc jacket")
+    collaboration = enrich_title("GU x UNDERCOVER track jacket")
+    homage = enrich_title("Needles style track jacket")
+    uncertain = enrich_title("unreadable jacket", hinted_brand="Undercover")
+
+    assert core.relationship and core.relationship.value == "core"
+    assert core.designer and core.era
+    assert diffusion.relationship and diffusion.relationship.value == "diffusion"
+    assert diffusion.designer is None
+    assert diffusion.era is None
+    assert diffusion.collection is None
+    assert collaboration.relationship and collaboration.relationship.value == "collaboration"
+    assert collaboration.relationship.provenance.endswith(".collaboration_low_priority")
+    assert homage.relationship and homage.relationship.value == "homage_reference"
+    assert uncertain.relationship and uncertain.relationship.value == "uncertain"
+
+
+def test_core_line_outranks_diffusion_for_one_scarce_market_slot() -> None:
+    settings = _settings(
+        max_candidates_per_query=1,
+        max_market_candidates_per_query=1,
+        max_market_candidate_rate=1.0,
+    )
+    spec = _market_spec("alexander_mcqueen", "market_buyout")
+    core = _listing(
+        "core-mcqueen",
+        "Alexander McQueen 15SS Arc jacket",
+        current_price=3_800,
+        buyout_price=3_800,
+    )
+    diffusion = _listing(
+        "diffusion-mcq",
+        "McQ Alexander McQueen 15SS Arc jacket",
+        current_price=3_800,
+        buyout_price=3_800,
+    )
+    assessments = [
+        assess_stage_a(item, evaluate_listing(item, settings=settings), spec, settings)
+        for item in (diffusion, core)
+    ]
+
+    selected, capped = select_stage_a_candidates(assessments, spec, settings)
+
+    assert [item.listing_id for item in selected] == ["core-mcqueen"]
+    assert [item.listing_id for item in capped] == ["diffusion-mcq"]
+    assert all(item.eligible for item in assessments)
+
+
+def test_declared_diffusion_word_does_not_become_a_blanket_generic_reject() -> None:
+    settings = _settings()
+    listing = _listing(
+        "declared-diffusion",
+        "McQ Alexander McQueen diffusion 15SS jacket",
+        current_price=3_800,
+        buyout_price=3_800,
+    )
+    assessment = assess_stage_a(
+        listing,
+        evaluate_listing(listing, settings=settings),
+        _market_spec("alexander_mcqueen", "market_buyout"),
+        settings,
+    )
+
+    assert assessment.piece_relationship == "diffusion"
+    assert assessment.eligible is True
+    assert assessment.primary_path == "market_value"
+
+
+def test_known_diffusion_aliases_do_not_inherit_mainline_designer_context() -> None:
+    drkshdw = enrich_title("Rick Owens DRKSHDW asymmetric jacket")
+    mm6 = enrich_title("MM6 reconstruction denim jacket")
+
+    assert drkshdw.relationship and drkshdw.relationship.value == "diffusion"
+    assert drkshdw.designer is None
+    assert mm6.brand and mm6.brand.value == "Maison Martin Margiela"
+    assert mm6.relationship and mm6.relationship.value == "diffusion"
+    assert mm6.designer is None
+
+
+def test_low_priority_collaboration_is_demoted_without_being_generic_rejected() -> None:
+    settings = _settings(
+        max_candidates_per_query=1,
+        max_market_candidates_per_query=1,
+        max_market_candidate_rate=1.0,
+    )
+    spec = _market_spec("needles", "market_buyout")
+    core = _listing("core-needles", "Needles track jacket")
+    collaboration = _listing(
+        "uniqlo-needles",
+        "Needles x UNIQLO track jacket",
+    )
+    core_assessment = assess_stage_a(
+        core, evaluate_listing(core, settings=settings), spec, settings
+    )
+    collaboration_assessment = assess_stage_a(
+        collaboration,
+        evaluate_listing(collaboration, settings=settings),
+        spec,
+        settings,
+    )
+
+    selected, capped = select_stage_a_candidates(
+        [collaboration_assessment, core_assessment], spec, settings
+    )
+
+    assert collaboration_assessment.piece_relationship == "collaboration"
+    assert collaboration_assessment.eligible is True
+    assert collaboration_assessment.reject_reason is None
+    assert collaboration_assessment.inspection_score < core_assessment.inspection_score
+    assert [item.listing_id for item in selected] == ["core-needles"]
+    assert [item.listing_id for item in capped] == ["uniqlo-needles"]
+
+
+def test_piece_specific_strength_can_compensate_for_collaboration_rank_prior() -> None:
+    settings = _settings(
+        max_candidates_per_query=1,
+        max_market_candidates_per_query=1,
+        max_market_candidate_rate=1.0,
+    )
+    spec = _market_spec("undercover", "market_buyout")
+    plain_core = _listing("plain-core", "UNDERCOVER jacket")
+    strong_collaboration = _listing(
+        "strong-collaboration",
+        "UNDERCOVER x Valentino distressed reconstruction leather jacket",
+    )
+    assessments = [
+        assess_stage_a(item, evaluate_listing(item, settings=settings), spec, settings)
+        for item in (plain_core, strong_collaboration)
+    ]
+
+    selected, capped = select_stage_a_candidates(assessments, spec, settings)
+
+    assert [item.listing_id for item in selected] == ["strong-collaboration"]
+    assert [item.listing_id for item in capped] == ["plain-core"]
+    assert assessments[1].piece_relationship == "collaboration"
+
+
+def test_brand_specific_generic_signal_now_blocks_market_value_path() -> None:
+    settings = _settings()
+    listing = _listing(
+        "generic-dior",
+        "Dior Homme Dior logo t-shirt",
+        current_price=5_000,
+        buyout_price=5_000,
+    )
+    assessment = assess_stage_a(
+        listing,
+        evaluate_listing(listing, settings=settings),
+        _market_spec("dior_homme", "market_buyout"),
+        settings,
+    )
+
+    assert assessment.eligible is False
+    assert assessment.reject_reason == "generic_or_junk"
+
+
+def test_homage_relationship_rejects_but_stereotype_remains_core() -> None:
+    settings = _settings()
+    homage = _listing("homage", "UNDERCOVER homage distressed jacket")
+    harmless = _listing("stereotype-core", "UNDERCOVER STEREOTYPE jacket")
+    spec = _market_spec("undercover", "market_buyout")
+
+    homage_assessment = assess_stage_a(
+        homage, evaluate_listing(homage, settings=settings), spec, settings
+    )
+    harmless_assessment = assess_stage_a(
+        harmless, evaluate_listing(harmless, settings=settings), spec, settings
+    )
+
+    assert homage_assessment.piece_relationship == "homage_reference"
+    assert homage_assessment.eligible is False
+    assert homage_assessment.reject_reason == "homage_or_reference"
+    assert harmless_assessment.piece_relationship == "core"
+    assert harmless_assessment.eligible is True
+
+
+def test_size_or_dimension_x_does_not_create_a_collaboration_relationship() -> None:
+    sized = enrich_title("Rick Owens leather jacket size 48 x black")
+    measured = enrich_title("Maison Margiela shirt 44cm x 50cm")
+
+    assert sized.relationship and sized.relationship.value == "core"
+    assert sized.collaboration is None
+    assert measured.relationship and measured.relationship.value == "core"
+    assert measured.collaboration is None
+
+
+def test_diffusion_and_mass_market_collaboration_do_not_inherit_mainline_signals() -> None:
+    diffusion = enrich_title("MM6 Margiela artisanal archive graphic jacket")
+    mass_market = enrich_title(
+        "GU x UNDERCOVER 03SS SCAB distressed reconstruction leather jacket"
+    )
+
+    assert diffusion.relationship and diffusion.relationship.value == "diffusion"
+    assert diffusion.designer is None
+    assert diffusion.collection is None
+    assert diffusion.positive_signals == []
+    assert mass_market.relationship
+    assert mass_market.relationship.provenance.endswith(".collaboration_low_priority")
+    assert mass_market.designer is None
+    assert mass_market.collection is None
+    assert mass_market.positive_signals == []
+
+
+def test_margiela_replica_line_is_not_counterfeit_but_bare_replica_remains_vetoed() -> None:
+    legitimate = evaluate_listing(
+        _listing("replica-line", "Maison Margiela Replica Line leather sneakers")
+    )
+    counterfeit = evaluate_listing(
+        _listing("bare-replica", "Maison Margiela leather sneakers replica")
+    )
+    mixed = evaluate_listing(
+        _listing(
+            "replica-line-plus-replica",
+            "Maison Margiela Replica Line leather sneakers replica",
+        )
+    )
+
+    assert legitimate.auth_risk.level != "do_not_touch"
+    assert not any(
+        signal.value == "counterfeit:replica"
+        for signal in legitimate.profile.negative_signals
+    )
+    assert counterfeit.auth_risk.level == "do_not_touch"
+    assert any(
+        signal.value == "counterfeit:replica"
+        for signal in counterfeit.profile.negative_signals
+    )
+    assert mixed.auth_risk.level == "do_not_touch"
+    assert any(
+        signal.value == "counterfeit:replica"
+        for signal in mixed.profile.negative_signals
+    )

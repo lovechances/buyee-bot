@@ -4,7 +4,7 @@ import asyncio
 
 from buyeeye.discovery import MarketplaceSearchFilters, QuerySpec
 from buyeeye.live_sources import LiveListing
-from buyeeye.pipeline import scan_once
+from buyeeye.pipeline import PostDetailDecision, scan_once
 
 
 def _settings(*, market_rate: float = 1.0) -> dict[str, object]:
@@ -102,13 +102,13 @@ def test_candidate_budget_blocks_capped_cards_from_detail_comp_and_routing(
 
     def fake_route(listing, evaluation, *args, **kwargs):
         route_ids.append(listing.source_listing_id)
-        return "grails", "test route"
+        return PostDetailDecision("grails", "test route")
 
     monkeypatch.setattr("buyeeye.pipeline.load_settings", lambda: _settings(market_rate=0.25))
     monkeypatch.setattr("buyeeye.pipeline.LiveMarketLoop.run_once", fake_run_once)
     monkeypatch.setattr("buyeeye.pipeline.BuyeeDetailService.enrich", fake_detail)
     monkeypatch.setattr("buyeeye.pipeline.CompService.retrieve", fake_comps)
-    monkeypatch.setattr("buyeeye.pipeline._route_evaluation", fake_route)
+    monkeypatch.setattr("buyeeye.pipeline._post_detail_decision", fake_route)
 
     result = asyncio.run(scan_once(_market_spec(), tmp_path / "bounded.db", send_alerts=False))
 
@@ -156,6 +156,16 @@ def test_cheap_market_candidate_can_be_enriched_then_rejected_without_alert(
     assert result.stage_b_candidates == 1
     assert result.stage_b_enriched == 1
     assert result.stage_b_rejected == 1
+    assert result.post_detail_reject_counts == {"category_mismatch": 1}
+    assert len(result.post_detail_decisions) == 1
+    decision = result.post_detail_decisions[0]
+    assert decision["listing_id"] == "mcq-cheap"
+    assert decision["relationship"] == "diffusion"
+    assert decision["identity"] == "medium"
+    assert decision["valuation"] == "unavailable"
+    assert decision["directional"] == "low"
+    assert decision["rejection_reason"] == "category_mismatch"
+    assert listing.raw["intelligence"]["post_detail_rejection_reason"] == "category_mismatch"
     assert result.comp_queried == 0
     assert result.final_candidates == 0
     assert result.new_alerts == 0

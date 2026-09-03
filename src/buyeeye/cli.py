@@ -11,6 +11,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
+from types import SimpleNamespace
 from typing import Any
 
 from .browser_session import has_valid_session, launch_manual_buyee_login, save_session_state
@@ -141,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             f"unique={metrics['unique']} duplicates={metrics['duplicates']} "
             f"stage_a_telemetry_scans={metrics['stage_a_telemetry_scans']} "
             f"stage_a_telemetry_unique={metrics['stage_a_telemetry_unique']} "
+            f"decision_telemetry_scans={metrics['decision_telemetry_scans']} "
             f"brand_confirmed={metrics['stage_a_brand_confirmed']} "
             f"category_valid={metrics['stage_a_category_valid']} "
             f"stage_a_eligible={metrics['stage_a_eligible']} "
@@ -151,11 +153,19 @@ def main(argv: list[str] | None = None) -> int:
             f"comp_cache={metrics['comp_cache_hits']}/{metrics['comp_cache_misses']} "
             f"final={metrics['final_candidates']} alerts={metrics['alerts']} "
             f"routes={metrics['routes']} alert_routes={metrics['alert_routes']} "
-            f"theses={metrics['theses']} "
+            f"final_theses={metrics['theses']} alert_theses={metrics['alert_theses']} "
             f"opportunities={metrics['opportunities']} "
             f"strategies={metrics['strategy_types']} "
             f"stage_a_paths={metrics['stage_a_paths']} "
             f"stage_a_rejects={metrics['stage_a_reject_reasons']} "
+            f"post_detail_rejects={metrics['post_detail_reject_reasons']} "
+            f"relationships={metrics['piece_relationships']} "
+            f"confidences={metrics['confidence_counts']} "
+            f"recoveries={metrics['recovery_counts']} "
+            f"suppressed_alerts={metrics['suppressed_alerts']} "
+            f"failed_alerts={metrics['failed_alerts']} "
+            f"logic_reconsidered={metrics['logic_reconsidered']} "
+            f"decision_samples={metrics['post_detail_decisions']} "
             f"families={metrics['detected_family_funnel']}"
         )
         return 0 if report["database_ready"] else 1
@@ -214,7 +224,9 @@ def main(argv: list[str] | None = None) -> int:
                 update_health(db_path, current_query=spec.query)
                 result = None
                 last_error: Exception | None = None
+                attempts_made = 0
                 for attempt in range(max_attempts):
+                    attempts_made += 1
                     try:
                         result = asyncio.run(scan_once(spec, db_path, global_dedupe=True))
                         break
@@ -253,7 +265,14 @@ def main(argv: list[str] | None = None) -> int:
                         last_query=spec.query,
                         consecutive_source_failures=failures,
                     )
-                    record_query_result(spec, object(), db_path, failed=True)
+                    record_query_result(
+                        spec,
+                        SimpleNamespace(
+                            recovery_counts={"source_retries": max(0, attempts_made - 1)}
+                        ),
+                        db_path,
+                        failed=True,
+                    )
                     if failures == 3:
                         send_status_event(
                             f"Sustained Buyee failure after 3 queries: {type(last_error).__name__ if last_error else 'unknown'}.",
@@ -279,6 +298,9 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     zero_result_streak = 0
                     auth_warning_sent = False
+                recovery_counts = dict(getattr(result, "recovery_counts", {}) or {})
+                recovery_counts["source_retries"] = max(0, attempts_made - 1)
+                result.recovery_counts = recovery_counts
                 prior = get_health(db_path)
                 if prior.consecutive_source_failures:
                     recovery_pending = True
@@ -299,8 +321,11 @@ def main(argv: list[str] | None = None) -> int:
                     "brand_confirmed=%s category_valid=%s stage_a_eligible=%s "
                     "stage_a_capped=%s stage_a_rejected=%s stage_a_paths=%s stage_a_rejects=%s "
                     "stage_b=%s enriched=%s failed=%s post_detail_rejected=%s "
+                    "post_detail_rejects=%s relationships=%s confidences=%s "
                     "comps=%s cache=%s/%s "
-                    "final=%s alerts=%s routes=%s theses=%s opportunities=%s",
+                    "final=%s alerts=%s suppressed=%s failed_alerts=%s "
+                    "routes=%s final_theses=%s alert_theses=%s opportunities=%s "
+                    "recoveries=%s logic_reconsidered=%s decisions=%s",
                     spec.query,
                     spec.family,
                     spec.query_layer,
@@ -321,14 +346,23 @@ def main(argv: list[str] | None = None) -> int:
                     result.stage_b_enriched,
                     result.stage_b_failed,
                     result.stage_b_rejected,
+                    getattr(result, "post_detail_reject_counts", {}),
+                    getattr(result, "piece_relationship_counts", {}),
+                    getattr(result, "confidence_counts", {}),
                     result.comp_queried,
                     result.comp_cache_hits,
                     result.comp_cache_misses,
                     result.final_candidates,
                     result.new_alerts,
+                    result.suppressed_alerts,
+                    result.failed_alerts,
                     result.route_counts,
                     result.thesis_counts,
+                    getattr(result, "alert_thesis_counts", {}),
                     result.opportunity_counts,
+                    recovery_counts,
+                    getattr(result, "logic_reconsidered", 0),
+                    getattr(result, "post_detail_decisions", []),
                 )
                 if recovery_pending:
                     send_status_event(
@@ -367,9 +401,15 @@ def main(argv: list[str] | None = None) -> int:
             f"stage_b_candidates={result.stage_b_candidates} "
             f"stage_b_enriched={result.stage_b_enriched} stage_b_failed={result.stage_b_failed} "
             f"stage_b_rejected={result.stage_b_rejected} "
+            f"post_detail_rejects={getattr(result, 'post_detail_reject_counts', {})} "
+            f"relationships={getattr(result, 'piece_relationship_counts', {})} "
+            f"confidences={getattr(result, 'confidence_counts', {})} "
             f"comp_queried={result.comp_queried} final_candidates={result.final_candidates} "
-            f"alerts=0 routes={result.route_counts} theses={result.thesis_counts} "
-            f"opportunities={result.opportunity_counts}"
+            f"alerts=0 routes={result.route_counts} final_theses={result.thesis_counts} "
+            f"alert_theses={getattr(result, 'alert_thesis_counts', {})} "
+            f"opportunities={result.opportunity_counts} "
+            f"recoveries={getattr(result, 'recovery_counts', {})} "
+            f"logic_reconsidered={getattr(result, 'logic_reconsidered', 0)}"
         )
         return 0 if result.scanned else 1
 
@@ -392,14 +432,20 @@ def main(argv: list[str] | None = None) -> int:
             f"stage_a_rejects={result.stage_a_reject_counts} "
             f"stage_b_enriched={result.stage_b_enriched} stage_b_failed={result.stage_b_failed} "
             f"stage_b_rejected={result.stage_b_rejected} "
+            f"post_detail_rejects={getattr(result, 'post_detail_reject_counts', {})} "
+            f"relationships={getattr(result, 'piece_relationship_counts', {})} "
+            f"confidences={getattr(result, 'confidence_counts', {})} "
             f"comp_queried={result.comp_queried} comp_candidates={result.comp_candidates} "
             f"comps_accepted={result.comps_accepted} japan_comp_candidates={result.japan_comp_candidates} "
             f"japan_comps_accepted={result.japan_comps_accepted} comp_cache_hits={result.comp_cache_hits} "
             f"comp_cache_misses={result.comp_cache_misses} pages={result.search_pages} "
             f"unique={result.unique_listings} duplicates={result.duplicates} "
             f"final_candidates={result.final_candidates} "
-            f"routes={result.route_counts} theses={result.thesis_counts} "
-            f"opportunities={result.opportunity_counts}"
+            f"routes={result.route_counts} final_theses={result.thesis_counts} "
+            f"alert_theses={getattr(result, 'alert_thesis_counts', {})} "
+            f"opportunities={result.opportunity_counts} "
+            f"recoveries={getattr(result, 'recovery_counts', {})} "
+            f"logic_reconsidered={getattr(result, 'logic_reconsidered', 0)}"
         )
         return 0 if result.scanned else 1
 

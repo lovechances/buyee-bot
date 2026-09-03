@@ -98,6 +98,11 @@ class BuyeeAuthenticatedSource(ListingSource):
     ):
         self.max_pages = max(1, min(max_pages, 5))
         self.last_page_count = 0
+        # Search-page parser recovery is intentionally distinct from daemon-level
+        # source retries/browser restarts.  The pipeline snapshots these counters
+        # into each ScanEvent after a successful acquisition.
+        self.parser_reload_attempts = 0
+        self.parser_reload_successes = 0
         self.search_filters = search_filters
         self.discovery_context = discovery_context or {}
 
@@ -245,10 +250,12 @@ class BuyeeAuthenticatedSource(ListingSource):
                     logging.getLogger("buyeeye.runtime").warning(
                         "parser_empty_page query=%r recovery=same_context_reload", query
                     )
+                    self.parser_reload_attempts += 1
                     await page.reload(wait_until="domcontentloaded", timeout=60000)
                     await page.wait_for_timeout(5000)
                     all_rows.extend(await page.evaluate(listing_script))
                     if all_rows:
+                        self.parser_reload_successes += 1
                         logging.getLogger("buyeeye.runtime").info(
                             "parser_recovered query=%r recovery=same_context_reload", query
                         )

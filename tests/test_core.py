@@ -233,6 +233,238 @@ def test_exact_piece_comp_outranks_brand_only_and_outlier_is_trimmed():
     assert result.matches[0].query == "Dior Homme Strip denim"
 
 
+def test_diffusion_piece_cannot_borrow_mainline_sold_values():
+    diffusion = enrich_title("McQ Alexander McQueen 15SS Arc jacket")
+    mainline_comps = [
+        Comp(
+            "grailed_sold",
+            "Alexander McQueen 15SS Arc jacket",
+            price,
+            0.95,
+            30,
+        )
+        for price in (80_000, 90_000, 100_000)
+    ]
+    diffusion_comps = [
+        Comp(
+            "grailed_sold",
+            "McQ Alexander McQueen 15SS Arc jacket",
+            price,
+            0.95,
+            30,
+        )
+        for price in (15_000, 18_000, 20_000)
+    ]
+
+    rejected = evaluate_comps(diffusion, mainline_comps)
+    accepted = evaluate_comps(diffusion, diffusion_comps)
+
+    assert rejected.confidence == "none"
+    assert rejected.median_jpy is None
+    assert rejected.rejected_count == 3
+    assert accepted.confidence == "medium"
+    assert accepted.median_jpy == 18_000
+
+
+def test_collaboration_comps_require_the_same_explicit_participants():
+    collaboration = enrich_title(
+        "UNDERCOVER x Valentino SCAB distressed leather jacket"
+    )
+    unrelated_comps = [
+        Comp(
+            "grailed_sold",
+            "GU x UNDERCOVER SCAB distressed leather jacket",
+            price,
+            0.95,
+            30,
+        )
+        for price in (70_000, 80_000, 90_000)
+    ]
+    same_collaboration_comps = [
+        Comp(
+            "grailed_sold",
+            "Valentino × UNDERCOVER SCAB distressed leather jacket",
+            price,
+            0.95,
+            30,
+        )
+        for price in (60_000, 65_000, 70_000)
+    ]
+
+    unrelated = evaluate_comps(collaboration, unrelated_comps)
+    matched = evaluate_comps(collaboration, same_collaboration_comps)
+    ambiguous = enrich_title("UNDERCOVER GYAKUSOU technical jacket")
+    ambiguous_matches = evaluate_comps(
+        ambiguous,
+        [
+            Comp(
+                "grailed_sold",
+                "UNDERCOVER GYAKUSOU technical jacket",
+                price,
+                0.95,
+                30,
+            )
+            for price in (25_000, 30_000, 35_000)
+        ],
+    )
+
+    assert collaboration.relationship
+    assert collaboration.relationship.participants == ("undercover", "valentino")
+    assert unrelated.confidence == "none"
+    assert unrelated.rejected_count == 3
+    assert matched.confidence == "medium"
+    assert matched.median_jpy == 65_000
+    assert ambiguous.relationship
+    assert ambiguous.relationship.value == "collaboration"
+    assert ambiguous.relationship.participants == ()
+    assert ambiguous_matches.confidence == "none"
+
+
+def test_low_priority_collaboration_cannot_borrow_mainline_context_or_grail_route():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="gu-undercover-keyword-stuffing",
+        url="https://buyee.jp/item/gu-undercover-keyword-stuffing",
+        title_original=(
+            "GU x UNDERCOVER 03SS SCAB distressed reconstruction leather jacket"
+        ),
+        title_normalized=(
+            "gu x undercover 03ss scab distressed reconstruction leather jacket"
+        ),
+        brand="Undercover",
+        category="menswear",
+        current_price=25_000,
+        buyout_price=25_000,
+        starting_price=25_000,
+        seller_name=None,
+        condition="Used",
+        time_remaining="5 day(s)",
+        raw={"stage_b": {"status": "enriched", "observed": {}}},
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship
+    assert evaluation.profile.relationship.value == "collaboration"
+    assert evaluation.profile.relationship.provenance.endswith(
+        ".collaboration_low_priority"
+    )
+    assert evaluation.profile.designer is None
+    assert evaluation.profile.era is None
+    assert evaluation.profile.collection is None
+    assert evaluation.directional.thesis is None
+    # Even a future heat recalibration cannot let this bypass its independent
+    # directional requirement through the generic grail route.
+    evaluation.desirability.score = 90
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_general_strong_collaboration_remains_route_eligible():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="strong-undercover-collaboration",
+        url="https://buyee.jp/item/strong-undercover-collaboration",
+        title_original=(
+            "UNDERCOVER x Valentino SCAB distressed reconstruction leather jacket"
+        ),
+        title_normalized=(
+            "undercover x valentino scab distressed reconstruction leather jacket"
+        ),
+        brand="Undercover",
+        category="menswear",
+        current_price=3_000,
+        buyout_price=3_000,
+        starting_price=3_000,
+        seller_name=None,
+        condition="Used",
+        time_remaining="5 day(s)",
+        raw={"stage_b": {"status": "enriched", "observed": {}}},
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship
+    assert evaluation.profile.relationship.value == "collaboration"
+    assert evaluation.profile.relationship.provenance == "title.relationship.collaboration"
+    assert evaluation.profile.collection
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+
+
+def test_enriched_detail_brand_contradiction_is_a_severe_identity_veto():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="contradictory-detail-brand",
+        url="https://buyee.jp/item/contradictory-detail-brand",
+        title_original="Maison Margiela artisanal reconstruction graphic t-shirt",
+        title_normalized="maison margiela artisanal reconstruction graphic t shirt",
+        brand="GU",
+        category="menswear",
+        current_price=3_000,
+        buyout_price=3_000,
+        starting_price=3_000,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {
+                "status": "enriched",
+                "observed": {
+                    "brand_observed": "GU",
+                    "item_type_observed": "T-shirt",
+                },
+            },
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_buyout_price_jpy": 20_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.identity.confidence == "low"
+    assert any("detail brand" in reason for reason in evaluation.identity.reasons)
+    assert evaluation.auth_risk.level == "do_not_touch"
+    assert "materially contradictory identity evidence" in evaluation.auth_risk.reasons
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
+
+
+def test_observed_secondary_brand_does_not_veto_an_explicit_known_collaboration():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="explicit-gu-undercover",
+        url="https://buyee.jp/item/explicit-gu-undercover",
+        title_original="GU x UNDERCOVER distressed jacket",
+        title_normalized="gu x undercover distressed jacket",
+        brand="GU",
+        category="menswear",
+        current_price=5_000,
+        buyout_price=5_000,
+        starting_price=5_000,
+        seller_name="seller",
+        condition="Used",
+        raw={
+            "stage_b": {
+                "status": "enriched",
+                "observed": {
+                    "brand_observed": "GU",
+                    "item_type_observed": "Jacket",
+                },
+            }
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship
+    assert evaluation.profile.relationship.provenance.endswith(
+        ".collaboration_low_priority"
+    )
+    assert evaluation.auth_risk.level != "do_not_touch"
+    assert not any("contradict" in reason for reason in evaluation.identity.reasons)
+
+
 def test_yahoo_closed_parser_requires_explicit_winning_price():
     html = """
     <ul><li>
@@ -309,8 +541,8 @@ def test_auth_risk_blocks_apparently_excellent_economics():
         source="buyee",
         source_listing_id="risky-ring",
         url="https://buyee.jp/item/risky-ring",
-        title_original="Chrome Hearts style keeper 925 silver ring",
-        title_normalized="chrome hearts style keeper 925 silver ring",
+        title_original="Chrome Hearts keeper 925 silver ring fake",
+        title_normalized="chrome hearts keeper 925 silver ring fake",
         brand="Chrome Hearts",
         category="jewelry",
         current_price=3_000,
@@ -320,7 +552,7 @@ def test_auth_risk_blocks_apparently_excellent_economics():
         condition=None,
     )
     comps = [
-        Comp("yahoo_ended", "Chrome Hearts keeper 925 silver ring", price, 1.0, 10)
+        Comp("grailed_sold", "Chrome Hearts keeper 925 silver ring", price, 1.0, 10)
         for price in (80_000, 90_000, 100_000)
     ]
     evaluation = evaluate_listing(listing, comps)
@@ -345,7 +577,7 @@ def test_high_confidence_economics_can_route_buyout():
         condition=None,
     )
     comps = [
-        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        Comp("grailed_sold", listing.title_original, price, 1.0, 10)
         for price in (90_000, 100_000, 110_000)
     ]
     evaluation = evaluate_listing(listing, comps)
@@ -951,7 +1183,7 @@ def test_stage_b_failure_caps_comp_confidence():
         raw={"stage_b": {"status": "failed", "error_type": "TimeoutError"}},
     )
     comps = [
-        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        Comp("grailed_sold", listing.title_original, price, 1.0, 10)
         for price in (20_000, 25_000, 30_000)
     ]
 
@@ -959,6 +1191,85 @@ def test_stage_b_failure_caps_comp_confidence():
 
     assert evaluation.comps.confidence == "low"
     assert "Stage B identity unavailable" in evaluation.comps.reason
+
+
+def test_yahoo_ended_evidence_never_becomes_us_fmv_even_if_misrouted():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="japan-not-us",
+        url="https://buyee.jp/item/japan-not-us",
+        title_original="Dior Homme 06SS Hedi tailored jacket",
+        title_normalized="dior homme 06ss hedi tailored jacket",
+        brand="Dior Homme",
+        category="menswear",
+        current_price=27_800,
+        buyout_price=27_800,
+        starting_price=27_800,
+        seller_name=None,
+        condition="Used",
+    )
+    yahoo_sales = [
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        for price in (40_000, 50_000, 60_000)
+    ]
+
+    evaluation = evaluate_listing(listing, yahoo_sales)
+
+    assert evaluation.comps.confidence == "none"
+    assert evaluation.valuation.confidence == "unavailable"
+    assert evaluation.economics.resale_median_jpy is None
+    assert evaluation.directional.us_valuation_state == "us_resale_unverified"
+    assert evaluation.japan_comps and evaluation.japan_comps.median_jpy == 50_000
+
+
+def test_stage_b_failure_cannot_create_directional_buyout_but_preserves_archive_watch():
+    failed_buyout = LiveListing(
+        source="buyee",
+        source_listing_id="failed-directional-buyout",
+        url="https://buyee.jp/item/failed-directional-buyout",
+        title_original="Maison Margiela artisanal reconstruction graphic t-shirt",
+        title_normalized="maison margiela artisanal reconstruction graphic t-shirt",
+        brand="Maison Martin Margiela",
+        category="menswear",
+        current_price=3000,
+        buyout_price=3000,
+        starting_price=3000,
+        seller_name=None,
+        condition="Used",
+        time_remaining="5 day(s)",
+        raw={"stage_b": {"status": "failed", "error_type": "TimeoutError"}},
+    )
+    failed_archive = LiveListing(
+        source="buyee",
+        source_listing_id="failed-archive-watch",
+        url="https://buyee.jp/item/failed-archive-watch",
+        title_original=(
+            "Number (N)ine 08AW A Closed Feeling destroy mohair patchwork jacket"
+        ),
+        title_normalized="number nine a closed feeling destroy mohair patchwork jacket",
+        brand="Number (N)ine",
+        category="menswear",
+        current_price=1200,
+        buyout_price=None,
+        starting_price=1000,
+        seller_name=None,
+        condition="Used",
+        time_remaining="5 day(s)",
+        raw={"stage_b": {"status": "failed", "error_type": "TimeoutError"}},
+    )
+
+    buyout_evaluation = evaluate_listing(failed_buyout)
+    archive_evaluation = evaluate_listing(failed_archive)
+
+    assert buyout_evaluation.identity.confidence == "medium"
+    assert buyout_evaluation.directional.thesis is None
+    assert _route_evaluation(failed_buyout, buyout_evaluation) is None
+    assert archive_evaluation.identity.confidence == "medium"
+    assert archive_evaluation.directional.thesis is None
+    assert _route_evaluation(failed_archive, archive_evaluation) == (
+        "grails",
+        "early archive discovery; current bid is provisional",
+    )
 
 
 def test_time_migration_archive_opportunity_routes_with_seller_warning():
@@ -1041,6 +1352,47 @@ def test_cheap_desirable_margiela_can_route_without_us_fmv():
     assert _route_evaluation(listing, evaluation)[0] == "grails"
 
 
+def test_enriched_core_buyout_keeps_identity_and_directional_value_separate_from_fmv():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="dior-directional-buyout",
+        url="https://buyee.jp/item/dior-directional-buyout",
+        title_original="Dior Homme 06SS Hedi ice blue 1B tailored jacket",
+        title_normalized="dior homme 06ss hedi ice blue 1b tailored jacket",
+        brand="Dior Homme",
+        category="menswear",
+        current_price=27_800,
+        buyout_price=27_800,
+        starting_price=27_800,
+        seller_name="archive-seller",
+        condition="Used",
+        time_remaining="5 day(s)",
+        raw={
+            "stage_b": {
+                "status": "enriched",
+                "observed": {
+                    "description_original": "Hedi era ice-blue one-button tailored jacket",
+                    "item_type_observed": "Jacket",
+                },
+            },
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_buyout_price_jpy": 35_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship.value == "core"
+    assert evaluation.identity.confidence == "high"
+    assert evaluation.valuation.confidence == "unavailable"
+    assert evaluation.economics.opportunity_score == 0
+    assert evaluation.directional.confidence == "high"
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+
+
 def test_generic_margiela_at_normal_price_without_comps_is_suppressed():
     listing = LiveListing(
         source="buyee",
@@ -1105,10 +1457,11 @@ def test_auth_sensitive_silver_with_implausible_price_routes_to_review():
         starting_price=3000,
         seller_name=None,
         condition=None,
+        time_remaining="45 minute(s)",
         raw={"detail_photo_count": 2, "seller_feedback_count": 100},
     )
     comps = [
-        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        Comp("grailed_sold", listing.title_original, price, 1.0, 10)
         for price in (80_000, 90_000, 100_000)
     ]
 
@@ -1116,6 +1469,85 @@ def test_auth_sensitive_silver_with_implausible_price_routes_to_review():
 
     assert evaluation.auth_risk.level == "high"
     assert _route_evaluation(listing, evaluation)[0] == "review"
+
+
+def test_immature_cheap_silver_bid_is_not_an_implausibly_low_auth_price():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="chrome-provisional-auth-price",
+        url="https://buyee.jp/item/chrome-provisional-auth-price",
+        title_original="Chrome Hearts keeper 925 silver ring",
+        title_normalized="chrome hearts keeper 925 silver ring",
+        brand="Chrome Hearts",
+        category="jewelry",
+        current_price=1_000,
+        buyout_price=None,
+        starting_price=1_000,
+        seller_name="established-seller",
+        condition="Used",
+        time_remaining="6 day(s)",
+        raw={"detail_photo_count": 8, "seller_feedback_count": 300},
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auction_maturity.price_actionable is False
+    assert "implausibly low price for auth-sensitive item" not in evaluation.auth_risk.reasons
+    assert evaluation.auth_risk.level == "medium"
+
+
+def test_auth_risk_uses_actionable_buyout_instead_of_low_current_bid():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="chrome-buyout-auth-price",
+        url="https://buyee.jp/item/chrome-buyout-auth-price",
+        title_original="Chrome Hearts keeper 925 silver ring",
+        title_normalized="chrome hearts keeper 925 silver ring",
+        brand="Chrome Hearts",
+        category="jewelry",
+        current_price=1_000,
+        buyout_price=100_000,
+        starting_price=1_000,
+        seller_name="established-seller",
+        condition="Used",
+        time_remaining="6 day(s)",
+        raw={"detail_photo_count": 8, "seller_feedback_count": 300},
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auction_maturity.price_actionable is True
+    assert "implausibly low price for auth-sensitive item" not in evaluation.auth_risk.reasons
+    assert evaluation.auth_risk.level == "medium"
+
+
+def test_supported_silver_piece_uses_silver_route_when_specific_auth_gaps_are_absent():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="chrome-silver-route",
+        url="https://buyee.jp/item/chrome-silver-route",
+        title_original="Chrome Hearts keeper floral cross 925 silver ring",
+        title_normalized="chrome hearts keeper floral cross 925 silver ring",
+        brand="Chrome Hearts",
+        category="jewelry",
+        current_price=30_000,
+        buyout_price=30_000,
+        starting_price=30_000,
+        seller_name="established-seller",
+        condition="Used",
+        raw={
+            "detail_photo_count": 8,
+            "seller_feedback_count": 1_200,
+            "seller_feedback_percent": 99.2,
+            "stage_b": {"status": "enriched", "observed": {}},
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auth_risk.level == "medium"
+    assert evaluation.desirability.score >= 50
+    assert _route_evaluation(listing, evaluation)[0] == "silver"
 
 
 def test_controlled_query_universe_has_provenance_without_cartesian_explosion():
@@ -1391,6 +1823,10 @@ def _margiela_auction(
 
 def test_early_open_auction_cannot_route_on_low_provisional_bid():
     listing = _margiela_auction(listing_id="early-open", time_remaining="6 day(s)")
+    listing.raw["discovery"] = {
+        "query_layer": "market_structure",
+        "search_filters": {"max_current_price_jpy": 20_000},
+    }
 
     evaluation = evaluate_listing(listing)
 
@@ -1399,6 +1835,11 @@ def test_early_open_auction_cannot_route_on_low_provisional_bid():
     assert evaluation.economics.landed_cost_jpy is None
     assert evaluation.economics.multiple is None
     assert evaluation.directional.thesis is None
+    assert evaluation.directional.discovery_price_fraction is None
+    assert not any(
+        "discovery-band ceiling" in reason
+        for reason in evaluation.directional.reasons
+    )
     assert _route_evaluation(listing, evaluation) is None
 
 
@@ -1510,6 +1951,39 @@ def test_ending_soon_remains_distinct_from_auction_maturity():
     assert evaluation.auction_maturity.level == "high"
     assert evaluation.auction_maturity.remaining_minutes == 45
     assert evaluation.desirability.score >= 70
+    assert _route_evaluation(listing, evaluation)[0] == "ending"
+
+
+def test_low_heat_directional_auction_uses_ending_route_inside_sixty_minutes():
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="directional-ending",
+        url="https://buyee.jp/item/directional-ending",
+        title_original="Vetements 2018 STAFF back print t-shirt",
+        title_normalized="vetements 2018 staff back print t shirt",
+        brand="Vetements",
+        category="menswear",
+        current_price=9_800,
+        buyout_price=None,
+        starting_price=1_000,
+        seller_name="archive-seller",
+        condition="Used",
+        time_remaining="45 minute(s)",
+        bid_count=3,
+        watch_count=18,
+        raw={
+            "stage_b": {"status": "enriched", "observed": {}},
+            "discovery": {
+                "query_layer": "market_structure",
+                "search_filters": {"max_current_price_jpy": 40_000},
+            },
+        },
+    )
+
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.desirability.score < 70
+    assert evaluation.directional.thesis == "asymmetric_value"
     assert _route_evaluation(listing, evaluation)[0] == "ending"
 
 

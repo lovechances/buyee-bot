@@ -17,9 +17,13 @@ from .detail_enrichment import BuyeeDetailService, DetailRepository
 from .discord_alerts import alert_thesis, send_listing_alert
 from .discovery import QuerySpec
 from .evaluation import ListingEvaluation, evaluate_listing
-from .fashion import enrich_title
+from .fashion import enrich_title, is_generic_signal
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
-from .runtime_state import mark_listing_seen, record_stage_a_outcomes
+from .runtime_state import (
+    mark_listing_seen,
+    record_decision_classifications,
+    record_stage_a_outcomes,
+)
 from .settings import load_settings
 from .stage_a import (
     assess_stage_a,
@@ -28,6 +32,8 @@ from .stage_a import (
     detected_family,
     select_stage_a_candidates,
 )
+
+DECISION_LOGIC_VERSION = "overnight-directional-v1"
 
 
 @dataclass
@@ -58,6 +64,10 @@ class ScanResult:
     stage_b_enriched: int = 0
     stage_b_failed: int = 0
     stage_b_rejected: int = 0
+    post_detail_reject_counts: dict[str, int] | None = None
+    piece_relationship_counts: dict[str, int] | None = None
+    confidence_counts: dict[str, dict[str, int]] | None = None
+    post_detail_decisions: list[dict[str, Any]] | None = None
     comp_queried: int = 0
     final_candidates: int = 0
     unique_listings: int = 0
@@ -68,6 +78,46 @@ class ScanResult:
     japan_comp_candidates: int = 0
     japan_comps_accepted: int = 0
     detected_family_funnel: dict[str, dict[str, int]] | None = None
+    alert_thesis_counts: dict[str, int] | None = None
+    recovery_counts: dict[str, int] | None = None
+    logic_reconsidered: int = 0
+
+
+@dataclass(frozen=True)
+class PostDetailDecision:
+    route: str | None
+    reason: str
+    rejection_reason: str | None = None
+
+
+def _directional_why(evaluation: ListingEvaluation) -> str:
+    """Summarize the actual non-FMV evidence behind a directional decision."""
+    profile = evaluation.profile
+    parts: list[str] = []
+    relationship = profile.relationship.value if profile.relationship else "uncertain"
+    if relationship == "core":
+        parts.append("core line")
+    elif relationship == "collaboration":
+        parts.append("substantive collaboration")
+    elif relationship == "diffusion":
+        parts.append("piece-specific diffusion signal")
+    if profile.collection:
+        parts.append(profile.collection.value)
+    elif profile.era:
+        parts.append(profile.era.value.replace("_", " ").title())
+    if evaluation.directional.piece_signals:
+        parts.append("/".join(evaluation.directional.piece_signals[:2]))
+    if evaluation.directional.discovery_price_fraction is not None:
+        parts.append(
+            f"price at {evaluation.directional.discovery_price_fraction:.0%} "
+            "of targeted market slice"
+        )
+    elif any(
+        "low absolute downside" in reason
+        for reason in evaluation.directional.reasons
+    ):
+        parts.append("low absolute downside")
+    return " · ".join(parts[:4]) or "strong directional value evidence"
 
 
 def _minutes_remaining(value: str | None) -> int | None:
@@ -122,70 +172,205 @@ def _route(
     return None
 
 
-def _route_evaluation(
+def _dominant_post_detail_rejection(
+    listing: LiveListing,
+    evaluation: ListingEvaluation,
+) -> str:
+    """Return one explainable reason for an enriched candidate not becoming final."""
+    profile = evaluation.profile
+    relationship = profile.relationship.value if profile.relationship else "uncertain"
+    relationship_provenance = profile.relationship.provenance if profile.relationship else ""
+    generic = any(
+        is_generic_signal(signal, profile.relationship)
+        for signal in profile.negative_signals
+    )
+    if not listing.title_original or not any(
+        price is not None
+        for price in (listing.current_price, listing.buyout_price, listing.starting_price)
+    ):
+        return "malformed_data"
+    if evaluation.auth_risk.level == "do_not_touch":
+        return "severe_auth_risk"
+    if evaluation.auction_maturity.auction_type == "open_auction" and not (
+        evaluation.auction_maturity.price_actionable
+    ):
+        return "immature_auction"
+    if not profile.category or profile.category.value not in {
+        "menswear",
+        "accessory",
+        "jewelry",
+    }:
+        return "category_mismatch"
+    if relationship == "homage_reference" or relationship_provenance.endswith(
+        ".collaboration_low_priority"
+    ):
+        return "homage_or_secondary_brand"
+    if relationship == "diffusion" and evaluation.directional.thesis is None:
+        return "diffusion_low_value"
+    if evaluation.identity.confidence == "low":
+        return "identity_too_uncertain"
+    if generic:
+        return "generic_after_detail"
+    if evaluation.auth_risk.level == "high":
+        return "seller_risk"
+    if evaluation.economics.landed_cost_jpy is None:
+        return "price_context_uncertain"
+    if (
+        evaluation.directional.discovery_price_fraction is not None
+        and evaluation.directional.discovery_price_fraction > 0.60
+        and evaluation.desirability.score < 45
+    ):
+        return "price_not_compelling"
+    if (
+        evaluation.valuation.confidence == "unavailable"
+        and evaluation.directional.thesis is None
+    ):
+        return "missing_us_valuation_but_directional_weak"
+    if evaluation.desirability.score < 55:
+        return "insufficient_desirability"
+    return "route_threshold"
+
+
+def _post_detail_decision(
     listing: LiveListing,
     evaluation: ListingEvaluation,
     ending_threshold_minutes: int = 60,
     archive_watch_min_heat: int = 70,
-) -> tuple[str, str] | None:
+    silver_min_heat: int = 50,
+) -> PostDetailDecision:
     heat = evaluation.desirability.score
     economics = evaluation.economics
     risk = evaluation.auth_risk.level
     profile = evaluation.profile
+    low_priority_collaboration = bool(
+        profile.relationship
+        and profile.relationship.provenance.endswith(".collaboration_low_priority")
+    )
     if risk == "do_not_touch":
-        return None
+        return PostDetailDecision(None, "severe authentication evidence", "severe_auth_risk")
+    if low_priority_collaboration and evaluation.directional.thesis != "asymmetric_value":
+        return PostDetailDecision(
+            None,
+            "secondary-brand collaboration lacks independent directional evidence",
+            "homage_or_secondary_brand",
+        )
     if risk == "high":
-        if heat >= 50 or economics.opportunity_score >= 70:
-            return "review", "; ".join(evaluation.auth_risk.reasons[:2])
-        return None
+        if (
+            heat >= 50
+            or economics.opportunity_score >= 70
+            or evaluation.directional.score >= 72
+        ):
+            return PostDetailDecision(
+                "review",
+                "; ".join(evaluation.auth_risk.reasons[:2]),
+            )
+        return PostDetailDecision(None, "authentication risk outweighs signal", "seller_risk")
     if (
         evaluation.auction_maturity.auction_type == "open_auction"
         and evaluation.auction_maturity.level == "low"
     ):
         if heat >= archive_watch_min_heat and (profile.collection or profile.era):
-            return "grails", "early archive discovery; current bid is provisional"
-        return None
+            return PostDetailDecision(
+                "grails", "early archive discovery; current bid is provisional"
+            )
+        return PostDetailDecision(None, "auction price is still provisional", "immature_auction")
     meaningful_auth_concern = any(
         phrase in " ".join(evaluation.auth_risk.reasons).lower()
         for phrase in (
-            "frequently counterfeited",
             "implausibly low",
             "seller history unavailable",
             "detail-photo coverage unavailable",
         )
     )
+    if meaningful_auth_concern and (
+        evaluation.directional.thesis == "asymmetric_value"
+        or economics.opportunity_score >= 70
+    ):
+        return PostDetailDecision(
+            "review", "compelling opportunity with material authentication uncertainty"
+        )
+    if (
+        profile.category
+        and profile.category.value == "jewelry"
+        and profile.material
+        and profile.material.value == "silver"
+        and (
+            heat >= silver_min_heat
+            or evaluation.directional.thesis == "asymmetric_value"
+            or (
+                economics.opportunity_score >= 70
+                and economics.comp_confidence in {"medium", "high"}
+            )
+        )
+    ):
+        return PostDetailDecision(
+            "silver", "recognizable silver-jewelry candidate with strong piece signals"
+        )
     if (
         listing.buyout_price is not None
         and economics.opportunity_score >= 70
         and economics.comp_confidence in {"medium", "high"}
     ):
-        return "buyouts", "strong sold-comp economics at a fixed buyout"
+        return PostDetailDecision("buyouts", "strong sold-comp economics at a fixed buyout")
     if listing.buyout_price is not None and evaluation.directional.thesis == "asymmetric_value":
-        return "buyouts", "actionable fixed price with unusually low absolute downside"
-    if (
-        heat >= 70
-        and profile.category
-        and profile.category.value == "jewelry"
-        and profile.material
-        and profile.material.value == "silver"
-    ):
-        return "silver", "recognizable silver-jewelry candidate with strong piece signals"
+        return PostDetailDecision("buyouts", _directional_why(evaluation))
     remaining = _minutes_remaining(listing.time_remaining)
-    if remaining is not None and remaining <= ending_threshold_minutes and heat >= 70:
-        return "ending", "desirable piece ending within the configured threshold"
+    if (
+        remaining is not None
+        and remaining <= ending_threshold_minutes
+        and (
+            heat >= 70
+            or evaluation.directional.thesis == "asymmetric_value"
+            or (
+                economics.opportunity_score >= 70
+                and economics.comp_confidence in {"medium", "high"}
+            )
+        )
+    ):
+        return PostDetailDecision(
+            "ending", "qualifying opportunity ending within the configured threshold"
+        )
     if heat >= 82:
-        return "grails", "high piece-specific closet heat"
+        return PostDetailDecision("grails", "high piece-specific closet heat")
     if (
         economics.opportunity_score >= 70
         and economics.comp_confidence in {"medium", "high"}
         and heat >= 65
     ):
         if meaningful_auth_concern:
-            return "review", "strong economics with material authentication uncertainty"
-        return "grails", "piece-aware sold comps show a compelling archive opportunity"
+            return PostDetailDecision(
+                "review", "strong economics with material authentication uncertainty"
+            )
+        return PostDetailDecision(
+            "grails", "piece-aware sold comps show a compelling archive opportunity"
+        )
     if evaluation.directional.thesis == "asymmetric_value":
-        return "grails", "fashion-relevant piece with unusually low absolute downside"
-    return None
+        return PostDetailDecision("grails", _directional_why(evaluation))
+    return PostDetailDecision(
+        None,
+        "candidate did not meet a final route",
+        _dominant_post_detail_rejection(listing, evaluation),
+    )
+
+
+def _route_evaluation(
+    listing: LiveListing,
+    evaluation: ListingEvaluation,
+    ending_threshold_minutes: int = 60,
+    archive_watch_min_heat: int = 70,
+    silver_min_heat: int = 50,
+) -> tuple[str, str] | None:
+    """Compatibility wrapper preserving the one-primary-route public behavior."""
+    decision = _post_detail_decision(
+        listing,
+        evaluation,
+        ending_threshold_minutes,
+        archive_watch_min_heat,
+        silver_min_heat,
+    )
+    if decision.route is None:
+        return None
+    return decision.route, decision.reason
 
 
 def _opportunity_kind(route: str, thesis: str, evaluation: ListingEvaluation) -> str:
@@ -265,10 +450,24 @@ async def scan_once(
         opportunity_counts={},
         stage_a_path_counts={},
         stage_a_reject_counts={},
+        post_detail_reject_counts={},
+        piece_relationship_counts={},
+        confidence_counts={
+            "identity": {},
+            "valuation": {},
+            "directional": {},
+        },
+        post_detail_decisions=[],
+        alert_thesis_counts={},
+        recovery_counts={
+            "parser_reload_attempts": source.parser_reload_attempts,
+            "parser_reload_successes": source.parser_reload_successes,
+        },
         detected_family_funnel={},
     )
     if global_dedupe:
         unique: list[LiveListing] = []
+        logic_reconsideration_used = False
         for listing in listings:
             seen = mark_listing_seen(
                 listing.source,
@@ -280,7 +479,22 @@ async def scan_once(
                 strategy_id=spec.strategy_id,
                 strategy_type=spec.strategy_type,
                 family=spec.family,
+                decision_logic_version=DECISION_LOGIC_VERSION,
+                allow_logic_reconsideration=not logic_reconsideration_used,
+                logic_reconsideration_max_age_hours=int(
+                    settings.get("scanner", {}).get(
+                        "decision_logic_reconsideration_max_age_hours", 24
+                    )
+                ),
+                logic_reconsideration_max_per_hour=int(
+                    settings.get("scanner", {}).get(
+                        "decision_logic_reconsideration_max_per_hour", 2
+                    )
+                ),
             )
+            if seen.logic_reconsidered:
+                logic_reconsideration_used = True
+                result.logic_reconsidered += 1
             if seen.is_duplicate:
                 result.duplicates += 1
             else:
@@ -311,6 +525,7 @@ async def scan_once(
     }
     stage_a_assessments = []
     valid_listings: list[LiveListing] = []
+    decision_classifications: dict[tuple[str, str], str] = {}
 
     def family_funnel(family: str | None) -> dict[str, int]:
         key = family or "unresolved"
@@ -445,6 +660,9 @@ async def scan_once(
                 family_funnel(assessment.detected_family)["stage_b_enriched"] += 1
             elif status == "failed":
                 family_funnel(assessment.detected_family)["stage_b_failed"] += 1
+                decision_classifications[(listing.source, listing.source_listing_id)] = (
+                    "detail_failed"
+                )
 
     stage_b_ids = {listing.source_listing_id for listing in stage_b_listings}
     comp_threshold = int(settings.get("comps", {}).get("minimum_heat_for_lookup", 40))
@@ -510,27 +728,88 @@ async def scan_once(
                     len(evaluation.japan_comps.matches) if evaluation.japan_comps else 0
                 ),
                 "directional_score": evaluation.directional.score,
+                "directional_confidence": evaluation.directional.confidence,
                 "valuation_state": evaluation.directional.us_valuation_state,
+                "exact_valuation_confidence": evaluation.valuation.confidence,
+                "identity_confidence": evaluation.identity.confidence,
+                "identity_score": evaluation.identity.score,
+                "piece_relationship": (
+                    evaluation.profile.relationship.value
+                    if evaluation.profile.relationship
+                    else "uncertain"
+                ),
+                "discovery_price_fraction": evaluation.directional.discovery_price_fraction,
+                "directional_piece_signals": list(evaluation.directional.piece_signals),
                 "auction_maturity": evaluation.auction_maturity.level,
                 "price_actionable": evaluation.auction_maturity.price_actionable,
             },
         }
         if listing.source_listing_id not in stage_b_ids:
             continue
-        routed = _route_evaluation(
+        decision = _post_detail_decision(
             listing,
             evaluation,
             ending_threshold,
             archive_watch_min_heat=int(settings.get("alert", {}).get("archive_watch_min_heat", 70)),
+            silver_min_heat=int(settings.get("alert", {}).get("silver_min_score", 50)),
         )
-        if routed is None:
+        stage_b_status = ((listing.raw or {}).get("stage_b") or {}).get("status")
+        if stage_b_status == "enriched":
+            relationship = (
+                evaluation.profile.relationship.value
+                if evaluation.profile.relationship
+                else "uncertain"
+            )
+            assert result.piece_relationship_counts is not None
+            result.piece_relationship_counts[relationship] = (
+                result.piece_relationship_counts.get(relationship, 0) + 1
+            )
+            assert result.confidence_counts is not None
+            for dimension, confidence in (
+                ("identity", evaluation.identity.confidence),
+                ("valuation", evaluation.valuation.confidence),
+                ("directional", evaluation.directional.confidence),
+            ):
+                bucket = result.confidence_counts.setdefault(dimension, {})
+                bucket[confidence] = bucket.get(confidence, 0) + 1
+        if decision.route is None:
             result.below_threshold += 1
-            if ((listing.raw or {}).get("stage_b") or {}).get("status") == "enriched":
+            if stage_b_status == "enriched":
                 result.stage_b_rejected += 1
                 assessment = assessment_by_id[listing.source_listing_id]
                 family_funnel(assessment.detected_family)["stage_b_rejected"] += 1
+                rejection_reason = decision.rejection_reason or "other"
+                assert result.post_detail_reject_counts is not None
+                result.post_detail_reject_counts[rejection_reason] = (
+                    result.post_detail_reject_counts.get(rejection_reason, 0) + 1
+                )
+                listing.raw["intelligence"]["post_detail_rejection_reason"] = rejection_reason
+                decision_classifications[(listing.source, listing.source_listing_id)] = (
+                    f"reject:{rejection_reason}"
+                )
+                assert result.post_detail_decisions is not None
+                result.post_detail_decisions.append(
+                    {
+                        "listing_id": listing.source_listing_id,
+                        "relationship": relationship,
+                        "identity": evaluation.identity.confidence,
+                        "valuation": evaluation.valuation.confidence,
+                        "directional": evaluation.directional.confidence,
+                        "directional_score": evaluation.directional.score,
+                        "heat": evaluation.desirability.score,
+                        "item_type": (
+                            evaluation.profile.item_type.value
+                            if evaluation.profile.item_type
+                            else None
+                        ),
+                        "price_fraction": evaluation.directional.discovery_price_fraction,
+                        "price_actionable": evaluation.auction_maturity.price_actionable,
+                        "risk": evaluation.auth_risk.level,
+                        "rejection_reason": rejection_reason,
+                    }
+                )
             continue
-        route, reason = routed
+        route, reason = decision.route, decision.reason
         result.final_candidates += 1
         assessment = assessment_by_id[listing.source_listing_id]
         family_funnel(assessment.detected_family)["finals"] += 1
@@ -538,10 +817,36 @@ async def scan_once(
         thesis = alert_thesis(route, evaluation)
         result.thesis_counts[thesis] = result.thesis_counts.get(thesis, 0) + 1
         opportunity_kind = _opportunity_kind(route, thesis, evaluation)
+        decision_classifications[(listing.source, listing.source_listing_id)] = (
+            f"final:{route}:{thesis}"
+        )
         result.opportunity_counts[opportunity_kind] = (
             result.opportunity_counts.get(opportunity_kind, 0) + 1
         )
         signature = _signature(listing)
+        if stage_b_status == "enriched":
+            assert result.post_detail_decisions is not None
+            result.post_detail_decisions.append(
+                {
+                    "listing_id": listing.source_listing_id,
+                    "relationship": relationship,
+                    "identity": evaluation.identity.confidence,
+                    "valuation": evaluation.valuation.confidence,
+                    "directional": evaluation.directional.confidence,
+                    "directional_score": evaluation.directional.score,
+                    "heat": evaluation.desirability.score,
+                    "item_type": (
+                        evaluation.profile.item_type.value
+                        if evaluation.profile.item_type
+                        else None
+                    ),
+                    "price_fraction": evaluation.directional.discovery_price_fraction,
+                    "price_actionable": evaluation.auction_maturity.price_actionable,
+                    "risk": evaluation.auth_risk.level,
+                    "route": route,
+                    "thesis": thesis,
+                }
+            )
         previous = before[listing.source_listing_id]
         if previous is not None and previous.signature == signature:
             result.suppressed_alerts += 1
@@ -556,11 +861,19 @@ async def scan_once(
             result.new_alerts += 1
             family_funnel(assessment.detected_family)["alerts"] += 1
             result.alert_route_counts[route] = result.alert_route_counts.get(route, 0) + 1
+            assert result.alert_thesis_counts is not None
+            result.alert_thesis_counts[thesis] = result.alert_thesis_counts.get(thesis, 0) + 1
         else:
             result.failed_alerts += 1
     result.new_rows, result.updated_rows = save_listings(listings, db_path)
     result.comp_cache_hits = comp_service.cache_hits + japan_comp_service.cache_hits
     result.comp_cache_misses = comp_service.cache_misses + japan_comp_service.cache_misses
+    if global_dedupe:
+        record_decision_classifications(
+            decision_classifications,
+            db_path,
+            decision_logic_version=DECISION_LOGIC_VERSION,
+        )
     return result
 
 

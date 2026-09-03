@@ -6,6 +6,7 @@ from typing import Any
 
 from .discovery import QuerySpec
 from .evaluation import ListingEvaluation
+from .fashion import is_generic_signal
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class StageAAssessment:
     price_in_discovery_band: bool
     discovery_price_fraction: float | None
     actionable_buyout_fraction: float | None
+    piece_relationship: str
     hard_veto: bool
     reject_reason: str | None
     reasons: tuple[str, ...]
@@ -49,6 +51,7 @@ class StageAAssessment:
             "price_in_discovery_band": self.price_in_discovery_band,
             "discovery_price_fraction": self.discovery_price_fraction,
             "actionable_buyout_fraction": self.actionable_buyout_fraction,
+            "piece_relationship": self.piece_relationship,
             "hard_veto": self.hard_veto,
             "reject_reason": "candidate_budget" if capped else self.reject_reason,
             "reasons": list(self.reasons),
@@ -148,8 +151,8 @@ def _actionable_buyout_context(listing: Any, spec: QuerySpec) -> tuple[bool, flo
 
 def _has_generic_or_junk_signal(evaluation: ListingEvaluation) -> bool:
     return any(
-        signal.value.startswith(("generic:", "irrelevant:"))
-        or signal.value in {"basic", "logo tee"}
+        signal.value.startswith("irrelevant:")
+        or is_generic_signal(signal, evaluation.profile.relationship)
         for signal in evaluation.profile.negative_signals
     )
 
@@ -186,6 +189,25 @@ def assess_stage_a(
     is_market = spec.query_layer == "market_structure"
     buyout_fits_context, buyout_fraction = _actionable_buyout_context(listing, spec)
     generic_or_junk = _has_generic_or_junk_signal(evaluation)
+    relationship = profile.relationship.value if profile.relationship else "uncertain"
+    relationship_provenance = profile.relationship.provenance if profile.relationship else ""
+    relationship_adjustments = {
+        "core": 12.0,
+        "collaboration": -4.0,
+        "diffusion": -12.0,
+        "uncertain": -14.0,
+        "homage_reference": -30.0,
+        **{
+            str(name): float(value)
+            for name, value in config.get("relationship_rank_adjustments", {}).items()
+        },
+    }
+    relationship_adjustment = relationship_adjustments.get(relationship, -14.0)
+    if relationship_provenance.endswith(".collaboration_low_priority"):
+        relationship_adjustment += float(
+            config.get("low_priority_collaboration_adjustment", -8)
+        )
+    homage_or_reference = relationship == "homage_reference"
     hard_veto = evaluation.auth_risk.level == "do_not_touch"
     piece_context = bool(
         item_confident
@@ -195,12 +217,13 @@ def assess_stage_a(
         or profile.material
         or profile.collaboration
         or profile.positive_signals
+        or evaluation.directional.piece_signals
     )
     market_card_relevance = item_confident or heat >= market_minimum_heat
 
     paths: list[str] = []
     reasons: list[str] = []
-    if heat >= archive_threshold and not hard_veto:
+    if heat >= archive_threshold and not hard_veto and not homage_or_reference:
         paths.append("semantic_archive")
         reasons.append(f"archive heat {heat} >= {archive_threshold}")
 
@@ -213,6 +236,7 @@ def assess_stage_a(
         and profile.material.value == "silver"
         and heat >= silver_minimum_heat
         and not hard_veto
+        and not homage_or_reference
     ):
         paths.append("silver_jewelry")
         reasons.append("confirmed silver-jewelry identity")
@@ -229,6 +253,7 @@ def assess_stage_a(
         and market_card_relevance
         and not hard_veto
         and not generic_or_junk
+        and not homage_or_reference
     ):
         paths.append("market_value")
         reasons.append("target-brand actionable buyout inside its discovery context")
@@ -246,6 +271,7 @@ def assess_stage_a(
         and market_card_relevance
         and not hard_veto
         and not generic_or_junk
+        and not homage_or_reference
     ):
         paths.append("ending_auction")
         reasons.append("target-brand mature auction inside its discovery band")
@@ -270,6 +296,7 @@ def assess_stage_a(
         and actionable
         and not generic_or_junk
         and not hard_veto
+        and not homage_or_reference
     ):
         paths.append("unknown_interesting")
         reasons.append("bounded low-price identity exploration")
@@ -284,6 +311,8 @@ def assess_stage_a(
         7 if evaluation.auction_maturity.auction_type == "open_auction" and actionable else 0
     )
     priority += 4 if is_market else 0
+    priority += min(8, 2 * len(evaluation.directional.piece_signals))
+    priority += relationship_adjustment
     if in_band and band_fraction is not None:
         priority += max(0.0, 10.0 * (1.0 - min(1.0, band_fraction)))
     if generic_or_junk:
@@ -294,6 +323,8 @@ def assess_stage_a(
     primary = max(paths, key=lambda path: PATH_ORDER[path]) if paths else None
     if hard_veto:
         reject_reason = "severe_auth_veto"
+    elif homage_or_reference:
+        reject_reason = "homage_or_reference"
     elif not confirmed and heat < archive_threshold:
         reject_reason = "brand_unconfirmed"
     elif is_market and confirmed and not target_match and heat < archive_threshold:
@@ -328,6 +359,7 @@ def assess_stage_a(
         price_in_discovery_band=in_band,
         discovery_price_fraction=band_fraction,
         actionable_buyout_fraction=buyout_fraction,
+        piece_relationship=relationship,
         hard_veto=hard_veto,
         reject_reason=None if paths and not hard_veto else reject_reason,
         reasons=tuple(reasons),

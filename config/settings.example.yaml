@@ -16,6 +16,8 @@ scanner:
     market_ending: 0.45
     market_price_band: 0.10
   max_source_attempts: 3
+  decision_logic_reconsideration_max_age_hours: 24
+  decision_logic_reconsideration_max_per_hour: 2
 
 marketplaces:
   buyee:
@@ -45,6 +47,7 @@ alert:
   buyout_min_score: 78
   ending_min_score: 70
   grail_min_score: 82
+  silver_min_score: 50
   ignore_max_score: 64
   min_expected_profit_usd: 75
 
@@ -76,11 +79,22 @@ stage_a:
   path_caps:
     unknown_interesting: 1
     silver_jewelry: 2
+  relationship_rank_adjustments:
+    core: 12
+    collaboration: -4
+    diffusion: -12
+    uncertain: -14
+    homage_reference: -30
+  low_priority_collaboration_adjustment: -8
 
 directional_opportunity:
-  minimum_heat: 55
+  minimum_score: 72
   exceptional_landed_usd: 30
   max_landed_usd: 65
+  ordinary_context_max_fraction: 0.45
+  archive_context_max_fraction: 0.85
+  diffusion_minimum_score: 85
+  low_priority_collaboration_minimum_score: 88
 
 risk:
   max_auth_risk: "medium"

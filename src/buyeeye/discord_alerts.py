@@ -10,6 +10,7 @@ import httpx
 DISCORD_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 DISCORD_MAX_ATTEMPTS = 2
 DISCORD_TOTAL_TIMEOUT = 15.0
+VERIFIED_US_SOLD_SOURCES = frozenset({"grailed_sold", "ebay_sold", "local_sold"})
 
 
 def _webhooks() -> dict[str, str]:
@@ -127,157 +128,312 @@ def alert_thesis(route: str, evaluation: Any) -> str:
     return "archive_grail"
 
 
+def _read(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _nested(value: Any, *names: str) -> Any:
+    for name in names:
+        value = _read(value, name)
+        if value is None:
+            return None
+    return value
+
+
+def _short(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}…"
+
+
+def _confidence_label(value: Any) -> str | None:
+    value = _read(value, "confidence", value)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        if value >= 0.85:
+            return "HIGH"
+        if value >= 0.6:
+            return "MED"
+        return "LOW"
+    label = str(value).strip().casefold()
+    return {
+        "high": "HIGH",
+        "strong": "HIGH",
+        "medium": "MED",
+        "moderate": "MED",
+        "low": "LOW",
+        "none": "UNAVAILABLE",
+        "unavailable": "UNAVAILABLE",
+        "unknown": "UNAVAILABLE",
+    }.get(label, label.upper() or None)
+
+
+def _identity_confidence(evaluation: Any) -> str | None:
+    explicit = _nested(evaluation, "identity", "confidence")
+    if explicit is not None:
+        return _confidence_label(explicit)
+    profile = _read(evaluation, "profile")
+    brand = _read(profile, "brand")
+    item_type = _read(profile, "item_type")
+    confidences = [
+        confidence
+        for confidence in (_read(brand, "confidence"), _read(item_type, "confidence"))
+        if isinstance(confidence, (int, float))
+    ]
+    return _confidence_label(min(confidences)) if confidences else None
+
+
+def _relationship_label(evaluation: Any) -> str | None:
+    relationship = _read(evaluation, "relationship")
+    if relationship is None:
+        relationship = _nested(evaluation, "profile", "relationship")
+    relationship = _read(relationship, "value", relationship)
+    if relationship is None:
+        return None
+    return str(relationship).replace("_", " ").strip().upper() or None
+
+
+def _directional_confidence(evaluation: Any) -> str | None:
+    for path in (
+        ("directional", "confidence"),
+        ("directional_bargain", "confidence"),
+        ("directional_bargain_confidence",),
+    ):
+        value = _nested(evaluation, *path)
+        if value is not None:
+            return _confidence_label(value)
+    return None
+
+
+def _exact_valuation_confidence(evaluation: Any) -> str | None:
+    for path in (
+        ("exact_valuation", "confidence"),
+        ("valuation", "confidence"),
+        ("economics", "comp_confidence"),
+    ):
+        value = _nested(evaluation, *path)
+        if value is not None:
+            return str(_read(value, "value", value)).strip().casefold()
+    return None
+
+
+def _verified_us_sold_range(evaluation: Any) -> str | None:
+    comps = _read(evaluation, "comps")
+    matches = [
+        comp
+        for comp in (_read(comps, "matches", []) or [])
+        if _read(comp, "is_sold", True)
+        and str(_read(comp, "source", "")).casefold() in VERIFIED_US_SOLD_SOURCES
+    ]
+    # Comp confidence becomes medium only with at least three accepted sales.
+    # Recheck the U.S.-only subset so mixed/miswired evidence cannot borrow
+    # confidence from Yahoo-ended observations.
+    if len(matches) < 3:
+        return None
+    usd_prices = sorted(
+        float(price)
+        for comp in matches
+        if str(_read(comp, "original_currency", "")).upper() == "USD"
+        and (price := _read(comp, "original_price")) is not None
+        and float(price) > 0
+    )
+    if usd_prices:
+        low, high = usd_prices[0], usd_prices[-1]
+        low_text = f"${low:,.0f}"
+        high_text = f"${high:,.0f}"
+        return low_text if low == high else f"{low_text}–{high_text}"
+
+    prices_jpy = sorted(
+        int(price)
+        for comp in matches
+        if (price := _read(comp, "price_jpy")) is not None and int(price) > 0
+    )
+    if not prices_jpy:
+        return None
+    low, high = prices_jpy[0], prices_jpy[-1]
+    return f"¥{int(low):,}" if low == high else f"¥{int(low):,}–¥{int(high):,}"
+
+
+def _seller_line(listing: Any) -> str | None:
+    raw = _read(listing, "raw", {}) or {}
+    seller_name = _read(listing, "seller_name")
+    feedback_percent = _read(raw, "seller_feedback_percent")
+    feedback_count = _read(raw, "seller_feedback_count")
+    parts: list[str] = []
+    if seller_name:
+        parts.append(_short(seller_name, 60))
+    if feedback_percent is not None:
+        feedback = f"seller {float(feedback_percent):g}%"
+        if feedback_count is not None:
+            feedback += f" ({int(feedback_count):,})"
+        parts.append(feedback)
+    return " · ".join(parts) or None
+
+
+def _evidence_lines(evaluation: Any) -> list[str]:
+    matches = list(_nested(evaluation, "comps", "matches") or [])
+    lines: list[str] = []
+    seen_urls: set[str] = set()
+    for comp in matches:
+        url = str(_read(comp, "url", "") or "").strip()
+        if not url or url in seen_urls or not _read(comp, "is_sold", True):
+            continue
+        seen_urls.add(url)
+        label = _short(_read(comp, "title") or _read(comp, "source") or "Sold evidence", 58)
+        lines.append(f"[{label}]({url})")
+        if len(lines) == 2:
+            break
+    return lines
+
+
+def _concise_why(reason: str, *, early_auction: bool) -> str:
+    clauses = [clause.strip(" ·;.") for clause in str(reason or "").split(";")]
+    if early_auction:
+        clauses = [
+            clause
+            for clause in clauses
+            if clause.casefold() not in {"current bid is provisional", "auction is immature"}
+        ]
+    return _short("; ".join(clause for clause in clauses if clause) or "Human review recommended", 180)
+
+
+def build_listing_alert_payload(
+    listing: Any, route: str, reason: str, score: int, evaluation: Any | None = None
+) -> dict[str, Any]:
+    """Build a compact, phone-readable Discord payload without performing I/O."""
+
+    listing_title = _short(_read(listing, "title_original") or "Untitled Buyee listing", 190)
+    current_price = _read(listing, "current_price")
+    buyout_price = _read(listing, "buyout_price")
+    listing_url = str(_read(listing, "url", "") or "")
+    image_url = _read(listing, "image_url")
+
+    if buyout_price:
+        price_label = f"¥{int(buyout_price):,} BUYOUT"
+    elif current_price:
+        price_label = f"¥{int(current_price):,} CURRENT BID" if evaluation else f"¥{int(current_price):,}"
+    else:
+        price_label = "PRICE UNKNOWN"
+    title = _short(f"{listing_title} — {price_label}", 256)
+
+    fields: list[dict[str, Any]] = []
+    if evaluation is None:
+        description_lines = ["**LISTING DISCOVERY**"]
+        timing = _read(listing, "time_remaining")
+        facts = [f"Heat {score}"]
+        if timing:
+            facts.append(f"Ends {timing}")
+        fields.append({"name": "Signal", "value": " | ".join(facts), "inline": False})
+        fields.append(
+            {"name": "WHY", "value": _concise_why(reason, early_auction=False), "inline": False}
+        )
+    else:
+        thesis = alert_thesis(route, evaluation).replace("_", " ").upper()
+        maturity = _read(evaluation, "auction_maturity")
+        is_open_auction = _read(maturity, "auction_type") == "open_auction"
+        actionable = bool(_read(maturity, "price_actionable", False))
+        early_auction = is_open_auction and not actionable
+        timing = _read(listing, "time_remaining")
+        directional = _read(evaluation, "directional")
+        landed_usd = _read(directional, "landed_usd")
+        exact_confidence = _exact_valuation_confidence(evaluation)
+        exact_supported = exact_confidence in {"medium", "high"}
+        sold_range = _verified_us_sold_range(evaluation) if exact_supported and actionable else None
+
+        description_lines = [f"**{thesis}**"]
+        if early_auction:
+            early_line = "EARLY AUCTION"
+            if timing:
+                early_line += f" · Ends {timing}"
+            fields.append(
+                {
+                    "name": "Auction",
+                    "value": f"{early_line}\nCurrent bid is provisional",
+                    "inline": False,
+                }
+            )
+        else:
+            value_parts: list[str] = []
+            if timing:
+                value_parts.append(f"Ends {timing}")
+            if landed_usd is not None:
+                value_parts.append(f"Landed ~${float(landed_usd):,.0f}")
+            if sold_range:
+                value_parts.append(f"U.S. sold {sold_range}")
+                multiple = _nested(evaluation, "economics", "multiple")
+                if multiple is not None:
+                    value_parts.append(f"est. {float(multiple):.1f}×")
+            else:
+                value_parts.append("U.S. resale unverified")
+            market_name = "U.S. sold / upside" if sold_range else "Value context"
+            market_value = " | ".join(value_parts)
+            directional_confidence = _directional_confidence(evaluation)
+            if not sold_range and directional_confidence:
+                market_value += f"\nDirectional confidence: {directional_confidence}"
+            fields.append({"name": market_name, "value": market_value, "inline": False})
+
+        risk = str(_nested(evaluation, "auth_risk", "level") or "unknown").upper()
+        signal_parts = [f"Heat {score}", f"Risk {risk}"]
+        identity_confidence = _identity_confidence(evaluation)
+        if identity_confidence:
+            signal_parts.append(f"Identity {identity_confidence}")
+        relationship = _relationship_label(evaluation)
+        if relationship:
+            signal_parts.append(f"Relationship {relationship}")
+        fields.append({"name": "Signal", "value": " | ".join(signal_parts), "inline": False})
+        fields.append(
+            {
+                "name": "WHY",
+                "value": _concise_why(reason, early_auction=early_auction),
+                "inline": False,
+            }
+        )
+
+        seller = _seller_line(listing)
+        if seller:
+            fields.append({"name": "Source", "value": seller, "inline": False})
+
+        # An early bid is not an acquisition price. Keep its discovery card free
+        # of dollar figures that could visually imply actionable economics.
+        evidence = [] if early_auction else _evidence_lines(evaluation)
+        if evidence:
+            fields.append({"name": "Top evidence", "value": "\n".join(evidence), "inline": False})
+
+    if listing_url:
+        description_lines.append(f"[OPEN ON BUYEE]({listing_url})")
+    description = "\n".join(description_lines)
+
+    embed: dict[str, Any] = {
+        "title": title,
+        "description": description,
+        "fields": fields,
+        "color": 5814783,
+    }
+    if listing_url:
+        embed["url"] = listing_url
+    if image_url:
+        embed["thumbnail"] = {"url": image_url}
+    payload: dict[str, Any] = {
+        "content": f"BuyEye live listing [{route}]",
+        "embeds": [embed],
+    }
+    return payload
+
+
 def send_listing_alert(
     listing: Any, route: str, reason: str, score: int, evaluation: Any | None = None
 ) -> tuple[bool, int | str, float]:
     url = _webhooks().get(route, "")
     if not url:
         return False, "route_unconfigured", 0.0
-    title = listing.title_original or "Untitled Buyee listing"
-    price = f"¥{listing.current_price:,}" if listing.current_price else "unknown"
-    if listing.buyout_price:
-        price += f" · buyout ¥{listing.buyout_price:,}"
-    fields: list[dict[str, Any]] = []
-    description = reason
-    if evaluation is not None:
-        economics = evaluation.economics
-        profile = evaluation.profile
-        identity = " · ".join(
-            evidence.value
-            for evidence in (profile.brand, profile.collection, profile.item_type, profile.size)
-            if evidence is not None
-        )
-        thesis = alert_thesis(route, evaluation).replace("_", " ").upper()
-        description = f"**{thesis}** · {reason}"
-        landed = (
-            f"~${evaluation.directional.landed_usd:,.0f} landed"
-            if evaluation.directional.landed_usd is not None
-            else "landed unknown"
-        )
-        if evaluation.auction_maturity.price_actionable:
-            price_timing = f"{price} · {landed} · Ends {listing.time_remaining or 'unknown'}"
-        else:
-            price_timing = (
-                f"{price} current · Ends {listing.time_remaining or 'unknown'} · EARLY AUCTION"
-            )
-        fields.append({"name": "Price / timing", "value": price_timing, "inline": False})
-        signal_score = max(economics.opportunity_score, evaluation.directional.score)
-        signal = "HIGH" if signal_score >= 80 else "MEDIUM" if signal_score >= 65 else "WATCH"
-        fields.append(
-            {
-                "name": "Identity / scores",
-                "value": f"{identity or 'uncertain'} · heat {score} · opportunity {signal}",
-                "inline": False,
-            }
-        )
-        if economics.resale_median_jpy is not None and evaluation.auction_maturity.price_actionable:
-            fields.append(
-                {
-                    "name": "U.S. sold / upside",
-                    "value": (
-                        f"¥{evaluation.comps.low_jpy:,}–¥{evaluation.comps.high_jpy:,} · FMV ¥{economics.resale_median_jpy:,} · "
-                        f"{economics.multiple}× · margin ¥{economics.net_margin_jpy:,} · {economics.comp_confidence} confidence"
-                    ),
-                    "inline": False,
-                }
-            )
-        elif economics.resale_median_jpy is not None:
-            fields.append(
-                {
-                    "name": "U.S. sold evidence",
-                    "value": (
-                        f"¥{evaluation.comps.low_jpy:,}–¥{evaluation.comps.high_jpy:,} verified · "
-                        "current bid excluded from spread"
-                    ),
-                    "inline": False,
-                }
-            )
-        elif evaluation.japan_comps and evaluation.japan_comps.median_jpy is not None:
-            fields.append(
-                {
-                    "name": "Market context",
-                    "value": (
-                        "U.S. resale unverified · Japan sold "
-                        f"¥{evaluation.japan_comps.low_jpy:,}–¥{evaluation.japan_comps.high_jpy:,} "
-                        f"· {evaluation.japan_comps.confidence} directional confidence"
-                    ),
-                    "inline": False,
-                }
-            )
-        else:
-            fields.append(
-                {
-                    "name": "Market context",
-                    "value": "U.S. resale unverified · no reliable sold range",
-                    "inline": False,
-                }
-            )
-        raw = listing.raw or {}
-        feedback_percent = raw.get("seller_feedback_percent")
-        feedback_count = raw.get("seller_feedback_count")
-        if evaluation.auth_risk.level != "low" or feedback_percent is not None:
-            seller = (
-                f" · seller {feedback_percent:g}%/{feedback_count or 0:,}"
-                if feedback_percent is not None
-                else ""
-            )
-            risk_reasons = [
-                value
-                for value in evaluation.auth_risk.reasons
-                if not value.startswith("seller feedback")
-            ]
-            warning = f"{evaluation.auth_risk.level.upper()}{seller}"
-            if risk_reasons:
-                warning += f" · {'; '.join(risk_reasons[:2])}"
-            fields.append(
-                {
-                    "name": "⚠ Review",
-                    "value": warning,
-                    "inline": False,
-                }
-            )
-        if evaluation.comps.matches:
-            comp_lines = []
-            for comp in evaluation.comps.matches[:2]:
-                label = comp.title[:55]
-                comp_price = (
-                    f"${comp.original_price:,.0f}"
-                    if comp.original_currency == "USD" and comp.original_price
-                    else f"¥{comp.price_jpy:,}"
-                )
-                comp_lines.append(
-                    f"[{label}]({comp.url}) — {comp_price}" if comp.url else f"{label} — {comp_price}"
-                )
-            fields.append(
-                {
-                    "name": f"U.S. sold comps ({len(evaluation.comps.matches)})",
-                    "value": "\n".join(comp_lines),
-                    "inline": False,
-                }
-            )
-    else:
-        fields.append(
-            {
-                "name": "Price / timing",
-                "value": f"{price} · {listing.time_remaining or 'time unknown'} · heat {score}",
-                "inline": False,
-            }
-        )
-    payload: dict[str, Any] = {
-        "content": f"BuyEye live listing [{route}]",
-        "embeds": [
-            {
-                "title": title,
-                "description": description,
-                "url": listing.url,
-                "fields": fields,
-                "color": 5814783,
-            }
-        ],
-    }
-    if listing.image_url:
-        payload["embeds"][0]["thumbnail"] = {"url": listing.image_url}
-    return _send_webhook(url, payload)
+    return _send_webhook(
+        url,
+        build_listing_alert_payload(listing, route, reason, score, evaluation),
+    )
 
 
 def send_status_event(message: str, level: str = "info") -> tuple[bool, int | str, float]:

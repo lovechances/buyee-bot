@@ -1,6 +1,9 @@
 version: 1
 provenance: manual_v1_research
 
+relationship_terms:
+  homage_reference: ["inspired by", "homage", "style", "type", "タイプ"]
+
 brands:
   number_nine:
     canonical: "Number (N)ine"
@@ -53,14 +56,19 @@ brands:
     designer: "Rick Owens"
     strong_signals: ["slab", "dunks", "dunk", "geobasket", "creatch", "banana", "bauhaus", "runway"]
     generic_signals: ["basic tee", "logo tee"]
+    relationships:
+      diffusion: ["drkshdw", "ダークシャドウ"]
   margiela:
     canonical: "Maison Martin Margiela"
     aliases: ["maison martin margiela", "maison margiela", "マルタンマルジェラ", "メゾンマルジェラ", "margiela"]
+    recognition_aliases: ["mm6"]
     designer: "Martin Margiela"
     eras:
       martin_era: ["本人期", "ここのえ", "初期", "martin era"]
     strong_signals: ["artisanal", "アーティザナル", "0 10", "010", "replica line", "再構築", "足袋", "tabi", "AIDS", "archive graphic"]
     generic_signals: ["mm6", "logo tee"]
+    relationships:
+      diffusion: ["mm6"]
   vetements:
     canonical: "Vetements"
     aliases: ["vetements", "ヴェトモン"]
@@ -105,6 +113,8 @@ brands:
     designer: "Keizo Shimizu"
     strong_signals: ["rebuild", "再構築", "7 cut", "track", "butterfly", "vintage"]
     generic_signals: ["logo tee"]
+    relationships:
+      collaboration_low_priority: ["needles x uniqlo", "uniqlo x needles", "needles × uniqlo", "uniqlo × needles"]
   alexander_mcqueen:
     canonical: "Alexander McQueen"
     aliases: ["alexander mcqueen", "アレキサンダーマックイーン", "アレキサンダー マックイーン"]
@@ -124,6 +134,8 @@ brands:
         terms: ["plato's atlantis", "platos atlantis", "10ss", "ss10"]
     strong_signals: ["bumster", "frock coat", "tartan", "military tailoring", "distressed leather"]
     generic_signals: ["mcq by alexander mcqueen", "diffusion", "basic", "logo tee"]
+    relationships:
+      diffusion: ["mcq by alexander mcqueen", "mcq"]
     evidence_sources:
       - {name: "V&A Alexander McQueen introduction", url: "https://www.vam.ac.uk/articles/alexander-mcqueen-an-introduction", supports: "Lee-era tailoring, bumster, frock coat, distressed leather"}
       - {name: "Met Savage Beauty objects", url: "https://blog.metmuseum.org/alexandermcqueen/objects/", supports: "Dante, VOSS, Widows of Culloden, Plato's Atlantis"}
@@ -150,6 +162,9 @@ brands:
     # as generic strong signals overstates ordinary collection-tagged listings.
     strong_signals: ["distressed", "reconstruction"]
     generic_signals: ["uniqlo x undercover", "gu x undercover", "johnundercover", "the shepherd", "gyakusou", "ノベルティ"]
+    relationships:
+      diffusion: ["johnundercover", "the shepherd"]
+      collaboration_low_priority: ["uniqlo x undercover", "undercover x uniqlo", "gu x undercover", "undercover x gu", "uniqlo × undercover", "undercover × uniqlo", "gu × undercover", "undercover × gu", "gyakusou"]
     evidence_sources:
       - {name: "Undercover official history", url: "https://undercoverism.com/historyofu", supports: "Jun Takahashi, 1990 founding, Paris and menswear chronology"}
       - {name: "Tokyo Opera City Undercover retrospective", url: "https://www.operacity.jp/ag/exh181/e/list.php", supports: "SCAB, PAPER DOLL, BUT BEAUTIFUL, ARTS & CRAFTS, LESS BUT BETTER seasons"}

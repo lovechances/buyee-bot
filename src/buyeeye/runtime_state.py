@@ -5,10 +5,11 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from sqlmodel import Field, SQLModel, select
 
-from .db import DB_PATH, get_session, init_db
+from .db import DB_PATH, AlertState, get_session, init_db
 from .discovery import QuerySpec
 
 
@@ -60,6 +61,9 @@ class SeenListing(SQLModel, table=True):
     last_strategy_id: str | None = None
     last_strategy_type: str | None = None
     stage_a_outcomes_json: str | None = None
+    decision_logic_version: str | None = None
+    decision_classification: str | None = None
+    decision_at: datetime | None = None
     sightings: int = 1
 
 
@@ -117,16 +121,64 @@ class ScanEvent(SQLModel, table=True):
     theses_json: str | None = None
     opportunities_json: str | None = None
     detected_family_funnel_json: str | None = None
+    # Decision telemetry is additive/nullable so a rolling Railway deployment
+    # can read the existing production database without a destructive migration.
+    decision_telemetry_version: int | None = Field(default=None)
+    post_detail_reject_reasons_json: str | None = None
+    piece_relationships_json: str | None = None
+    confidence_counts_json: str | None = None
+    alert_theses_json: str | None = None
+    recovery_counts_json: str | None = None
+    suppressed_alerts: int | None = Field(default=0)
+    failed_alerts: int | None = Field(default=0)
+    logic_reconsidered: int | None = Field(default=0)
+    post_detail_decisions_json: str | None = None
 
 
 @dataclass
 class DedupeResult:
     is_duplicate: bool
     unchanged: bool
+    logic_reconsidered: bool = False
 
 
 def _key(*parts: str) -> str:
     return hashlib.sha256("\0".join(parts).encode()).hexdigest()
+
+
+def _json_object(value: str | None) -> dict[str, Any]:
+    try:
+        decoded = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _json_list(value: str | None) -> list[dict[str, Any]]:
+    try:
+        decoded = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return [item for item in decoded if isinstance(item, dict)]
+
+
+def _merge_counts(target: dict[str, Any], source: dict[str, Any]) -> None:
+    """Merge flat or nested count dictionaries from versioned telemetry."""
+    for key, value in source.items():
+        if isinstance(value, dict):
+            bucket = target.setdefault(key, {})
+            if not isinstance(bucket, dict):
+                bucket = {}
+                target[key] = bucket
+            _merge_counts(bucket, value)
+            continue
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        target[key] = int(target.get(key, 0)) + count
 
 
 def _query_key(spec: QuerySpec) -> str:
@@ -386,6 +438,22 @@ def record_query_result(
                 detected_family_funnel_json=json.dumps(
                     getattr(result, "detected_family_funnel", {}) or {}
                 ),
+                decision_telemetry_version=1,
+                post_detail_reject_reasons_json=json.dumps(
+                    getattr(result, "post_detail_reject_counts", {}) or {}
+                ),
+                piece_relationships_json=json.dumps(
+                    getattr(result, "piece_relationship_counts", {}) or {}
+                ),
+                confidence_counts_json=json.dumps(getattr(result, "confidence_counts", {}) or {}),
+                alert_theses_json=json.dumps(getattr(result, "alert_thesis_counts", {}) or {}),
+                recovery_counts_json=json.dumps(getattr(result, "recovery_counts", {}) or {}),
+                suppressed_alerts=int(getattr(result, "suppressed_alerts", 0) or 0),
+                failed_alerts=int(getattr(result, "failed_alerts", 0) or 0),
+                logic_reconsidered=int(getattr(result, "logic_reconsidered", 0) or 0),
+                post_detail_decisions_json=json.dumps(
+                    list(getattr(result, "post_detail_decisions", []) or [])[:6]
+                ),
             )
         )
         session.commit()
@@ -401,6 +469,10 @@ def mark_listing_seen(
     strategy_id: str | None = None,
     strategy_type: str | None = None,
     family: str | None = None,
+    decision_logic_version: str | None = None,
+    allow_logic_reconsideration: bool = False,
+    logic_reconsideration_max_age_hours: int = 24,
+    logic_reconsideration_max_per_hour: int = 2,
 ) -> DedupeResult:
     init_db(db_path)
     now = datetime.now(UTC)
@@ -423,10 +495,11 @@ def mark_listing_seen(
                     first_strategy_type=strategy_type,
                     last_strategy_id=strategy_id,
                     last_strategy_type=strategy_type,
+                    decision_logic_version=decision_logic_version,
                 )
             )
             session.commit()
-            return DedupeResult(False, False)
+            return DedupeResult(False, False, False)
         processed = row.last_processed_at
         if processed.tzinfo is None:
             processed = processed.replace(tzinfo=UTC)
@@ -445,7 +518,46 @@ def mark_listing_seen(
             and "selected" not in outcomes.values()
             and (context_outcome == "capped" or (outcomes and context_outcome is None))
         )
-        duplicate = fresh_duplicate and not stage_a_revisit
+        version_changed = bool(
+            decision_logic_version
+            and row.decision_logic_version != decision_logic_version
+        )
+        within_reconsideration_age = processed > now - timedelta(
+            hours=max(1, logic_reconsideration_max_age_hours)
+        )
+        logic_reconsidered = False
+        if (
+            fresh_duplicate
+            and version_changed
+            and context_outcome == "selected"
+            and within_reconsideration_age
+        ):
+            prior_alert = session.exec(
+                select(AlertState).where(
+                    AlertState.source == source,
+                    AlertState.source_listing_id == source_listing_id,
+                )
+            ).first()
+            if prior_alert is not None:
+                # Historical alerts are acknowledged at the new logic version
+                # but never replayed solely because decision code changed.
+                row.decision_logic_version = decision_logic_version
+            elif allow_logic_reconsideration:
+                recent_reconsiderations = session.exec(
+                    select(ScanEvent).where(
+                        ScanEvent.recorded_at >= now - timedelta(hours=1)
+                    )
+                ).all()
+                reconsiderations_used = sum(
+                    int(event.logic_reconsidered or 0)
+                    for event in recent_reconsiderations
+                )
+                if reconsiderations_used < max(
+                    0, logic_reconsideration_max_per_hour
+                ):
+                    logic_reconsidered = True
+                    row.decision_logic_version = decision_logic_version
+        duplicate = fresh_duplicate and not stage_a_revisit and not logic_reconsidered
         row.last_seen_at = now
         row.sightings += 1
         if not row.first_query:
@@ -458,8 +570,10 @@ def mark_listing_seen(
         if not duplicate:
             row.signature = signature
             row.last_processed_at = now
+            if decision_logic_version:
+                row.decision_logic_version = decision_logic_version
         session.commit()
-        return DedupeResult(duplicate, unchanged)
+        return DedupeResult(duplicate, unchanged, logic_reconsidered)
 
 
 def record_stage_a_outcomes(
@@ -484,6 +598,28 @@ def record_stage_a_outcomes(
                 stage_a_outcomes = {}
             stage_a_outcomes[context] = outcome
             row.stage_a_outcomes_json = json.dumps(stage_a_outcomes, sort_keys=True)
+        session.commit()
+
+
+def record_decision_classifications(
+    classifications: dict[tuple[str, str], str],
+    db_path: str | Path = DB_PATH,
+    *,
+    decision_logic_version: str,
+) -> None:
+    """Persist the latest bounded Stage-B/final decision without storing credentials."""
+    if not classifications:
+        return
+    init_db(db_path)
+    now = datetime.now(UTC)
+    with get_session(db_path) as session:
+        for (source, source_listing_id), classification in classifications.items():
+            row = session.get(SeenListing, _key(source, source_listing_id))
+            if row is None:
+                continue
+            row.decision_logic_version = decision_logic_version
+            row.decision_classification = classification
+            row.decision_at = now
         session.commit()
 
 
@@ -540,13 +676,23 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
         "comp_cache_misses": 0,
         "final_candidates": 0,
         "alerts": 0,
+        "decision_telemetry_scans": 0,
+        "suppressed_alerts": 0,
+        "failed_alerts": 0,
+        "logic_reconsidered": 0,
         "routes": {},
         "alert_routes": {},
         "theses": {},
+        "alert_theses": {},
         "opportunities": {},
         "strategy_types": {},
         "stage_a_paths": {},
         "stage_a_reject_reasons": {},
+        "post_detail_reject_reasons": {},
+        "piece_relationships": {},
+        "confidence_counts": {},
+        "recovery_counts": {},
+        "post_detail_decisions": [],
         "detected_family_funnel": {},
     }
     numeric = [
@@ -557,23 +703,36 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             "queries",
             "stage_a_telemetry_scans",
             "stage_a_telemetry_unique",
+            "decision_telemetry_scans",
             "routes",
             "alert_routes",
             "theses",
+            "alert_theses",
             "opportunities",
             "strategy_types",
             "stage_a_paths",
             "stage_a_reject_reasons",
+            "post_detail_reject_reasons",
+            "piece_relationships",
+            "confidence_counts",
+            "recovery_counts",
+            "post_detail_decisions",
             "detected_family_funnel",
         }
     ]
     routes: dict[str, int] = {}
     alert_routes: dict[str, int] = {}
     theses: dict[str, int] = {}
+    alert_theses: dict[str, int] = {}
     opportunities: dict[str, int] = {}
     strategy_types: dict[str, int] = {}
     stage_a_paths: dict[str, int] = {}
     stage_a_reject_reasons: dict[str, int] = {}
+    post_detail_reject_reasons: dict[str, int] = {}
+    piece_relationships: dict[str, int] = {}
+    confidence_counts: dict[str, Any] = {}
+    recovery_counts: dict[str, int] = {}
+    post_detail_decisions: list[dict[str, Any]] = []
     detected_family_funnel: dict[str, dict[str, int]] = {}
     for row in rows:
         if row.stage_a_telemetry_version:
@@ -581,6 +740,8 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             totals["stage_a_telemetry_unique"] = int(totals["stage_a_telemetry_unique"]) + (
                 row.unique_seen or 0
             )
+        if row.decision_telemetry_version:
+            totals["decision_telemetry_scans"] = int(totals["decision_telemetry_scans"]) + 1
         mapping = {
             "search_pages": row.search_pages,
             "cards": row.cards_seen,
@@ -600,6 +761,9 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             "comp_cache_misses": row.comp_cache_misses,
             "final_candidates": row.final_candidates,
             "alerts": row.alerts,
+            "suppressed_alerts": row.suppressed_alerts or 0,
+            "failed_alerts": row.failed_alerts or 0,
+            "logic_reconsidered": row.logic_reconsidered or 0,
         }
         for key in numeric:
             totals[key] = int(totals[key]) + mapping[key]
@@ -609,6 +773,7 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             alert_routes[route] = alert_routes.get(route, 0) + int(count)
         for thesis, count in json.loads(row.theses_json or "{}").items():
             theses[thesis] = theses.get(thesis, 0) + int(count)
+        _merge_counts(alert_theses, _json_object(row.alert_theses_json))
         for kind, count in json.loads(row.opportunities_json or "{}").items():
             opportunities[kind] = opportunities.get(kind, 0) + int(count)
         strategy_type = row.strategy_type or "legacy_unattributed"
@@ -617,6 +782,14 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             stage_a_paths[path] = stage_a_paths.get(path, 0) + int(count)
         for reason, count in json.loads(row.stage_a_reject_reasons_json or "{}").items():
             stage_a_reject_reasons[reason] = stage_a_reject_reasons.get(reason, 0) + int(count)
+        _merge_counts(
+            post_detail_reject_reasons,
+            _json_object(row.post_detail_reject_reasons_json),
+        )
+        _merge_counts(piece_relationships, _json_object(row.piece_relationships_json))
+        _merge_counts(confidence_counts, _json_object(row.confidence_counts_json))
+        _merge_counts(recovery_counts, _json_object(row.recovery_counts_json))
+        post_detail_decisions.extend(_json_list(row.post_detail_decisions_json))
         for family, funnel in json.loads(row.detected_family_funnel_json or "{}").items():
             family_bucket = detected_family_funnel.setdefault(family, {})
             for stage, count in funnel.items():
@@ -624,10 +797,18 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
     totals["routes"] = routes
     totals["alert_routes"] = alert_routes
     totals["theses"] = theses
+    totals["alert_theses"] = alert_theses
     totals["opportunities"] = opportunities
     totals["strategy_types"] = strategy_types
     totals["stage_a_paths"] = stage_a_paths
     totals["stage_a_reject_reasons"] = stage_a_reject_reasons
+    totals["post_detail_reject_reasons"] = post_detail_reject_reasons
+    totals["piece_relationships"] = piece_relationships
+    totals["confidence_counts"] = confidence_counts
+    totals["recovery_counts"] = recovery_counts
+    # Keep interactive health output diagnostic without allowing an hour of
+    # candidate records to become an unbounded phone/terminal wall of text.
+    totals["post_detail_decisions"] = post_detail_decisions[-12:]
     totals["detected_family_funnel"] = detected_family_funnel
     return totals
 
@@ -679,10 +860,19 @@ def strategy_metrics(
                 "stage_b_rejected": 0,
                 "finals": 0,
                 "alerts": 0,
+                "decision_telemetry_scans": 0,
+                "suppressed_alerts": 0,
+                "failed_alerts": 0,
+                "logic_reconsidered": 0,
                 "routes": {},
                 "alert_routes": {},
+                "alert_theses": {},
                 "stage_a_paths": {},
                 "stage_a_reject_reasons": {},
+                "post_detail_reject_reasons": {},
+                "piece_relationships": {},
+                "confidence_counts": {},
+                "recovery_counts": {},
                 "detected_family_funnel": {},
             },
         )
@@ -695,6 +885,8 @@ def strategy_metrics(
             bucket["stage_a_telemetry_unique"] = int(bucket["stage_a_telemetry_unique"]) + (
                 row.unique_seen or 0
             )
+        if row.decision_telemetry_version:
+            bucket["decision_telemetry_scans"] = int(bucket["decision_telemetry_scans"]) + 1
         bucket["brand_confirmed"] = int(bucket["brand_confirmed"]) + (
             row.stage_a_brand_confirmed or 0
         )
@@ -710,6 +902,13 @@ def strategy_metrics(
         bucket["stage_b_rejected"] = int(bucket["stage_b_rejected"]) + (row.stage_b_rejected or 0)
         bucket["finals"] = int(bucket["finals"]) + row.final_candidates
         bucket["alerts"] = int(bucket["alerts"]) + row.alerts
+        bucket["suppressed_alerts"] = int(bucket["suppressed_alerts"]) + (
+            row.suppressed_alerts or 0
+        )
+        bucket["failed_alerts"] = int(bucket["failed_alerts"]) + (row.failed_alerts or 0)
+        bucket["logic_reconsidered"] = int(bucket["logic_reconsidered"]) + (
+            row.logic_reconsidered or 0
+        )
         routes = bucket["routes"]
         if isinstance(routes, dict):
             for route, count in json.loads(row.routes_json or "{}").items():
@@ -718,6 +917,9 @@ def strategy_metrics(
         if isinstance(alert_routes, dict):
             for route, count in json.loads(row.alert_routes_json or "{}").items():
                 alert_routes[route] = alert_routes.get(route, 0) + int(count)
+        alert_theses = bucket["alert_theses"]
+        if isinstance(alert_theses, dict):
+            _merge_counts(alert_theses, _json_object(row.alert_theses_json))
         paths = bucket["stage_a_paths"]
         if isinstance(paths, dict):
             for path, count in json.loads(row.stage_a_paths_json or "{}").items():
@@ -726,6 +928,21 @@ def strategy_metrics(
         if isinstance(reasons, dict):
             for reason, count in json.loads(row.stage_a_reject_reasons_json or "{}").items():
                 reasons[reason] = reasons.get(reason, 0) + int(count)
+        post_detail_reasons = bucket["post_detail_reject_reasons"]
+        if isinstance(post_detail_reasons, dict):
+            _merge_counts(
+                post_detail_reasons,
+                _json_object(row.post_detail_reject_reasons_json),
+            )
+        relationships = bucket["piece_relationships"]
+        if isinstance(relationships, dict):
+            _merge_counts(relationships, _json_object(row.piece_relationships_json))
+        confidence = bucket["confidence_counts"]
+        if isinstance(confidence, dict):
+            _merge_counts(confidence, _json_object(row.confidence_counts_json))
+        recoveries = bucket["recovery_counts"]
+        if isinstance(recoveries, dict):
+            _merge_counts(recoveries, _json_object(row.recovery_counts_json))
         detected = bucket["detected_family_funnel"]
         if isinstance(detected, dict):
             for family, funnel in json.loads(row.detected_family_funnel_json or "{}").items():
