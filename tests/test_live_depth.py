@@ -155,8 +155,13 @@ def test_browser_pagination_never_clicks_beyond_page_budget(
         async def wait_for_load_state(self, *_args, **_kwargs):
             return None
 
-        async def wait_for_function(self, *_args, **_kwargs):
-            return None
+        async def wait_for_function(self, expression, *, arg=None, timeout=None):
+            assert "expected" in expression
+            assert arg == {
+                "expected": self.current_page,
+                "before": f"signature-page-{self.current_page - 1}",
+            }
+            assert timeout == 30_000
 
         async def evaluate(self, script):
             if "const resultLinks" in script:

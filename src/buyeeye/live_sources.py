@@ -320,7 +320,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                                 && signature !== before;
                             }
                             """,
-                            {"expected": next_page, "before": before_signature},
+                            arg={"expected": next_page, "before": before_signature},
                             timeout=30000,
                         )
                     except PlaywrightError as exc:
