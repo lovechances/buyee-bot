@@ -133,6 +133,9 @@ def _route(
         grail_min_heat=int(alert.get("grail_min_score", 82)),
         archive_directional_min_heat=int(alert.get("archive_directional_min_heat", 55)),
         archive_directional_min_score=int(alert.get("archive_directional_min_score", 75)),
+        unverified_grail_high_ticket_usd=float(
+            alert.get("unverified_grail_high_ticket_usd", 300)
+        ),
     )
 
 

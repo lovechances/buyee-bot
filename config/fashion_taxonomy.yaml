@@ -25,6 +25,9 @@ brands:
         terms: ["high streets", "03aw", "カート期"]
       - name: "Time Migration"
         terms: ["time migration", "タイム期", "01ss"]
+    iconic_signals:
+      - {terms: ["bondage"], item_types: ["trousers"]}
+      - {terms: ["散弾銃", "shotgun"], item_types: ["t_shirt", "shirt", "jacket"]}
     strong_signals: ["destroy", "mohair", "patchwork", "散弾銃", "音符", "スカル", "宮下", "archive"]
     generic_signals: ["basic", "logo tee", "復刻", "reprint"]
   takahiromiyashita_thesoloist:
@@ -46,6 +49,8 @@ brands:
     canonical: "Chrome Hearts"
     aliases: ["chrome hearts", "chromeheart", "クロムハーツ", "chome hearts"]
     designer: "Richard Stark"
+    iconic_signals:
+      - {terms: ["cemetery cross", "dagger", "5dagger", "floral cross", "keeper", "fancy chain", "セメタリー", "ダガー", "キーパー"], item_types: ["jewelry", "belt", "wallet", "accessory", "t_shirt", "shirt", "jacket", "hoodie"]}
     strong_signals: ["cemetery cross", "cemetery", "dagger", "5dagger", "floral cross", "keeper", "fancy chain", "セメタリー", "クロスボール", "ダガー", "キーパー", "925", "sterling"]
     generic_signals: []
     auth_sensitive: true
@@ -71,12 +76,20 @@ brands:
     designer: "Hedi Slimane"
     eras:
       hedi_slimane: ["hedi", "エディ", "2013", "2014", "2015", "2016"]
+    iconic_signals:
+      - {terms: ["wyatt"], item_types: ["footwear"]}
+      - {terms: ["teddy"], item_types: ["jacket"]}
+      - {terms: ["blood luster", "babycat", "surf sound"], item_types: ["t_shirt", "shirt", "jacket", "footwear"]}
     strong_signals: ["blood luster", "babycat", "surf sound", "teddy", "wyatt", "runway"]
     generic_signals: ["logo tee", "basic tee"]
   rick_owens:
     canonical: "Rick Owens"
     aliases: ["rick owens", "drkshdw", "リックオウエンス", "ダークシャドウ"]
     designer: "Rick Owens"
+    iconic_signals:
+      - {terms: ["dunks", "dunk", "geobasket"], item_types: ["footwear"]}
+      - {terms: ["creatch", "banana"], item_types: ["trousers", "denim"]}
+      - {terms: ["bauhaus"], item_types: ["trousers", "denim", "jacket"]}
     strong_signals: ["slab", "dunks", "dunk", "geobasket", "creatch", "banana", "bauhaus", "runway"]
     generic_signals: ["basic tee", "logo tee"]
     relationships:
@@ -88,6 +101,8 @@ brands:
     designer: "Martin Margiela"
     eras:
       martin_era: ["本人期", "ここのえ", "初期", "martin era"]
+    iconic_signals:
+      - {terms: ["足袋", "tabi"], item_types: ["footwear"]}
     strong_signals: ["artisanal", "アーティザナル", "0 10", "010", "replica line", "再構築", "足袋", "tabi", "AIDS", "エイズ", "archive graphic"]
     generic_signals: ["mm6", "logo tee"]
     relationships:
@@ -104,6 +119,8 @@ brands:
     canonical: "Balenciaga"
     aliases: ["balenciaga", "バレンシアガ"]
     designer: "Demna Gvasalia"
+    iconic_signals:
+      - {terms: ["steroid", "bulldozer", "strike", "paris sneaker"], item_types: ["footwear"]}
     strong_signals: ["steroid", "bulldozer", "strike", "paris sneaker", "runway", "distressed"]
     generic_signals: ["campaign logo", "basic tee"]
     relationships:
@@ -117,6 +134,8 @@ brands:
   if_six_was_nine:
     canonical: "IF SIX WAS NINE"
     aliases: ["if six was nine", "ifsixwasnine", "if six was 9", "イフシックスワズナイン", "if6w9"]
+    iconic_signals:
+      - {terms: ["mud max"], item_types: ["trousers", "denim"]}
     strong_signals: ["mud max", "lgb", "le grand bleu", "scab", "python", "cross"]
   roen:
     canonical: "Roen"
@@ -191,6 +210,8 @@ brands:
         terms: ["less but better"]
     # Collection names already contribute collection evidence; counting them again
     # as generic strong signals overstates ordinary collection-tagged listings.
+    iconic_signals:
+      - {terms: ["no gods"], item_types: ["t_shirt"]}
     strong_signals: ["distressed", "reconstruction"]
     generic_signals: ["uniqlo x undercover", "gu x undercover", "johnundercover", "the shepherd", "gyakusou", "ノベルティ"]
     relationships:

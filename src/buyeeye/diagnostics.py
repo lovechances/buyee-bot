@@ -171,6 +171,9 @@ def _current_evaluation(
         archive_directional_min_score=int(
             alert.get("archive_directional_min_score", 75)
         ),
+        unverified_grail_high_ticket_usd=float(
+            alert.get("unverified_grail_high_ticket_usd", 300)
+        ),
     )
     scope = evaluation.profile.product_scope
     return {

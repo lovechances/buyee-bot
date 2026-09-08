@@ -35,6 +35,8 @@ Title enrichment identifies brand aliases, designer context, era, collection, se
 
 Closet heat rewards piece-specific evidence such as a recognized collection, era, notable material, collaboration, and distinctive motif. Generic/basic, irrelevant, or counterfeit-associated language reduces the score. Brand alone receives little weight.
 
+For high-ticket pieces without attractive sold economics or an independent value thesis, broad designer-era/subline wording cannot unlock an archive-grail path by itself. It requires an actually named collection plus non-generic design evidence, or a brand-anchored named-piece marker with a compatible item type from the manual `iconic_signals` taxonomy. Generic words such as `graphic`, `patterned`, and `processed` do not establish that identity, and the exceptional-heat path cannot bypass the same support requirement. Cheap actionable or comp-backed acquisitions continue through their own routes. The landed-cost boundary is configurable, affects routing only, and is not a valuation claim; `iconic_signals` do not change discovery scheduling.
+
 Comp matching requires brand agreement and then checks category, item type, collection, and material. Category mismatches fail closed. Robust medians and trimmed ranges limit outlier influence. Fewer or weaker matches lower confidence.
 
 Opportunity uses landed cost, sold-comp median, estimated resale fees, net resale, margins, and multiple. Missing sold comps produce an unscored opportunity rather than invented profit.

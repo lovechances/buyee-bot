@@ -874,6 +874,9 @@ def enrich_title(
     taxonomy = load_taxonomy()
     text = normalize_text(title).casefold()
     profile = FashionProfile()
+    profile.item_type = _first_match(
+        text, taxonomy.get("item_types", {}), "taxonomy.item_types"
+    )
     matched_brand: dict[str, Any] | None = None
     collaboration_match: tuple[str, tuple[str, ...]] | None = None
 
@@ -954,6 +957,30 @@ def enrich_title(
                             str(term),
                         )
                     )
+            for configured_signal in record.get("iconic_signals", []):
+                if isinstance(configured_signal, dict):
+                    terms = configured_signal.get("terms", [])
+                    allowed_item_types = {
+                        str(value) for value in configured_signal.get("item_types", [])
+                    }
+                else:
+                    terms = [configured_signal]
+                    allowed_item_types = set()
+                if allowed_item_types and (
+                    not profile.item_type
+                    or profile.item_type.value not in allowed_item_types
+                ):
+                    continue
+                for term in terms:
+                    if _term_matches(text, str(term)):
+                        profile.positive_signals.append(
+                            Evidence(
+                                str(term),
+                                0.85,
+                                f"taxonomy.brands.{brand_key}.iconic_signals",
+                                str(term),
+                            )
+                        )
         for term in record.get("generic_signals", []):
             if _term_matches(text, str(term)):
                 profile.negative_signals.append(
@@ -962,7 +989,6 @@ def enrich_title(
                     )
                 )
 
-    profile.item_type = _first_match(text, taxonomy.get("item_types", {}), "taxonomy.item_types")
     profile.material = _first_match(text, taxonomy.get("materials", {}), "taxonomy.materials")
     season_match = re.search(r"(?i)\b((?:aw|fw|ss)\s?\d{2}|\d{2}\s?(?:aw|fw|ss))\b", text)
     if season_match:

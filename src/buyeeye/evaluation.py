@@ -247,8 +247,12 @@ _DIRECTIONAL_CONTEXT_ONLY_SIGNALS = {
 # grail evidence, and generic visual nouns cannot establish an exact comp.
 _WEAK_GRAIL_DESIGN_SIGNALS = {
     "1b",
+    "graphic",
     "one button",
+    "patterned",
+    "processed",
     "runway",
+    "single stitch",
     "tailored",
 }
 _NON_DISTINCT_COMP_SIGNALS = {
@@ -362,6 +366,25 @@ def has_specific_archive_context(profile: FashionProfile) -> bool:
             normalize_text(evidence.matched_term).replace(" ", "")
         )
         for evidence in (profile.era, profile.collection)
+    )
+
+
+def has_named_collection_context(profile: FashionProfile) -> bool:
+    """Return a real named collection match, excluding season-only shorthand."""
+    evidence = profile.collection
+    return bool(
+        evidence
+        and not _GENERIC_ARCHIVE_SHORTHAND.fullmatch(
+            normalize_text(evidence.matched_term).replace(" ", "")
+        )
+    )
+
+
+def has_iconic_piece_context(profile: FashionProfile) -> bool:
+    """Return explicit, brand-anchored named-piece evidence from manual taxonomy."""
+    return any(
+        signal.provenance.endswith(".iconic_signals")
+        for signal in profile.positive_signals
     )
 
 

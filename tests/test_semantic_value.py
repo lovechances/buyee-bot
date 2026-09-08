@@ -575,6 +575,237 @@ def test_weak_grail_descriptors_do_not_make_an_expensive_collection_item_alertab
     assert _post_detail_decision(listing, evaluation).route is None
 
 
+@pytest.mark.parametrize(
+    ("title", "price"),
+    (
+        (
+            (
+                "Maison Martin Margiela◆本人期/アーティザナル/再構築パッチワーク切替/"
+                "ボトム/M/コーデュロイ/BRW"
+            ),
+            110_660,
+        ),
+        (
+            (
+                "Maison Martin Margiela◆010/アーティザナル/本人期/再構築パッチワーク切替/"
+                "ボトム/M/コーデュロイ/BEG"
+            ),
+            99_660,
+        ),
+    ),
+)
+def test_unverified_high_ticket_era_construction_is_not_a_grail(
+    title: str,
+    price: int,
+) -> None:
+    listing = _listing(
+        title,
+        price=price,
+        buyout=price,
+        observed={
+            "category_hierarchy": [
+                "Auction",
+                "Fashion",
+                "Men's",
+                "Slacks & Trousers",
+                "M Size",
+            ],
+        },
+    )
+    evaluation = evaluate_listing(listing)
+    decision = _post_detail_decision(listing, evaluation)
+
+    assert evaluation.profile.era
+    assert evaluation.profile.collection is None
+    assert evaluation.directional.landed_usd
+    assert evaluation.directional.landed_usd > 300
+    assert evaluation.directional.thesis is None
+    assert decision.route is None
+    assert decision.rejection_reason == "unverified_high_ticket_not_iconic"
+
+
+def test_same_era_construction_can_still_surface_as_a_cheap_buyout() -> None:
+    listing = _listing(
+        "Maison Martin Margiela 本人期 アーティザナル 再構築パッチワーク パンツ",
+        price=8_000,
+        buyout=8_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert _post_detail_decision(listing, evaluation).route == "buyouts"
+
+
+def test_verified_high_ticket_economics_still_route_as_buyout() -> None:
+    listing = _listing(
+        "Maison Martin Margiela 本人期 アーティザナル 再構築パッチワーク パンツ",
+        price=100_000,
+        buyout=100_000,
+    )
+    sold = [
+        Comp(
+            "grailed_sold",
+            listing.title_original,
+            price_jpy,
+            1.0,
+            30,
+            source_listing_id=f"verified-margiela-{index}",
+        )
+        for index, price_jpy in enumerate(
+            (450_000, 475_000, 500_000, 525_000, 550_000),
+            start=1,
+        )
+    ]
+    evaluation = evaluate_listing(listing, sold)
+
+    assert evaluation.valuation.confidence in {"medium", "high"}
+    assert _post_detail_decision(listing, evaluation).route == "buyouts"
+
+
+def test_verified_negative_high_ticket_economics_do_not_rescue_era_only_grail() -> None:
+    listing = _listing(
+        "Maison Martin Margiela 本人期 アーティザナル 再構築パッチワーク パンツ",
+        price=100_000,
+        buyout=100_000,
+    )
+    sold = [
+        Comp(
+            "grailed_sold",
+            listing.title_original,
+            price_jpy,
+            1.0,
+            30,
+            source_listing_id=f"negative-margiela-{index}",
+        )
+        for index, price_jpy in enumerate(
+            (50_000, 55_000, 60_000, 65_000, 70_000),
+            start=1,
+        )
+    ]
+    evaluation = evaluate_listing(listing, sold)
+    decision = _post_detail_decision(listing, evaluation)
+
+    assert evaluation.valuation.confidence in {"medium", "high"}
+    assert evaluation.economics.opportunity_score < 70
+    assert evaluation.directional.thesis is None
+    assert decision.route is None
+    assert decision.rejection_reason == "unverified_high_ticket_not_iconic"
+
+
+def test_high_ticket_exceptional_heat_cannot_be_stacked_from_era_boilerplate() -> None:
+    listing = _listing(
+        (
+            "Maison Martin Margiela 01SS 010 本人期 アーティザナル 再構築 "
+            "パッチワーク leather T-shirt"
+        ),
+        price=100_000,
+        buyout=100_000,
+    )
+    evaluation = evaluate_listing(listing)
+    decision = _post_detail_decision(listing, evaluation)
+
+    assert evaluation.profile.collection is None
+    assert evaluation.desirability.score >= 82
+    assert evaluation.directional.thesis is None
+    assert decision.route is None
+    assert decision.rejection_reason == "unverified_high_ticket_not_iconic"
+
+
+def test_high_ticket_scab_requires_named_piece_evidence_beyond_graphic() -> None:
+    generic = _listing(
+        "UNDERCOVER 03SS SCAB graphic T-shirt",
+        price=50_000,
+        buyout=50_000,
+    )
+    named = _listing(
+        "UNDERCOVER 03SS SCAB No Gods graphic T-shirt",
+        price=50_000,
+        buyout=50_000,
+    )
+    generic_evaluation = evaluate_listing(generic)
+    named_evaluation = evaluate_listing(named)
+
+    assert not any(
+        signal.provenance.endswith(".iconic_signals")
+        for signal in generic_evaluation.profile.positive_signals
+    )
+    assert _post_detail_decision(generic, generic_evaluation).route is None
+    assert any(
+        signal.provenance.endswith(".iconic_signals")
+        for signal in named_evaluation.profile.positive_signals
+    )
+    assert _post_detail_decision(named, named_evaluation).route == "grails"
+
+
+def test_high_ticket_named_model_can_still_route_as_grail() -> None:
+    listing = _listing(
+        "Saint Laurent 2015 Hedi Babycat Wyatt leather boots",
+        price=100_000,
+        buyout=100_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.collection is None
+    assert sum(
+        signal.provenance.endswith(".iconic_signals")
+        for signal in evaluation.profile.positive_signals
+    ) >= 2
+    assert _post_detail_decision(listing, evaluation).route == "grails"
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Maison Martin Margiela 本人期 Tabi graphic leather T-shirt",
+        "Saint Laurent Hedi Wyatt graphic leather T-shirt",
+        "Number (N)ine 2001 bondage graphic leather T-shirt",
+        "Balenciaga Strike Bulldozer distressed leather jacket",
+    ),
+)
+def test_high_ticket_iconic_keywords_require_compatible_item_type(title: str) -> None:
+    listing = _listing(title, price=100_000, buyout=100_000)
+    evaluation = evaluate_listing(listing)
+
+    assert not any(
+        signal.provenance.endswith(".iconic_signals")
+        for signal in evaluation.profile.positive_signals
+    )
+    assert _post_detail_decision(listing, evaluation).route is None
+
+
+def test_high_ticket_time_migration_with_specific_motifs_remains_grail() -> None:
+    listing = _listing(
+        "Number (N)ine 2001SS Time Migration shotgun skull embroidered T-shirt",
+        price=100_000,
+        buyout=100_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.collection
+    assert evaluation.profile.collection.value == "Time Migration"
+    assert _post_detail_decision(listing, evaluation).route == "grails"
+
+
+def test_high_ticket_grail_support_boundary_is_configurable() -> None:
+    listing = _listing(
+        "Maison Martin Margiela 本人期 アーティザナル 再構築パッチワーク パンツ",
+        price=30_000,
+        buyout=30_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.landed_usd
+    assert 200 < evaluation.directional.landed_usd < 300
+    assert _post_detail_decision(listing, evaluation).route == "grails"
+    guarded = _post_detail_decision(
+        listing,
+        evaluation,
+        unverified_grail_high_ticket_usd=200,
+    )
+    assert guarded.route is None
+    assert guarded.rejection_reason == "unverified_high_ticket_not_iconic"
+
+
 def test_mature_auction_bid_is_evaluated_independently_of_expensive_buyout() -> None:
     listing = _listing(
         "Roen skull rhinestone velour zip hoodie",

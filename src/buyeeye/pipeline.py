@@ -30,6 +30,8 @@ from .evaluation import (
     evaluate_listing,
     has_explicit_non_menswear_evidence,
     has_grail_design_evidence,
+    has_iconic_piece_context,
+    has_named_collection_context,
     has_specific_archive_context,
 )
 from .fashion import enrich_title, is_generic_signal
@@ -49,7 +51,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "ultra-semantic-value-v4"
+DECISION_LOGIC_VERSION = "ultra-semantic-value-v5"
 
 
 @dataclass
@@ -309,6 +311,7 @@ def _is_true_grail(
     grail_min_heat: int,
     archive_directional_min_heat: int,
     archive_directional_min_score: int,
+    unverified_high_ticket_usd: float = 300.0,
     allow_medium_identity: bool = False,
 ) -> bool:
     """Require piece evidence beyond a famous collection/season token."""
@@ -335,9 +338,20 @@ def _is_true_grail(
     design_specific = has_grail_design_evidence(
         evaluation.directional.piece_signals
     )
+    unverified_high_ticket = _is_unverified_high_ticket(
+        evaluation,
+        threshold_usd=unverified_high_ticket_usd,
+    )
+    iconic_piece = has_iconic_piece_context(profile)
+    supported_high_ticket_identity = bool(
+        iconic_piece or (has_named_collection_context(profile) and design_specific)
+    )
     named_piece = bool(
-        has_specific_archive_context(profile)
-        and design_specific
+        (
+            supported_high_ticket_identity
+            if unverified_high_ticket
+            else has_specific_archive_context(profile) and design_specific
+        )
         and evaluation.desirability.score >= archive_directional_min_heat
         and evaluation.directional.score >= archive_directional_min_score
     )
@@ -345,12 +359,32 @@ def _is_true_grail(
         evaluation.desirability.score >= grail_min_heat
         and design_specific
         and len(evaluation.directional.piece_signals) >= 2
+        and (not unverified_high_ticket or supported_high_ticket_identity)
     )
     return bool(
         scoped_product
         and not generic
         and identity_ok
         and (named_piece or exceptional_piece)
+    )
+
+
+def _is_unverified_high_ticket(
+    evaluation: ListingEvaluation,
+    *,
+    threshold_usd: float,
+) -> bool:
+    """Flag costly pieces lacking attractive comp economics or a value thesis."""
+    credible_economics = bool(
+        evaluation.economics.opportunity_score >= 70
+        and evaluation.economics.comp_confidence in {"medium", "high"}
+    )
+    return bool(
+        threshold_usd > 0
+        and evaluation.directional.landed_usd is not None
+        and evaluation.directional.landed_usd > threshold_usd
+        and not credible_economics
+        and evaluation.directional.thesis is None
     )
 
 
@@ -462,6 +496,7 @@ def _post_detail_decision(
     grail_min_heat: int = 82,
     archive_directional_min_heat: int = 55,
     archive_directional_min_score: int = 75,
+    unverified_grail_high_ticket_usd: float = 300.0,
 ) -> PostDetailDecision:
     heat = evaluation.desirability.score
     economics = evaluation.economics
@@ -523,6 +558,7 @@ def _post_detail_decision(
         grail_min_heat=grail_min_heat,
         archive_directional_min_heat=archive_directional_min_heat,
         archive_directional_min_score=archive_directional_min_score,
+        unverified_high_ticket_usd=unverified_grail_high_ticket_usd,
         allow_medium_identity=(
             evaluation.auction_maturity.auction_type == "open_auction"
             and evaluation.auction_maturity.level == "low"
@@ -606,11 +642,22 @@ def _post_detail_decision(
     if true_grail:
         reason = (
             "strong named archive identity and piece-specific evidence"
-            if has_specific_archive_context(profile)
+            if has_named_collection_context(profile) or has_iconic_piece_context(profile)
             else "exceptional piece-specific archive evidence"
         )
         return PostDetailDecision(
             "grails", reason
+        )
+    if _is_unverified_high_ticket(
+        evaluation,
+        threshold_usd=unverified_grail_high_ticket_usd,
+    ) and has_specific_archive_context(profile) and has_grail_design_evidence(
+        evaluation.directional.piece_signals
+    ):
+        return PostDetailDecision(
+            None,
+            "high-ticket piece lacks credible value evidence or exceptional named-piece identity",
+            "unverified_high_ticket_not_iconic",
         )
     return PostDetailDecision(
         None,
@@ -628,6 +675,7 @@ def _route_evaluation(
     grail_min_heat: int = 82,
     archive_directional_min_heat: int = 55,
     archive_directional_min_score: int = 75,
+    unverified_grail_high_ticket_usd: float = 300.0,
 ) -> tuple[str, str] | None:
     """Compatibility wrapper preserving the one-primary-route public behavior."""
     decision = _post_detail_decision(
@@ -639,6 +687,7 @@ def _route_evaluation(
         grail_min_heat,
         archive_directional_min_heat,
         archive_directional_min_score,
+        unverified_grail_high_ticket_usd,
     )
     if decision.route is None:
         return None
@@ -1276,6 +1325,11 @@ async def scan_once(
             ),
             archive_directional_min_score=int(
                 settings.get("alert", {}).get("archive_directional_min_score", 75)
+            ),
+            unverified_grail_high_ticket_usd=float(
+                settings.get("alert", {}).get(
+                    "unverified_grail_high_ticket_usd", 300
+                )
             ),
         )
         stage_b_status = ((listing.raw or {}).get("stage_b") or {}).get("status")

@@ -193,6 +193,55 @@ cases:
       item_type_observed: T-shirt
       description_original: "SCAB No Gods artwork graphic tee from 03SS"
 
+  - key: margiela_artisanal_patchwork_trousers_brown
+    cohort: negative
+    human_label: expensive era-tagged trousers / not a real grail
+    prior_observation:
+      source: production_observation
+      outcome: route:grails
+      note: >-
+        Live listing j1236729405 alerted from broad Martin-era/Artisanal and
+        reconstruction wording; user said the $600+ piece was too expensive,
+        did not stand out, and had no genuinely interesting grail factor.
+    acceptable_outcomes: [reject:unverified_high_ticket_not_iconic]
+    listing:
+      title_original: "Maison Martin Margiela◆本人期/アーティザナル/再構築パッチワーク切替/ボトム/M/コーデュロイ/BRW"
+      brand: Maison Martin Margiela
+      category: menswear
+      current_price: 110660
+      buyout_price: 110660
+      starting_price: 100600
+      time_remaining: "4 day(s)"
+      condition: A little damaged/dirty
+      brand_observed: Maison Martin Margiela
+      item_type_observed: M Size
+      category_hierarchy: [Auction, Fashion, Men's, Slacks & Trousers, M Size]
+      description_original: "本人期アーティザナル再構築パッチワーク切替コーデュロイパンツ"
+
+  - key: margiela_artisanal_patchwork_trousers_beige
+    cohort: negative
+    human_label: expensive era-tagged trousers / not a real grail
+    prior_observation:
+      source: production_observation
+      outcome: route:grails
+      note: >-
+        Live sibling listing f1236725856 independently repeated the same false
+        grail thesis; user explicitly rejected both high-priced trousers.
+    acceptable_outcomes: [reject:unverified_high_ticket_not_iconic]
+    listing:
+      title_original: "Maison Martin Margiela◆010/アーティザナル/本人期/再構築パッチワーク切替/ボトム/M/コーデュロイ/BEG"
+      brand: Maison Martin Margiela
+      category: menswear
+      current_price: 99660
+      buyout_price: 99660
+      starting_price: 90600
+      time_remaining: "3 day(s)"
+      condition: Damaged/dirty
+      brand_observed: Maison Martin Margiela
+      item_type_observed: M Size
+      category_hierarchy: [Auction, Fashion, Men's, Slacks & Trousers, M Size]
+      description_original: "010アーティザナル本人期再構築パッチワーク切替コーデュロイパンツ"
+
   - key: chrome_hearts_style_ring
     cohort: negative
     human_label: explicit style reference / not target identity

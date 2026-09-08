@@ -67,6 +67,9 @@ alert:
   archive_watch_min_heat: 70
   archive_directional_min_heat: 55
   archive_directional_min_score: 75
+  # Above this landed cost, an unsupported grail needs a named collection plus
+  # specific design evidence or an explicit iconic-piece signal; heat cannot bypass it.
+  unverified_grail_high_ticket_usd: 300
   buyout_min_score: 78
   ending_min_score: 70
   grail_min_score: 82

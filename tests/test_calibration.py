@@ -25,11 +25,11 @@ def test_calibration_replay_is_fixed_deterministic_and_source_attributed(replay)
 
     assert replay == second
     assert replay["method"] == "fixed observations -> evaluate_listing -> post-detail routing"
-    assert replay["summary"]["cases"] >= 18
+    assert replay["summary"]["cases"] >= 21
     assert replay["summary"]["cohorts"]["positive"] >= 5
     assert replay["summary"]["cohorts"]["negative"] >= 6
     assert replay["summary"]["alignment"].get("misaligned", 0) == 0
-    assert replay["summary"]["known_prior_misroutes_now_suppressed"] == 6
+    assert replay["summary"]["known_prior_misroutes_now_suppressed"] == 8
     assert replay["summary"]["purchased_now_surfaced"] == 2
     assert all(case["prior_observation"].get("source") for case in replay["cases"])
     # The result remains directly serializable for a CLI/report without custom encoders.
@@ -68,6 +68,12 @@ def test_semantic_negative_cases_are_suppressed_before_any_alert_route(replay) -
     media = _case(replay, "number_nine_collection_dvd")["current"]
     kids = _case(replay, "undercover_kids_polo")["current"]
     partial = _case(replay, "number_nine_partial_sale")["current"]
+    margiela_brown = _case(
+        replay, "margiela_artisanal_patchwork_trousers_brown"
+    )["current"]
+    margiela_beige = _case(
+        replay, "margiela_artisanal_patchwork_trousers_beige"
+    )["current"]
 
     assert style["product_scope"]["target_role"] in {"style_reference", "contradicted"}
     assert not style["product_scope"]["acquisition_attributable"]
@@ -76,6 +82,8 @@ def test_semantic_negative_cases_are_suppressed_before_any_alert_route(replay) -
     assert media["product_scope"]["offer_kind"] == "media_ephemera"
     assert kids["product_scope"]["audience"] == "kids"
     assert partial["product_scope"]["offer_clarity"] != "clear"
+    assert margiela_brown["rejection_reason"] == "unverified_high_ticket_not_iconic"
+    assert margiela_beige["rejection_reason"] == "unverified_high_ticket_not_iconic"
 
 
 def test_replay_preserves_auction_maturity_and_verified_comp_semantics(replay) -> None:
