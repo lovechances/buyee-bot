@@ -900,9 +900,9 @@ def score_desirability(profile: FashionProfile, title: str, condition: str | Non
     if profile.product_scope.target_role in {"style_reference", "contradicted"}:
         score = 0
         warnings.append("target name is not manufacturer evidence")
-    if profile.product_scope.offer_kind == "packaging_only":
+    if profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
         score = 0
-        warnings.append("offer is packaging rather than the target product")
+        warnings.append("offer is not the represented fashion product")
     if _has_poor_condition_evidence(condition):
         score -= 15
         warnings.append("poor-condition wording")

@@ -257,6 +257,30 @@ cases:
       item_type_observed: Eyewear case
       description_original: "ケースのみ。サングラス本体なし。"
 
+  - key: number_nine_collection_dvd
+    cohort: negative
+    human_label: collection media / not a garment
+    prior_observation:
+      source: production_observation
+      outcome: route:buyouts
+      note: >-
+        Live listing t1243486740 was a 09AW collection DVD, but keyword-stuffed
+        garment terms caused it to be inferred as a T-shirt.
+    acceptable_outcomes: [reject:offer_scope_mismatch]
+    listing:
+      title_original: "09AWナンバーナイン a closed feeling コレクション DVD number nine レア デニム Tシャツ レザー 宮下"
+      brand: Number (N)ine
+      category: Other
+      current_price: 3000
+      buyout_price: 3000
+      starting_price: 3000
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Number (N)ine
+      item_type_observed: Other
+      category_hierarchy: [Auction, Fashion, Men, Other]
+      description_original: "2009AW A Closed Feeling コレクション映像 DVD"
+
   - key: undercover_kids_polo
     cohort: negative
     human_label: kids item / not adult menswear

@@ -29,7 +29,7 @@ def test_calibration_replay_is_fixed_deterministic_and_source_attributed(replay)
     assert replay["summary"]["cohorts"]["positive"] >= 5
     assert replay["summary"]["cohorts"]["negative"] >= 6
     assert replay["summary"]["alignment"].get("misaligned", 0) == 0
-    assert replay["summary"]["known_prior_misroutes_now_suppressed"] == 5
+    assert replay["summary"]["known_prior_misroutes_now_suppressed"] == 6
     assert replay["summary"]["purchased_now_surfaced"] == 2
     assert all(case["prior_observation"].get("source") for case in replay["cases"])
     # The result remains directly serializable for a CLI/report without custom encoders.
@@ -65,6 +65,7 @@ def test_semantic_negative_cases_are_suppressed_before_any_alert_route(replay) -
     style = _case(replay, "chrome_hearts_style_ring")["current"]
     film = _case(replay, "devil_wears_prada_avv_tee")["current"]
     packaging = _case(replay, "mcqueen_packaging_only_case")["current"]
+    media = _case(replay, "number_nine_collection_dvd")["current"]
     kids = _case(replay, "undercover_kids_polo")["current"]
     partial = _case(replay, "number_nine_partial_sale")["current"]
 
@@ -72,6 +73,7 @@ def test_semantic_negative_cases_are_suppressed_before_any_alert_route(replay) -
     assert not style["product_scope"]["acquisition_attributable"]
     assert film["product_scope"]["target_role"] == "contradicted"
     assert packaging["product_scope"]["offer_kind"] == "packaging_only"
+    assert media["product_scope"]["offer_kind"] == "media_ephemera"
     assert kids["product_scope"]["audience"] == "kids"
     assert partial["product_scope"]["offer_clarity"] != "clear"
 

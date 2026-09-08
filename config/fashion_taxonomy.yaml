@@ -9,6 +9,7 @@ relationship_terms:
 product_scope_terms:
   packaging_only: ["box only", "empty box", "dust bag only", "case only", "本体なし", "箱のみ", "空箱", "保存袋のみ", "ケースのみ", "付属品のみ"]
   container_products: ["sunglasses case", "eyewear case", "eyeglass case", "glasses case", "サングラスケース", "アイウェアケース", "メガネケース", "眼鏡ケース"]
+  media_ephemera: ["blu-ray", "bluray", "dvd", "vhs", "cd", "photo book", "photobook", "lookbook", "catalogue", "catalog", "magazine", "book", "pamphlet", "ブルーレイ", "写真集", "ルックブック", "カタログ", "雑誌", "書籍", "冊子", "パンフレット"]
 
 brands:
   number_nine:

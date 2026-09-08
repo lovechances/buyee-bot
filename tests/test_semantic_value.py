@@ -662,6 +662,131 @@ def test_included_packaging_and_box_logo_do_not_hide_the_actual_product() -> Non
     assert box_logo.product_scope.acquisition_attributable
 
 
+def test_collection_dvd_with_keyword_stuffed_garment_terms_is_media_ephemera() -> None:
+    listing = _listing(
+        "09AWナンバーナイン a closed feeling コレクション DVD number nine "
+        "レア デニム Tシャツ レザー 宮下",
+        price=3_000,
+        buyout=3_000,
+        observed={
+            "category_hierarchy": ["Auction", "Fashion", "Men", "Other"]
+        },
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.product_scope.offer_kind == "media_ephemera"
+    assert evaluation.profile.product_scope.hard_non_target
+    assert not evaluation.profile.product_scope.acquisition_attributable
+    assert evaluation.desirability.score == 0
+    assert evaluation.economics.landed_cost_jpy is None
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).rejection_reason == (
+        "offer_scope_mismatch"
+    )
+
+
+def test_explicit_collection_media_is_recognized_without_structured_category() -> None:
+    dvd = enrich_title("Number (N)ine A Closed Feeling collection DVD")
+    catalog = enrich_title("Undercover 2003 SCAB official catalog")
+
+    assert dvd.product_scope.offer_kind == "media_ephemera"
+    assert catalog.product_scope.offer_kind == "media_ephemera"
+
+
+def test_explicit_media_category_outranks_garment_reference_keywords() -> None:
+    listing = _listing(
+        "Number (N)ine A Closed Feeling DVD cover graphic T-shirt rare denim",
+        observed={
+            "category_hierarchy": ["Collectibles", "Music", "DVD"]
+        },
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.product_scope.offer_kind == "media_ephemera"
+    assert not evaluation.profile.product_scope.acquisition_attributable
+    assert _post_detail_decision(listing, evaluation).rejection_reason == (
+        "offer_scope_mismatch"
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "hierarchy"),
+    (
+        (
+            "Undercover Joy Division CD cover graphic t-shirt",
+            ("Music", "Apparel", "T-shirt"),
+        ),
+        (
+            "UNDERCOVER 音楽 CDカバープリント Tシャツ",
+            ("音楽", "アパレル", "Tシャツ"),
+        ),
+    ),
+)
+def test_media_ancestor_does_not_override_authoritative_apparel_leaf(
+    title: str,
+    hierarchy: tuple[str, ...],
+) -> None:
+    profile = enrich_title(title, category_hierarchy=hierarchy)
+
+    assert profile.product_scope.offer_kind == "product"
+    assert profile.product_scope.acquisition_attributable
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Number (N)ine collection DVD steelbook cover artwork",
+        "Number (N)ine archive DVD special coating art",
+    ),
+)
+def test_substrings_inside_media_nouns_do_not_create_fake_garment_reference(
+    title: str,
+) -> None:
+    profile = enrich_title(title)
+
+    assert profile.product_scope.offer_kind == "media_ephemera"
+    assert not profile.product_scope.acquisition_attributable
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Number (N)ine graphic t-shirt with official collection DVD",
+        "UNDERCOVER Tシャツ 公式DVD付き",
+        "Dior Homme jacket カタログ付属",
+    ),
+)
+def test_fashion_product_bundled_with_included_media_remains_product(
+    title: str,
+) -> None:
+    profile = enrich_title(
+        title,
+        category_hierarchy=("Auction", "Fashion", "Men", "Other"),
+    )
+
+    assert profile.product_scope.offer_kind == "product"
+    assert profile.product_scope.acquisition_attributable
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Undercover A Clockwork Orange DVD cover graphic t-shirt",
+        "Number (N)ine music CD print t-shirt",
+        "Comme des Garcons Homme Plus CDG logo graphic shirt",
+        "Dior book tote bag",
+    ),
+)
+def test_media_references_on_actual_fashion_products_remain_products(title: str) -> None:
+    profile = enrich_title(
+        title,
+        category_hierarchy=("Auction", "Fashion", "Men", "Other"),
+    )
+
+    assert profile.product_scope.offer_kind == "product"
+    assert profile.product_scope.acquisition_attributable
+
+
 def test_incidental_womens_description_does_not_override_explicit_mens_category() -> None:
     listing = _listing(
         "Undercover men's paneled jacket",

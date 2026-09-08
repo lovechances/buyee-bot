@@ -336,7 +336,7 @@ def assess_stage_a(
         reject_reason = "severe_auth_veto"
     elif profile.product_scope.target_role in {"style_reference", "contradicted"}:
         reject_reason = "target_identity_mismatch"
-    elif profile.product_scope.offer_kind == "packaging_only":
+    elif profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
         reject_reason = "offer_scope_mismatch"
     elif profile.product_scope.audience in {"womens", "kids"}:
         reject_reason = "category_mismatch"

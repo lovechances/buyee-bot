@@ -49,7 +49,7 @@ class ProductScope:
     def hard_non_target(self) -> bool:
         return bool(
             self.target_role in {"style_reference", "contradicted"}
-            or self.offer_kind == "packaging_only"
+            or self.offer_kind in {"packaging_only", "media_ephemera"}
             or self.audience in {"womens", "kids"}
         )
 
@@ -333,6 +333,155 @@ def _partial_offer(text: str) -> tuple[str, str | None, str | None]:
     return "clear", None, None
 
 
+def _media_ephemera_offer(
+    scope_title: str,
+    category_hierarchy: tuple[str, ...],
+    terms: list[str],
+) -> str | None:
+    """Identify offered media without blacklisting media-inspired garments."""
+    media_match = _longest_term_match(scope_title, terms)
+    if not media_match:
+        return None
+    hierarchy = [normalize_text(value).casefold() for value in category_hierarchy]
+    media_leaf_values = {
+        "blu-ray",
+        "bluray",
+        "book",
+        "books",
+        "cd",
+        "cds",
+        "dvd",
+        "dvds",
+        "magazine",
+        "magazines",
+        "media",
+        "music",
+        "vhs",
+        "video",
+        "ブルーレイ",
+        "メディア",
+        "音楽",
+        "映像",
+        "本",
+        "書籍",
+        "雑誌",
+    }
+    explicit_media_category = bool(
+        hierarchy and hierarchy[-1].strip(" /＞") in media_leaf_values
+    )
+    if explicit_media_category:
+        # Structured source taxonomy is stronger than title keyword stuffing
+        # or a coincidental garment/reference phrase.
+        return media_match
+
+    garment_terms = _mixed_term_pattern(
+        (
+            "t-shirt",
+            "t shirt",
+            "tshirt",
+            "tee",
+            "shirt",
+            "hoodie",
+            "sweatshirt",
+            "jacket",
+            "coat",
+            "knit",
+            "sweater",
+            "cardigan",
+            "pants",
+            "trousers",
+            "jeans",
+            "boot",
+            "boots",
+            "shoe",
+            "shoes",
+            "bag",
+            "belt",
+            "wallet",
+        ),
+        (
+            "tシャツ",
+            "シャツ",
+            "パーカー",
+            "ジャケット",
+            "コート",
+            "ニット",
+            "カーディガン",
+            "パンツ",
+            "デニム",
+            "ブーツ",
+            "バッグ",
+            "ベルト",
+            "財布",
+        ),
+    )
+    reference_marker = _mixed_term_pattern(
+        ("cover", "art", "artwork", "graphic", "print", "motif", "inspired", "reference"),
+        ("カバー", "アート", "グラフィック", "プリント", "柄", "モチーフ"),
+    )
+    media_terms_pattern = "(?:" + "|".join(
+        _term_pattern(term)
+        for term in sorted(terms, key=lambda value: len(normalize_text(value)), reverse=True)
+    ) + ")"
+    bundled_media = bool(
+        re.search(
+            rf"(?i){garment_terms}.{{0,40}}"
+            rf"(?:with|includes?|including|comes with|w/)\s*"
+            rf"(?:an?\s+|the\s+|official\s+|original\s+|collection\s+)*"
+            rf"{media_terms_pattern}",
+            scope_title,
+        )
+        or re.search(
+            rf"{garment_terms}.{{0,40}}(?:公式|オリジナル)?\s*"
+            rf"{media_terms_pattern}\s*(?:付き|付属|同梱)",
+            scope_title,
+            flags=re.IGNORECASE,
+        )
+    )
+    if bundled_media:
+        return None
+    if re.search(reference_marker, scope_title, flags=re.IGNORECASE) and re.search(
+        garment_terms, scope_title, flags=re.IGNORECASE
+    ):
+        return None
+
+    terminal_other_category = bool(
+        hierarchy and hierarchy[-1] in {"other", "その他", "その他の商品"}
+    )
+    has_fashion_product_noun = bool(
+        re.search(garment_terms, scope_title, flags=re.IGNORECASE)
+    )
+    strong_media_format = normalize_text(media_match).casefold() in {
+        "blu-ray",
+        "bluray",
+        "dvd",
+        "vhs",
+        "cd",
+        "ブルーレイ",
+    }
+    corroborated_other_category = bool(
+        terminal_other_category and (strong_media_format or not has_fashion_product_noun)
+    )
+    media_pattern = _term_pattern(media_match)
+    explicit_media_phrase = bool(
+        re.search(
+            rf"(?i)(?:collection|runway|official|promo(?:tional)?|archive|"
+            rf"コレクション|ランウェイ|公式|販促)\s*{media_pattern}",
+            scope_title,
+        )
+    )
+    terminal_media_noun = bool(
+        re.search(rf"(?i){media_pattern}\s*$", scope_title)
+    )
+    if (
+        corroborated_other_category
+        or explicit_media_phrase
+        or terminal_media_noun
+    ):
+        return media_match
+    return None
+
+
 def analyze_product_scope(
     text: str,
     *,
@@ -415,9 +564,17 @@ def analyze_product_scope(
         normalized,
         [str(term) for term in scope_terms.get("container_products", [])],
     )
+    media_match = _media_ephemera_offer(
+        scope_title_text,
+        category_hierarchy,
+        [str(term) for term in scope_terms.get("media_ephemera", [])],
+    )
     if packaging_match:
         offer_kind = "packaging_only"
         reasons.append(f"offer is packaging/accessory only ({packaging_match})")
+    elif media_match:
+        offer_kind = "media_ephemera"
+        reasons.append(f"offered object is media/ephemera ({media_match})")
     elif container_match:
         offer_kind = "container"
         reasons.append(f"offered product is a container ({container_match})")
@@ -468,6 +625,18 @@ def _term_pattern(term: str) -> str:
     if any(character.isascii() and character.isalnum() for character in normalized):
         return rf"(?<![a-z0-9]){escaped}(?![a-z0-9])"
     return escaped
+
+
+def _mixed_term_pattern(
+    latin_terms: tuple[str, ...], japanese_terms: tuple[str, ...]
+) -> str:
+    """Build boundary-safe Latin alternatives plus Japanese substring terms."""
+    terms = sorted(
+        (*latin_terms, *japanese_terms),
+        key=lambda value: len(normalize_text(value)),
+        reverse=True,
+    )
+    return "(?:" + "|".join(_term_pattern(term) for term in terms) + ")"
 
 
 def _known_partner_at_edge(

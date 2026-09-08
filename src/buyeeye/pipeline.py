@@ -49,7 +49,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "ultra-semantic-value-v3"
+DECISION_LOGIC_VERSION = "ultra-semantic-value-v4"
 
 
 @dataclass
@@ -408,7 +408,7 @@ def _dominant_post_detail_rejection(
         return "malformed_data"
     if profile.product_scope.target_role in {"style_reference", "contradicted"}:
         return "target_identity_mismatch"
-    if profile.product_scope.offer_kind == "packaging_only":
+    if profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
         return "offer_scope_mismatch"
     if profile.product_scope.offer_clarity != "clear":
         return "partial_offer_ambiguous"
@@ -486,10 +486,10 @@ def _post_detail_decision(
             "; ".join(profile.product_scope.reasons[:2]),
             "target_identity_mismatch",
         )
-    if profile.product_scope.offer_kind == "packaging_only":
+    if profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
         return PostDetailDecision(
             None,
-            "the offer is packaging/accessories only, not the represented product",
+            "the offer is non-garment merchandise, not the represented fashion product",
             "offer_scope_mismatch",
         )
     if profile.product_scope.offer_clarity != "clear":
@@ -1017,7 +1017,7 @@ async def scan_once(
                 reason = "missing_title"
             elif scope.target_role in {"style_reference", "contradicted"}:
                 reason = "target_identity_mismatch"
-            elif scope.offer_kind == "packaging_only":
+            elif scope.offer_kind in {"packaging_only", "media_ephemera"}:
                 reason = "offer_scope_mismatch"
             elif scope.offer_clarity != "clear":
                 reason = "partial_offer_ambiguous"
