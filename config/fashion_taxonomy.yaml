@@ -2,7 +2,13 @@ version: 1
 provenance: manual_v1_research
 
 relationship_terms:
-  homage_reference: ["inspired by", "homage", "style", "type", "オマージュ", "タイプ"]
+  style_reference_prefixes: ["inspired by", "inspired", "in the style of", "homage to", "homage", "オマージュ"]
+  style_reference_suffixes: ["inspired", "style", "type", "like", "homage", "風", "タイプ", "系", "スタイル", "オマージュ"]
+  cultural_reference_phrases: ["the devil wears prada", "devil wears prada", "プラダを着た悪魔"]
+
+product_scope_terms:
+  packaging_only: ["box only", "empty box", "dust bag only", "case only", "本体なし", "箱のみ", "空箱", "保存袋のみ", "ケースのみ", "付属品のみ"]
+  container_products: ["sunglasses case", "eyewear case", "eyeglass case", "glasses case", "サングラスケース", "アイウェアケース", "メガネケース", "眼鏡ケース"]
 
 brands:
   number_nine:
@@ -20,16 +26,32 @@ brands:
         terms: ["time migration", "タイム期", "01ss"]
     strong_signals: ["destroy", "mohair", "patchwork", "散弾銃", "音符", "スカル", "宮下", "archive"]
     generic_signals: ["basic", "logo tee", "復刻", "reprint"]
+  takahiromiyashita_thesoloist:
+    canonical: "Takahiromiyashita TheSoloist."
+    aliases: ["takahiromiyashita thesoloist.", "takahiromiyashita thesoloist", "thesoloist", "the soloist", "ソロイスト"]
+  kapital:
+    canonical: "Kapital"
+    aliases: ["kapital", "キャピタル"]
+  hysteric_glamour:
+    canonical: "Hysteric Glamour"
+    aliases: ["hysteric glamour", "ヒステリックグラマー"]
+  lgb:
+    canonical: "L.G.B."
+    aliases: ["l.g.b.", "l.g.b", "lgb", "le grand bleu", "ルグランブルー"]
+  mastermind_japan:
+    canonical: "Mastermind Japan"
+    aliases: ["mastermind japan", "mastermind", "マスターマインドジャパン", "マスターマインド"]
   chrome_hearts:
     canonical: "Chrome Hearts"
     aliases: ["chrome hearts", "chromeheart", "クロムハーツ", "chome hearts"]
     designer: "Richard Stark"
     strong_signals: ["cemetery cross", "cemetery", "dagger", "5dagger", "floral cross", "keeper", "fancy chain", "セメタリー", "クロスボール", "ダガー", "キーパー", "925", "sterling"]
-    generic_signals: ["style", "type", "ノーブランド"]
+    generic_signals: []
     auth_sensitive: true
   dior_homme:
     canonical: "Dior Homme"
     aliases: ["dior homme", "ディオールオム", "dior hedi"]
+    observed_brand_aliases: ["dior"]
     designer: "Hedi Slimane"
     eras:
       hedi_slimane: ["hedi", "エディ", "2001", "2002", "2003", "2004", "2005", "2006", "2007"]
@@ -109,9 +131,14 @@ brands:
     aliases: ["king baby", "キングベイビー"]
     strong_signals: ["skull", "crown", "cross", "925", "sterling"]
     auth_sensitive: true
+  rebuild_by_needles:
+    canonical: "Rebuild by Needles"
+    aliases: ["rebuild by needles", "リビルドバイニードルズ", "リビルド バイ ニードルズ"]
+    observed_brand_aliases: ["needles"]
+    strong_signals: ["rebuild", "再構築", "7 cut", "vintage"]
   needles:
     canonical: "Needles"
-    aliases: ["needles", "ニードルズ", "rebuild by needles", "リビルドバイニードルズ"]
+    aliases: ["needles", "ニードルズ"]
     designer: "Keizo Shimizu"
     strong_signals: ["rebuild", "再構築", "7 cut", "track", "butterfly", "vintage"]
     generic_signals: ["logo tee"]
@@ -121,6 +148,7 @@ brands:
     canonical: "Alexander McQueen"
     aliases: ["alexander mcqueen", "アレキサンダーマックイーン", "アレキサンダー マックイーン"]
     recognition_aliases: ["mcq"]
+    observed_brand_aliases: ["mcqueen"]
     designer: "Lee Alexander McQueen"
     eras:
       lee_mcqueen: ["lee mcqueen", "本人期", "リー期"]
@@ -170,6 +198,58 @@ brands:
     evidence_sources:
       - {name: "Undercover official history", url: "https://undercoverism.com/historyofu", supports: "Jun Takahashi, 1990 founding, Paris and menswear chronology"}
       - {name: "Tokyo Opera City Undercover retrospective", url: "https://www.operacity.jp/ag/exh181/e/list.php", supports: "SCAB, PAPER DOLL, BUT BEAUTIFUL, ARTS & CRAFTS, LESS BUT BETTER seasons"}
+  yohji_yamamoto:
+    canonical: "Yohji Yamamoto"
+    aliases: ["yohji yamamoto", "ヨウジヤマモト"]
+  comme_des_garcons_homme_plus:
+    canonical: "Comme des Garçons Homme Plus"
+    aliases: ["comme des garçons homme plus", "comme des garcons homme plus", "cdg homme plus", "コムデギャルソンオムプリュス", "コム デ ギャルソン オム プリュス"]
+    observed_brand_aliases: ["comme des garçons", "comme des garcons", "comme des garçons homme", "comme des garcons homme"]
+  junya_watanabe:
+    canonical: "Junya Watanabe"
+    aliases: ["junya watanabe", "ジュンヤワタナベ", "ジュンヤ ワタナベ"]
+  issey_miyake:
+    canonical: "Issey Miyake"
+    aliases: ["issey miyake", "イッセイミヤケ", "イッセイ ミヤケ"]
+  final_home:
+    canonical: "Final Home"
+    aliases: ["final home", "ファイナルホーム"]
+  raf_simons:
+    canonical: "Raf Simons"
+    aliases: ["raf simons", "ラフシモンズ", "ラフ シモンズ"]
+  helmut_lang:
+    canonical: "Helmut Lang"
+    aliases: ["helmut lang", "ヘルムートラング", "ヘルムート ラング"]
+  jean_paul_gaultier:
+    canonical: "Jean Paul Gaultier"
+    aliases: ["jean paul gaultier", "jean paul gaulter", "ジャンポールゴルチエ", "ジャンポールゴルチェ"]
+  vivienne_westwood:
+    canonical: "Vivienne Westwood"
+    aliases: ["vivienne westwood", "ヴィヴィアンウエストウッド", "ビビアンウエストウッド"]
+  miu_miu:
+    canonical: "Miu Miu"
+    aliases: ["miu miu", "miumiu", "ミュウミュウ"]
+  gucci:
+    canonical: "Gucci"
+    aliases: ["gucci", "グッチ"]
+  dolce_gabbana:
+    canonical: "Dolce & Gabbana"
+    aliases: ["dolce & gabbana", "dolce&gabbana", "dolce and gabbana", "ドルチェ&ガッバーナ", "ドルチェ＆ガッバーナ", "ドルチェアンドガッバーナ"]
+  roberto_cavalli:
+    canonical: "Roberto Cavalli"
+    aliases: ["roberto cavalli", "ロベルトカヴァリ", "ロベルト カヴァリ"]
+  oakley:
+    canonical: "Oakley"
+    aliases: ["oakley", "オークリー"]
+  enfants_riches_deprimes:
+    canonical: "Enfants Riches Déprimés"
+    aliases: ["enfants riches déprimés", "enfants riches deprimes", "エンファン リッシュ デプリメ"]
+  y_project:
+    canonical: "Y/Project"
+    aliases: ["y/project", "y project", "ワイプロジェクト"]
+  alyx:
+    canonical: "ALYX"
+    aliases: ["1017 alyx 9sm", "alyx", "アリクス"]
   vintage_band_tees:
     canonical: "Vintage Band Tee"
     aliases: ["vintage band tee", "vintage band tees", "vintage band t-shirt", "ヴィンテージ バンドt", "90s バンドt", "バンドtシャツ"]
@@ -177,6 +257,7 @@ brands:
     generic_signals: ["reprint", "復刻", "bootleg style"]
 
 item_types:
+  eyewear_case: ["sunglasses case", "eyewear case", "eyeglass case", "glasses case", "サングラスケース", "アイウェアケース", "メガネケース", "眼鏡ケース"]
   jewelry: ["ring", "necklace", "bracelet", "pendant", "chain", "earring", "リング", "ネックレス", "ブレスレット", "ペンダント", "チェーン", "ピアス"]
   jacket: ["jacket", "blazer", "bomber", "coach jacket", "trucker jacket", "ライダース", "ジャケット", "ブルゾン", "スタジャン", "テーラード", "Gジャン"]
   coat: ["coat", "parka", "trench", "overcoat", "raincoat", "コート", "モッズコート", "トレンチ", "レインコート"]
@@ -185,11 +266,11 @@ item_types:
   t_shirt: ["t-shirt", "t shirt", "tshirt", "tee", "long sleeve tee", "tシャツ", "カットソー", "ロンT"]
   shirt: ["shirt", "button-up", "button up", "button-down", "button down", "open collar", "シャツ", "開襟"]
   denim: ["denim", "jeans", "jean", "デニム", "ジーンズ", "Gパン"]
-  trousers: ["pants", "trousers", "trouser", "slacks", "cargo pants", "shorts", "パンツ", "スラックス", "カーゴ", "ショーツ", "ボトムス"]
+  trousers: ["sweatpants", "sweat pants", "sweats", "pants", "trousers", "trouser", "slacks", "cargo pants", "shorts", "スウェットパンツ", "パンツ", "スラックス", "カーゴ", "ショーツ", "ボトムス"]
   footwear: ["engineer boots", "boots", "boot", "sneaker", "shoes", "loafer", "derby", "sandals", "エンジニアブーツ", "ブーツ", "スニーカー", "シューズ", "ローファー", "サンダル"]
-  bag: ["shoulder bag", "crossbody bag", "tote bag", "backpack", "duffle bag", "bag", "ショルダーバッグ", "トートバッグ", "バックパック", "バッグ", "鞄", "リュック"]
+  bag: ["shoulder bag", "crossbody bag", "tote bag", "backpack", "duffle bag", "briefcase", "bag", "ショルダーバッグ", "トートバッグ", "バックパック", "ブリーフケース", "バッグ", "鞄", "リュック"]
   belt: ["belt", "ベルト"]
-  wallet: ["wallet", "card holder", "coin case", "財布", "カードケース", "コインケース"]
+  wallet: ["wallet", "card holder", "card case", "coin case", "財布", "カードケース", "コインケース"]
   accessory: ["keyholder", "scarf", "hat", "cap", "tie", "gloves", "sunglasses", "キーホルダ", "スカーフ", "帽子", "キャップ", "ネクタイ", "手袋", "サングラス"]
 
 materials:
@@ -201,7 +282,8 @@ materials:
 
 negative_terms:
   irrelevant: ["poster", "figure", "doll", "toy", "phone case", "pants hanger", "ポスター", "フィギュア", "人形", "ぬいぐるみ", "スマホケース", "パンツハンガー"]
-  counterfeit: ["replica", "fake", "faux", "inspired", "style", "type", "レプリカ", "コピー", "タイプ", "ノーブランド", "社外品"]
+  counterfeit: ["counterfeit", "replica", "fake", "偽物", "コピー品", "模倣品", "レプリカ"]
+  non_target_maker: ["no brand", "ノーブランド", "社外品"]
   generic: ["basic", "logo tee", "plain", "simple", "シンプル", "無地", "ノベルティ", "販促", "付録"]
 
 corpus_sources:

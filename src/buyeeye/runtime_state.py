@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import text
 from sqlmodel import Field, SQLModel, select
 
 from .db import DB_PATH, AlertState, get_session, init_db
@@ -42,6 +43,9 @@ class QueryRuntimeState(SQLModel, table=True):
     final_candidates: int = 0
     alerts: int = 0
     failures: int = 0
+    lifetime_first_seen: int | None = Field(default=0)
+    historical_revisits: int | None = Field(default=0)
+    material_state_changes: int | None = Field(default=0)
     last_run_at: datetime | None = None
     next_eligible_at: datetime | None = None
 
@@ -64,6 +68,17 @@ class SeenListing(SQLModel, table=True):
     decision_logic_version: str | None = None
     decision_classification: str | None = None
     decision_at: datetime | None = None
+    # Nullable/additive forensic fields.  They intentionally store only compact,
+    # sanitized decisions; raw marketplace HTML and browser/session data never
+    # belong in SQLite.
+    first_search_page: int | None = None
+    first_search_rank: int | None = None
+    last_search_page: int | None = None
+    last_search_rank: int | None = None
+    first_inspected_at: datetime | None = None
+    last_inspected_at: datetime | None = None
+    latest_trace_json: str | None = None
+    event_history_json: str | None = None
     sightings: int = 1
 
 
@@ -79,6 +94,10 @@ class RuntimeHealthState(SQLModel, table=True):
     consecutive_source_failures: int = 0
     browser_restart_count: int = 0
     alerts_emitted: int = 0
+    # `unique_listings_scanned` predates lifetime-ID telemetry and is retained
+    # as a legacy processed-pass counter. This additive field starts cleanly
+    # at migration time and counts only genuinely first-seen marketplace IDs.
+    lifetime_first_seen_count: int | None = Field(default=0)
     unique_listings_scanned: int = 0
 
 
@@ -133,6 +152,9 @@ class ScanEvent(SQLModel, table=True):
     failed_alerts: int | None = Field(default=0)
     logic_reconsidered: int | None = Field(default=0)
     post_detail_decisions_json: str | None = None
+    lifetime_first_seen: int | None = Field(default=0)
+    historical_revisits: int | None = Field(default=0)
+    material_state_changes: int | None = Field(default=0)
 
 
 @dataclass
@@ -140,6 +162,9 @@ class DedupeResult:
     is_duplicate: bool
     unchanged: bool
     logic_reconsidered: bool = False
+    lifetime_first_seen: bool = False
+    material_state_changed: bool = False
+    revisit_reason: str | None = None
 
 
 def _key(*parts: str) -> str:
@@ -162,6 +187,85 @@ def _json_list(value: str | None) -> list[dict[str, Any]]:
     if not isinstance(decoded, list):
         return []
     return [item for item in decoded if isinstance(item, dict)]
+
+
+_TRACE_MAX_BYTES = 3_000
+_TRACE_HISTORY_MAX_BYTES = 12_000
+_CHEAP_TRACE_RETENTION_DAYS = 14
+_TRACE_PRUNE_INTERVAL = timedelta(hours=6)
+_last_trace_prune_at: datetime | None = None
+
+
+def _short_trace_value(value: Any, limit: int = 180) -> Any:
+    """Keep forensic labels readable without allowing marketplace text blobs."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if not isinstance(value, str):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    if len(value.encode("utf-8")) <= limit:
+        return value
+    return value.encode("utf-8")[: limit - 3].decode("utf-8", errors="ignore") + "..."
+
+
+def _trace_fallback(trace: dict[str, Any]) -> dict[str, Any]:
+    """Retain the cheap-reject decision path when a caller supplies a large trace."""
+    scalar_keys = (
+        "recorded_at",
+        "query",
+        "family",
+        "query_layer",
+        "strategy_id",
+        "strategy_type",
+        "search_page",
+        "search_rank",
+        "title",
+        "current_price_jpy",
+        "buyout_price_jpy",
+        "actionable_price_jpy",
+        "actionable_price_kind",
+        "time_remaining",
+        "auction_maturity",
+        "revisit_reason",
+        "detail_status",
+        "decision",
+        "route",
+        "alert_event",
+    )
+    compact = {
+        key: _short_trace_value(trace[key])
+        for key in scalar_keys
+        if trace.get(key) is not None
+    }
+    stage_a = trace.get("stage_a")
+    if isinstance(stage_a, dict):
+        stage_a_keys = (
+            "selected",
+            "eligible",
+            "eligible_paths",
+            "primary_path",
+            "reject_reason",
+            "inspection_score",
+            "brand_confirmed",
+            "detected_family",
+            "target_brand_match",
+            "category_valid",
+            "item_type",
+            "item_type_confident",
+            "actionable_price",
+            "price_in_discovery_band",
+            "discovery_price_fraction",
+            "actionable_buyout_fraction",
+            "piece_relationship",
+            "hard_veto",
+            "reasons",
+        )
+        compact["stage_a"] = {
+            key: _short_trace_value(stage_a[key])
+            for key in stage_a_keys
+            if stage_a.get(key) is not None
+        }
+    compact["trace_truncated"] = True
+    return compact
 
 
 def _merge_counts(target: dict[str, Any], source: dict[str, Any]) -> None:
@@ -218,7 +322,7 @@ def choose_query(
     ranked: dict[str, list[tuple[float, QuerySpec]]] = {}
     has_market_structure = any(spec.query_layer == "market_structure" for spec in specs)
     shares = (
-        {"broad": 0.35, "medium": 0.20, "surgical": 0.10, "market_structure": 0.35}
+        {"broad": 0.35, "medium": 0.15, "surgical": 0.05, "market_structure": 0.45}
         if has_market_structure
         else {"broad": 0.5, "medium": 0.3, "surgical": 0.2}
     )
@@ -227,7 +331,7 @@ def choose_query(
             shares[layer] = float(value)
     runs_by_layer: dict[str, int] = {}
     runs_by_strategy: dict[str, int] = {}
-    runs_by_identity: dict[str, int] = {}
+    exploration_samples_by_identity: dict[str, int] = {}
     with get_session(db_path) as session:
         recent = session.exec(
             select(ScanEvent)
@@ -251,7 +355,7 @@ def choose_query(
                 if eligible > current:
                     continue
             runs = row.runs if row else 0
-            runs_by_identity[spec.runtime_identity] = runs
+            exploration_samples_by_identity[spec.runtime_identity] = min(2, runs)
             exploration = 8 / (1 + runs)
             staleness = 0.0
             if row and row.last_run_at:
@@ -290,9 +394,11 @@ def choose_query(
                 candidate
             )
         type_shares = {
-            "market_buyout": 0.45,
-            "market_ending": 0.45,
+            "market_buyout": 0.35,
+            "market_ending": 0.25,
+            "market_closing": 0.20,
             "market_price_band": 0.10,
+            "market_explore": 0.10,
         }
         for strategy_type, value in (strategy_shares or {}).items():
             if strategy_type in type_shares and float(value) > 0:
@@ -312,14 +418,21 @@ def choose_query(
             ),
         )
         candidates = by_strategy[selected_type]
-    minimum_runs = min(runs_by_identity[item[1].runtime_identity] for item in candidates)
-    # Every strategy gets two clean exploration samples before yield may create a small lead.
-    allowed_lead = 0 if minimum_runs < 2 else 1
-    candidates = [
-        item
+    # Give every newly introduced strategy two bounded exploration samples,
+    # then let configured priority, cadence and sample-shrunk yield decide.
+    # Capping the comparison at two avoids forcing a new strategy to catch up
+    # with years of lifetime runs while still preventing immediate deletion.
+    minimum_samples = min(
+        exploration_samples_by_identity.get(item[1].runtime_identity, 0)
         for item in candidates
-        if runs_by_identity[item[1].runtime_identity] <= minimum_runs + allowed_lead
-    ]
+    )
+    if minimum_samples < 2:
+        candidates = [
+            item
+            for item in candidates
+            if exploration_samples_by_identity.get(item[1].runtime_identity, 0)
+            == minimum_samples
+        ]
     return max(candidates, key=lambda item: item[0])[1]
 
 
@@ -393,6 +506,15 @@ def record_query_result(
         )
         row.alerts = (row.alerts or 0) + int(getattr(result, "new_alerts", 0))
         row.failures = (row.failures or 0) + int(failed)
+        row.lifetime_first_seen = (row.lifetime_first_seen or 0) + int(
+            getattr(result, "lifetime_first_seen", 0) or 0
+        )
+        row.historical_revisits = (row.historical_revisits or 0) + int(
+            getattr(result, "historical_revisits", 0) or 0
+        )
+        row.material_state_changes = (row.material_state_changes or 0) + int(
+            getattr(result, "material_state_changes", 0) or 0
+        )
         row.last_run_at = now
         row.next_eligible_at = now + timedelta(minutes=spec.cooldown_minutes)
         session.add(
@@ -454,6 +576,11 @@ def record_query_result(
                 post_detail_decisions_json=json.dumps(
                     list(getattr(result, "post_detail_decisions", []) or [])[:6]
                 ),
+                lifetime_first_seen=int(getattr(result, "lifetime_first_seen", 0) or 0),
+                historical_revisits=int(getattr(result, "historical_revisits", 0) or 0),
+                material_state_changes=int(
+                    getattr(result, "material_state_changes", 0) or 0
+                ),
             )
         )
         session.commit()
@@ -473,6 +600,10 @@ def mark_listing_seen(
     allow_logic_reconsideration: bool = False,
     logic_reconsideration_max_age_hours: int = 24,
     logic_reconsideration_max_per_hour: int = 2,
+    fully_evaluated_freshness_hours: int = 24,
+    search_page: int | None = None,
+    search_rank: int | None = None,
+    retry_incomplete_processing: bool = False,
 ) -> DedupeResult:
     init_db(db_path)
     now = datetime.now(UTC)
@@ -495,11 +626,21 @@ def mark_listing_seen(
                     first_strategy_type=strategy_type,
                     last_strategy_id=strategy_id,
                     last_strategy_type=strategy_type,
+                    first_search_page=search_page,
+                    first_search_rank=search_rank,
+                    last_search_page=search_page,
+                    last_search_rank=search_rank,
                     decision_logic_version=decision_logic_version,
                 )
             )
             session.commit()
-            return DedupeResult(False, False, False)
+            return DedupeResult(
+                False,
+                False,
+                False,
+                lifetime_first_seen=True,
+                revisit_reason="lifetime_first_seen",
+            )
         processed = row.last_processed_at
         if processed.tzinfo is None:
             processed = processed.replace(tzinfo=UTC)
@@ -518,6 +659,31 @@ def mark_listing_seen(
             and "selected" not in outcomes.values()
             and (context_outcome == "capped" or (outcomes and context_outcome is None))
         )
+        fully_evaluated = bool(
+            row.decision_classification
+            and (
+                row.decision_classification.startswith("reject:")
+                or row.decision_classification.startswith("final:")
+            )
+        )
+        fully_evaluated_duplicate = bool(
+            unchanged
+            and "selected" in outcomes.values()
+            and fully_evaluated
+            and processed
+            > now - timedelta(hours=max(freshness_hours, fully_evaluated_freshness_hours))
+        )
+        # A terminal classification is recorded only after the full pipeline
+        # pass. If an unexpected exception occurs after this row is reserved,
+        # the daemon's bounded retry must not hide unfinished work for the
+        # normal freshness window.
+        incomplete_processing_retry = bool(
+            retry_incomplete_processing
+            and unchanged
+            and row.decision_classification is None
+            and decision_logic_version
+            and row.decision_logic_version == decision_logic_version
+        )
         version_changed = bool(
             decision_logic_version
             and row.decision_logic_version != decision_logic_version
@@ -527,7 +693,7 @@ def mark_listing_seen(
         )
         logic_reconsidered = False
         if (
-            fresh_duplicate
+            unchanged
             and version_changed
             and context_outcome == "selected"
             and within_reconsideration_age
@@ -557,23 +723,55 @@ def mark_listing_seen(
                 ):
                     logic_reconsidered = True
                     row.decision_logic_version = decision_logic_version
-        duplicate = fresh_duplicate and not stage_a_revisit and not logic_reconsidered
+        duplicate = (
+            (fresh_duplicate and not stage_a_revisit) or fully_evaluated_duplicate
+        ) and not logic_reconsidered and not incomplete_processing_retry
         row.last_seen_at = now
         row.sightings += 1
         if not row.first_query:
             row.first_query = row.query
             row.first_strategy_id = None
             row.first_strategy_type = "legacy_unattributed"
+        if row.first_search_page is None and search_page is not None:
+            row.first_search_page = search_page
+        if row.first_search_rank is None and search_rank is not None:
+            row.first_search_rank = search_rank
         row.query = query
         row.last_strategy_id = strategy_id
         row.last_strategy_type = strategy_type
+        if search_page is not None:
+            row.last_search_page = search_page
+        if search_rank is not None:
+            row.last_search_rank = search_rank
         if not duplicate:
             row.signature = signature
             row.last_processed_at = now
             if decision_logic_version:
                 row.decision_logic_version = decision_logic_version
         session.commit()
-        return DedupeResult(duplicate, unchanged, logic_reconsidered)
+        if duplicate:
+            revisit_reason = "unchanged_fully_evaluated" if fully_evaluated_duplicate else "fresh"
+        elif logic_reconsidered:
+            revisit_reason = "logic_reconsidered"
+        elif not unchanged:
+            revisit_reason = "material_state_changed"
+        elif stage_a_revisit:
+            revisit_reason = "candidate_rotation"
+        elif incomplete_processing_retry:
+            revisit_reason = "incomplete_processing_retry"
+        else:
+            revisit_reason = "freshness_expired"
+        return DedupeResult(
+            duplicate,
+            unchanged,
+            logic_reconsidered,
+            # A failed pass never reached ScanEvent/health accounting. Carry
+            # its first-seen event into the successful bounded retry exactly
+            # as the daemon would have recorded it without the exception.
+            lifetime_first_seen=incomplete_processing_retry,
+            material_state_changed=not unchanged,
+            revisit_reason=revisit_reason,
+        )
 
 
 def record_stage_a_outcomes(
@@ -620,6 +818,165 @@ def record_decision_classifications(
             row.decision_logic_version = decision_logic_version
             row.decision_classification = classification
             row.decision_at = now
+        session.commit()
+
+
+def record_listing_traces(
+    traces: dict[tuple[str, str], dict[str, Any]],
+    db_path: str | Path = DB_PATH,
+) -> None:
+    """Persist compact per-listing diagnostics without retaining raw page content.
+
+    Every processed listing gets one latest snapshot.  History is limited to
+    meaningful candidate/decision transitions and twelve entries, keeping the
+    production volume bounded while still making manual-benchmark misses
+    explainable.
+    """
+    if not traces:
+        return
+    global _last_trace_prune_at
+
+    init_db(db_path)
+    now = datetime.now(UTC)
+    with get_session(db_path) as session:
+        for (source, source_listing_id), trace in traces.items():
+            row = session.get(SeenListing, _key(source, source_listing_id))
+            if row is None:
+                continue
+            compact = dict(trace)
+            compact.setdefault("recorded_at", now.isoformat())
+            encoded = json.dumps(
+                compact, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            # This is a diagnostic summary, not a second raw-listing store.
+            if len(encoded.encode("utf-8")) > _TRACE_MAX_BYTES:
+                compact.pop("reasons", None)
+                compact.pop("evidence", None)
+                compact["trace_truncated"] = True
+                encoded = json.dumps(
+                    compact, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+            if len(encoded.encode("utf-8")) > _TRACE_MAX_BYTES:
+                compact = _trace_fallback(compact)
+                encoded = json.dumps(
+                    compact, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+            if len(encoded.encode("utf-8")) > _TRACE_MAX_BYTES:
+                # Defensive last resort: this remains valid JSON and records
+                # that a diagnostic existed without ever slicing UTF-8/JSON.
+                compact = {
+                    "recorded_at": _short_trace_value(compact.get("recorded_at"), 80),
+                    "trace_truncated": True,
+                }
+                encoded = json.dumps(
+                    compact, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+            row.latest_trace_json = encoded
+
+            stage_a = compact.get("stage_a") or {}
+            selected = bool(stage_a.get("selected"))
+            capped = stage_a.get("reject_reason") == "candidate_budget"
+            detail_status = str(compact.get("detail_status") or "")
+            route = compact.get("route")
+            alert_event = compact.get("alert_event")
+            # A capped card is fully explained by its latest trace and compact
+            # per-context Stage A outcome. Repeating every cap transition in
+            # history would consume persistent volume without adding useful
+            # manual-benchmark evidence.
+            meaningful = bool(
+                selected
+                or detail_status in {"enriched", "failed"}
+                or route
+                or alert_event
+            )
+            if selected:
+                row.first_inspected_at = row.first_inspected_at or now
+                row.last_inspected_at = now
+            if not meaningful:
+                continue
+            history = _json_list(row.event_history_json)
+            event = {
+                "at": _short_trace_value(compact["recorded_at"], 80),
+                "query": _short_trace_value(compact.get("query")),
+                "strategy": _short_trace_value(compact.get("strategy_type")),
+                "stage_a": (
+                    "selected"
+                    if selected
+                    else "capped"
+                    if capped
+                    else _short_trace_value(stage_a.get("reject_reason"))
+                ),
+                "detail": _short_trace_value(detail_status) if detail_status else None,
+                "decision": _short_trace_value(compact.get("decision")),
+                "route": _short_trace_value(route),
+                "alert_event": _short_trace_value(alert_event),
+                "price_jpy": _short_trace_value(
+                    compact.get("actionable_price_jpy")
+                ),
+                "maturity": _short_trace_value(compact.get("auction_maturity")),
+            }
+            fingerprint = json.dumps(
+                {key: value for key, value in event.items() if key != "at"},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            prior_fingerprint = None
+            if history:
+                prior_fingerprint = json.dumps(
+                    {key: value for key, value in history[-1].items() if key != "at"},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            if fingerprint != prior_fingerprint:
+                history.append(event)
+                history = history[-12:]
+                history_encoded = json.dumps(
+                    history,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                while (
+                    len(history_encoded.encode("utf-8")) > _TRACE_HISTORY_MAX_BYTES
+                    and len(history) > 1
+                ):
+                    history.pop(0)
+                    history_encoded = json.dumps(
+                        history,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                row.event_history_json = history_encoded
+        # Cheap Stage A misses are valuable for the imminent manual benchmark,
+        # but retaining their JSON forever would eventually fill the small
+        # Railway volume.  Clear only old never-inspected traces; stable listing
+        # identity, dedupe/classification columns, alert state, and every
+        # inspected candidate history remain untouched. SQLite can reuse the
+        # freed pages without a destructive VACUUM.
+        if (
+            _last_trace_prune_at is None
+            or now - _last_trace_prune_at >= _TRACE_PRUNE_INTERVAL
+        ):
+            cutoff = now - timedelta(days=_CHEAP_TRACE_RETENTION_DAYS)
+            session.exec(
+                text(
+                    """
+                    UPDATE seenlisting
+                    SET latest_trace_json = NULL
+                    WHERE key IN (
+                        SELECT key
+                        FROM seenlisting
+                        WHERE first_inspected_at IS NULL
+                          AND latest_trace_json IS NOT NULL
+                          AND last_processed_at < :cutoff
+                        LIMIT 2000
+                    )
+                    """
+                ),
+                params={"cutoff": cutoff.replace(tzinfo=None).isoformat(sep=" ")},
+            )
+            _last_trace_prune_at = now
         session.commit()
 
 
@@ -680,6 +1037,9 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
         "suppressed_alerts": 0,
         "failed_alerts": 0,
         "logic_reconsidered": 0,
+        "lifetime_first_seen": 0,
+        "historical_revisits": 0,
+        "material_state_changes": 0,
         "routes": {},
         "alert_routes": {},
         "theses": {},
@@ -764,6 +1124,9 @@ def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
             "suppressed_alerts": row.suppressed_alerts or 0,
             "failed_alerts": row.failed_alerts or 0,
             "logic_reconsidered": row.logic_reconsidered or 0,
+            "lifetime_first_seen": row.lifetime_first_seen or 0,
+            "historical_revisits": row.historical_revisits or 0,
+            "material_state_changes": row.material_state_changes or 0,
         }
         for key in numeric:
             totals[key] = int(totals[key]) + mapping[key]
@@ -847,6 +1210,9 @@ def strategy_metrics(
                 "cards": 0,
                 "unique": 0,
                 "duplicates": 0,
+                "lifetime_first_seen": 0,
+                "historical_revisits": 0,
+                "material_state_changes": 0,
                 "brand_confirmed": 0,
                 "category_valid": 0,
                 "stage_a_eligible": 0,
@@ -880,6 +1246,15 @@ def strategy_metrics(
         bucket["cards"] = int(bucket["cards"]) + row.cards_seen
         bucket["unique"] = int(bucket["unique"]) + row.unique_seen
         bucket["duplicates"] = int(bucket["duplicates"]) + row.duplicates
+        bucket["lifetime_first_seen"] = int(bucket["lifetime_first_seen"]) + int(
+            row.lifetime_first_seen or 0
+        )
+        bucket["historical_revisits"] = int(bucket["historical_revisits"]) + int(
+            row.historical_revisits or 0
+        )
+        bucket["material_state_changes"] = int(bucket["material_state_changes"]) + int(
+            row.material_state_changes or 0
+        )
         if row.stage_a_telemetry_version:
             bucket["stage_a_telemetry_scans"] = int(bucket["stage_a_telemetry_scans"]) + 1
             bucket["stage_a_telemetry_unique"] = int(bucket["stage_a_telemetry_unique"]) + (

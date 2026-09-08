@@ -78,7 +78,9 @@ def test_target_configuration_has_no_duplicate_or_alias_families() -> None:
     active = brands["brands"]
     aliases = brands["alias_map"]
 
-    assert len(active) == len(set(active)) == 39
+    assert len(active) == len(set(active)) == 41
+    assert "Alexander McQueen" in active
+    assert "Vintage band tees" in active
     assert active.count("Needles") == 1
     assert "Number Nine" not in active
     assert aliases["NUMBER NINE"] == "Number (N)ine"

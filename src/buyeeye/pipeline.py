@@ -23,19 +23,21 @@ from .db import (
 )
 from .detail_enrichment import BuyeeDetailService, DetailRepository
 from .discord_alerts import alert_thesis, send_listing_alert
-from .discovery import QuerySpec
+from .discovery import QuerySpec, search_page_budget
 from .evaluation import (
     ListingEvaluation,
+    assess_auction_maturity,
     evaluate_listing,
     has_explicit_non_menswear_evidence,
+    has_grail_design_evidence,
     has_specific_archive_context,
-    has_specific_design_evidence,
 )
 from .fashion import enrich_title, is_generic_signal
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
 from .runtime_state import (
     mark_listing_seen,
     record_decision_classifications,
+    record_listing_traces,
     record_stage_a_outcomes,
 )
 from .settings import load_settings
@@ -47,7 +49,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "quality-recall-v2"
+DECISION_LOGIC_VERSION = "ultra-semantic-value-v3"
 
 
 @dataclass
@@ -95,6 +97,9 @@ class ScanResult:
     alert_thesis_counts: dict[str, int] | None = None
     recovery_counts: dict[str, int] | None = None
     logic_reconsidered: int = 0
+    lifetime_first_seen: int = 0
+    historical_revisits: int = 0
+    material_state_changes: int = 0
 
 
 @dataclass(frozen=True)
@@ -125,6 +130,125 @@ class AlertEventDecision:
     legacy_backfill: bool = False
 
 
+def _compact_listing_trace(
+    listing: LiveListing,
+    spec: QuerySpec,
+    classification: str | None,
+) -> dict[str, Any]:
+    """Build a bounded, secret-free explanation of the latest pipeline pass."""
+    raw = listing.raw or {}
+    stage_a_raw = dict(raw.get("stage_a") or {})
+    # Keep the Stage A facts needed to explain a miss, without copying a
+    # second full assessment into every SeenListing row.  The trace is a
+    # rolling diagnostic aid; canonical identity and dedupe state already
+    # live in dedicated columns.
+    stage_a_keys = (
+        "selected",
+        "eligible",
+        "eligible_paths",
+        "primary_path",
+        "inspection_score",
+        "brand_confirmed",
+        "target_brand_match",
+        "category_valid",
+        "item_type",
+        "item_type_confident",
+        "actionable_price",
+        "price_in_discovery_band",
+        "discovery_price_fraction",
+        "actionable_buyout_fraction",
+        "piece_relationship",
+        "hard_veto",
+        "reject_reason",
+    )
+    stage_a = {
+        key: stage_a_raw[key]
+        for key in stage_a_keys
+        if stage_a_raw.get(key) is not None
+        and not (key == "eligible_paths" and not stage_a_raw.get(key))
+    }
+    if stage_a_raw.get("detected_family") not in {None, spec.family}:
+        stage_a["detected_family"] = stage_a_raw["detected_family"]
+    if stage_a_raw.get("reasons"):
+        stage_a["reasons"] = list(stage_a_raw["reasons"])[:2]
+    detail = raw.get("stage_b") or {}
+    intelligence = raw.get("intelligence") or {}
+    diagnostic = raw.get("diagnostic") or {}
+    actionable_price_kind = intelligence.get("actionable_price_kind")
+    if actionable_price_kind == "buyout":
+        actionable_price = listing.buyout_price
+    elif actionable_price_kind == "current_bid":
+        actionable_price = listing.current_price
+    else:
+        actionable_price = None
+    dedupe = raw.get("dedupe") or {}
+    trace: dict[str, Any] = {
+        "query": spec.query,
+        "family": spec.family,
+        "query_layer": spec.query_layer,
+        "strategy_id": spec.strategy_id,
+        "strategy_type": spec.strategy_type,
+        "search_page": raw.get("search_page"),
+        "search_rank": raw.get("search_rank_on_page") or raw.get("search_rank"),
+        "current_price_jpy": listing.current_price,
+        "buyout_price_jpy": listing.buyout_price,
+        "actionable_price_jpy": actionable_price,
+        "actionable_price_kind": actionable_price_kind,
+        "time_remaining": listing.time_remaining,
+        "auction_maturity": intelligence.get("auction_maturity"),
+        "revisit_reason": dedupe.get("revisit_reason"),
+        "stage_a": stage_a,
+        "decision": classification,
+    }
+    trace = {key: value for key, value in trace.items() if value is not None}
+    # Most cards die cheaply at Stage A. Their search context, rank, prices and
+    # rejection features are enough to explain a manual-benchmark miss without
+    # spending scarce persistent-volume space on empty Stage B shells.
+    if not stage_a.get("selected"):
+        return trace
+
+    trace.update({
+        "detail_status": detail.get("status"),
+        "detail_retrieval": detail.get("retrieval"),
+        "detail_error": detail.get("error_type"),
+        "identity": {
+            "brand": listing.brand,
+            "item_type": intelligence.get("item_type"),
+            "score": intelligence.get("identity_score"),
+            "confidence": intelligence.get("identity_confidence"),
+            "relationship": intelligence.get("piece_relationship"),
+            "product_scope": intelligence.get("product_scope"),
+        },
+        "acquisition_value": {
+            "landed_cost_jpy": intelligence.get("landed_cost_jpy"),
+            "directional_score": intelligence.get("directional_score"),
+            "directional_confidence": intelligence.get("directional_confidence"),
+            "us_valuation_state": intelligence.get("valuation_state"),
+            "exact_valuation_confidence": intelligence.get(
+                "exact_valuation_confidence"
+            ),
+            "japan_market_fraction": intelligence.get("japan_market_fraction"),
+            "japan_market_median_jpy": intelligence.get(
+                "japan_market_median_jpy"
+            ),
+        },
+        "evidence": {
+            "us_comp_sources": list(intelligence.get("comp_sources") or [])[:4],
+            "us_comps_accepted": intelligence.get("comps_accepted"),
+            "japan_comp_sources": list(
+                intelligence.get("japan_comp_sources") or []
+            )[:4],
+            "japan_comps_accepted": intelligence.get("japan_comps_accepted"),
+        },
+        "route": diagnostic.get("route"),
+        "route_reason": diagnostic.get("reason"),
+        "rejection_reason": diagnostic.get("rejection_reason"),
+        "alert_event": diagnostic.get("alert_event"),
+        "alert_outcome": diagnostic.get("alert_outcome"),
+    })
+    return trace
+
+
 def _directional_why(evaluation: ListingEvaluation) -> str:
     """Summarize the actual non-FMV evidence behind a directional decision."""
     profile = evaluation.profile
@@ -142,15 +266,15 @@ def _directional_why(evaluation: ListingEvaluation) -> str:
         parts.append(profile.era.value.replace("_", " ").title())
     if evaluation.directional.piece_signals:
         parts.append("/".join(evaluation.directional.piece_signals[:2]))
-    if evaluation.directional.discovery_price_fraction is not None:
-        parts.append(
-            f"price at {evaluation.directional.discovery_price_fraction:.0%} "
-            "of targeted market slice"
-        )
-    elif any(
-        "low absolute downside" in reason
-        for reason in evaluation.directional.reasons
+    if (
+        evaluation.directional.japan_market_fraction is not None
+        and evaluation.directional.japan_market_median_jpy is not None
     ):
+        parts.append(
+            f"{evaluation.directional.japan_market_fraction:.0%} of piece-matched "
+            f"Japan ended median (¥{evaluation.directional.japan_market_median_jpy:,})"
+        )
+    if any("absolute downside" in reason for reason in evaluation.directional.reasons):
         parts.append("low absolute downside")
     return " · ".join(parts[:4]) or "strong directional value evidence"
 
@@ -172,7 +296,62 @@ def _is_relevant(listing: LiveListing) -> bool:
     profile = enrich_title(listing.title_original, listing.brand)
     if any(signal.value.startswith("irrelevant:") for signal in profile.negative_signals):
         return False
-    return profile.brand is not None
+    return bool(
+        profile.brand is not None
+        and not profile.product_scope.hard_non_target
+        and profile.product_scope.acquisition_attributable
+    )
+
+
+def _is_true_grail(
+    evaluation: ListingEvaluation,
+    *,
+    grail_min_heat: int,
+    archive_directional_min_heat: int,
+    archive_directional_min_score: int,
+    allow_medium_identity: bool = False,
+) -> bool:
+    """Require piece evidence beyond a famous collection/season token."""
+    profile = evaluation.profile
+    identity_ok = evaluation.identity.confidence == "high" or (
+        allow_medium_identity and evaluation.identity.confidence == "medium"
+    )
+    if any(
+        "detail enrichment failed" in reason
+        for reason in evaluation.identity.reasons
+    ):
+        return False
+    generic = any(
+        is_generic_signal(signal, profile.relationship)
+        for signal in profile.negative_signals
+    )
+    scoped_product = bool(
+        profile.product_scope.acquisition_attributable
+        and not profile.product_scope.hard_non_target
+        and profile.item_type
+        and profile.category
+        and profile.category.value in {"menswear", "accessory"}
+    )
+    design_specific = has_grail_design_evidence(
+        evaluation.directional.piece_signals
+    )
+    named_piece = bool(
+        has_specific_archive_context(profile)
+        and design_specific
+        and evaluation.desirability.score >= archive_directional_min_heat
+        and evaluation.directional.score >= archive_directional_min_score
+    )
+    exceptional_piece = bool(
+        evaluation.desirability.score >= grail_min_heat
+        and design_specific
+        and len(evaluation.directional.piece_signals) >= 2
+    )
+    return bool(
+        scoped_product
+        and not generic
+        and identity_ok
+        and (named_piece or exceptional_piece)
+    )
 
 
 def _price_is_valid(listing: LiveListing) -> bool:
@@ -227,6 +406,12 @@ def _dominant_post_detail_rejection(
         for price in (listing.current_price, listing.buyout_price, listing.starting_price)
     ):
         return "malformed_data"
+    if profile.product_scope.target_role in {"style_reference", "contradicted"}:
+        return "target_identity_mismatch"
+    if profile.product_scope.offer_kind == "packaging_only":
+        return "offer_scope_mismatch"
+    if profile.product_scope.offer_clarity != "clear":
+        return "partial_offer_ambiguous"
     if evaluation.auth_risk.level == "do_not_touch":
         return "severe_auth_risk"
     if evaluation.auction_maturity.auction_type == "open_auction" and not (
@@ -235,7 +420,7 @@ def _dominant_post_detail_rejection(
         return "immature_auction"
     if (
         irrelevant
-        or has_explicit_non_menswear_evidence(listing)
+        or has_explicit_non_menswear_evidence(listing, profile)
         or not profile.category
         or profile.category.value not in {
             "menswear",
@@ -258,12 +443,6 @@ def _dominant_post_detail_rejection(
         return "seller_risk"
     if evaluation.economics.landed_cost_jpy is None:
         return "price_context_uncertain"
-    if (
-        evaluation.directional.discovery_price_fraction is not None
-        and evaluation.directional.discovery_price_fraction > 0.60
-        and evaluation.desirability.score < 45
-    ):
-        return "price_not_compelling"
     if (
         evaluation.valuation.confidence == "unavailable"
         and evaluation.directional.thesis is None
@@ -288,35 +467,46 @@ def _post_detail_decision(
     economics = evaluation.economics
     risk = evaluation.auth_risk.level
     profile = evaluation.profile
-    homage_reference = bool(
-        profile.relationship and profile.relationship.value == "homage_reference"
-    )
     low_priority_collaboration = bool(
         profile.relationship
         and profile.relationship.provenance.endswith(".collaboration_low_priority")
     )
-    generic = any(
-        is_generic_signal(signal, profile.relationship)
-        for signal in profile.negative_signals
-    )
     irrelevant = any(
         signal.value.startswith("irrelevant:") for signal in profile.negative_signals
     )
-    if risk == "do_not_touch":
-        return PostDetailDecision(None, "severe authentication evidence", "severe_auth_risk")
-    if homage_reference:
+    if profile.product_scope.target_role == "style_reference":
         return PostDetailDecision(
             None,
-            "explicit homage/reference wording is not a core branded piece",
-            "homage_or_secondary_brand",
+            "target name is explicitly a style/reference, not the manufacturer",
+            "target_identity_mismatch",
         )
+    if profile.product_scope.target_role == "contradicted":
+        return PostDetailDecision(
+            None,
+            "; ".join(profile.product_scope.reasons[:2]),
+            "target_identity_mismatch",
+        )
+    if profile.product_scope.offer_kind == "packaging_only":
+        return PostDetailDecision(
+            None,
+            "the offer is packaging/accessories only, not the represented product",
+            "offer_scope_mismatch",
+        )
+    if profile.product_scope.offer_clarity != "clear":
+        return PostDetailDecision(
+            None,
+            "the current price cannot be attributed to one clearly available item",
+            "partial_offer_ambiguous",
+        )
+    if risk == "do_not_touch":
+        return PostDetailDecision(None, "severe authentication evidence", "severe_auth_risk")
     if irrelevant:
         return PostDetailDecision(
             None,
             "detail evidence identifies a non-fashion object",
             "category_mismatch",
         )
-    if has_explicit_non_menswear_evidence(listing):
+    if has_explicit_non_menswear_evidence(listing, profile):
         return PostDetailDecision(
             None,
             "detail category explicitly identifies non-menswear inventory",
@@ -328,26 +518,47 @@ def _post_detail_decision(
             "secondary-brand collaboration lacks independent directional evidence",
             "homage_or_secondary_brand",
         )
+    true_grail = _is_true_grail(
+        evaluation,
+        grail_min_heat=grail_min_heat,
+        archive_directional_min_heat=archive_directional_min_heat,
+        archive_directional_min_score=archive_directional_min_score,
+        allow_medium_identity=(
+            evaluation.auction_maturity.auction_type == "open_auction"
+            and evaluation.auction_maturity.level == "low"
+        ),
+    )
+    credible_economics = bool(
+        economics.opportunity_score >= 70
+        and economics.comp_confidence in {"medium", "high"}
+    )
+    directional_value = evaluation.directional.thesis == "asymmetric_value"
+    actionable_buyout_thesis = bool(
+        evaluation.auction_maturity.actionable_price_kind == "buyout"
+        and (directional_value or credible_economics)
+    )
+    if (
+        evaluation.auction_maturity.auction_type == "open_auction"
+        and evaluation.auction_maturity.level == "low"
+        and not actionable_buyout_thesis
+    ):
+        if true_grail and heat >= archive_watch_min_heat:
+            if risk == "high":
+                return PostDetailDecision(
+                    "review",
+                    "exceptional early archive watch with material identity/auth risk",
+                )
+            return PostDetailDecision(
+                "grails", "early archive discovery; current bid is provisional"
+            )
+        return PostDetailDecision(None, "auction price is still provisional", "immature_auction")
     if risk == "high":
-        if (
-            heat >= 50
-            or economics.opportunity_score >= 70
-            or evaluation.directional.score >= 72
-        ):
+        if true_grail or credible_economics or directional_value:
             return PostDetailDecision(
                 "review",
                 "; ".join(evaluation.auth_risk.reasons[:2]),
             )
         return PostDetailDecision(None, "authentication risk outweighs signal", "seller_risk")
-    if (
-        evaluation.auction_maturity.auction_type == "open_auction"
-        and evaluation.auction_maturity.level == "low"
-    ):
-        if heat >= archive_watch_min_heat and (profile.collection or profile.era):
-            return PostDetailDecision(
-                "grails", "early archive discovery; current bid is provisional"
-            )
-        return PostDetailDecision(None, "auction price is still provisional", "immature_auction")
     meaningful_auth_concern = any(
         phrase in " ".join(evaluation.auth_risk.reasons).lower()
         for phrase in (
@@ -356,10 +567,7 @@ def _post_detail_decision(
             "detail-photo coverage unavailable",
         )
     )
-    if meaningful_auth_concern and (
-        evaluation.directional.thesis == "asymmetric_value"
-        or economics.opportunity_score >= 70
-    ):
+    if meaningful_auth_concern and (directional_value or credible_economics):
         return PostDetailDecision(
             "review", "compelling opportunity with material authentication uncertainty"
         )
@@ -369,76 +577,41 @@ def _post_detail_decision(
         and profile.material
         and profile.material.value == "silver"
         and heat >= silver_min_heat
-        and (
-            evaluation.directional.thesis == "asymmetric_value"
-            or (
-                economics.opportunity_score >= 70
-                and economics.comp_confidence in {"medium", "high"}
-            )
-            or heat >= grail_min_heat
-        )
+        and (directional_value or credible_economics or true_grail)
     ):
         return PostDetailDecision(
             "silver", "recognizable silver-jewelry candidate with strong piece signals"
         )
     if (
-        listing.buyout_price is not None
-        and economics.opportunity_score >= 70
-        and economics.comp_confidence in {"medium", "high"}
+        evaluation.auction_maturity.actionable_price_kind == "buyout"
+        and credible_economics
     ):
         return PostDetailDecision("buyouts", "strong sold-comp economics at a fixed buyout")
-    if listing.buyout_price is not None and evaluation.directional.thesis == "asymmetric_value":
+    if (
+        evaluation.auction_maturity.actionable_price_kind == "buyout"
+        and directional_value
+    ):
         return PostDetailDecision("buyouts", _directional_why(evaluation))
     remaining = _minutes_remaining(listing.time_remaining)
     if (
-        remaining is not None
+        evaluation.auction_maturity.auction_type == "open_auction"
+        and evaluation.auction_maturity.actionable_price_kind == "current_bid"
+        and remaining is not None
         and remaining <= ending_threshold_minutes
-        and (
-            heat >= 70
-            or evaluation.directional.thesis == "asymmetric_value"
-            or (
-                economics.opportunity_score >= 70
-                and economics.comp_confidence in {"medium", "high"}
-            )
-        )
+        and (directional_value or credible_economics or true_grail)
     ):
         return PostDetailDecision(
             "ending", "qualifying opportunity ending within the configured threshold"
         )
-    if (
-        ((listing.raw or {}).get("stage_b") or {}).get("status") == "enriched"
-        and evaluation.identity.confidence == "high"
-        and evaluation.directional.confidence in {"medium", "high"}
-        and evaluation.directional.score >= archive_directional_min_score
-        and heat >= archive_directional_min_heat
-        and has_specific_archive_context(profile)
-        and bool(evaluation.directional.piece_signals)
-        and has_specific_design_evidence(evaluation.directional.piece_signals)
-        and not generic
-        and profile.item_type
-        and profile.category
-        and profile.category.value in {"menswear", "accessory"}
-    ):
-        return PostDetailDecision(
-            "grails",
-            "strong named archive identity and piece-specific evidence",
+    if true_grail:
+        reason = (
+            "strong named archive identity and piece-specific evidence"
+            if has_specific_archive_context(profile)
+            else "exceptional piece-specific archive evidence"
         )
-    if heat >= grail_min_heat:
-        return PostDetailDecision("grails", "high piece-specific closet heat")
-    if (
-        economics.opportunity_score >= 70
-        and economics.comp_confidence in {"medium", "high"}
-        and heat >= 65
-    ):
-        if meaningful_auth_concern:
-            return PostDetailDecision(
-                "review", "strong economics with material authentication uncertainty"
-            )
         return PostDetailDecision(
-            "grails", "piece-aware sold comps show a compelling archive opportunity"
+            "grails", reason
         )
-    if evaluation.directional.thesis == "asymmetric_value":
-        return PostDetailDecision("grails", _directional_why(evaluation))
     return PostDetailDecision(
         None,
         "candidate did not meet a final route",
@@ -497,9 +670,10 @@ def _observation_maturity_state(
     listing: LiveListing,
     settings: dict[str, Any] | None = None,
 ) -> str:
-    if listing.buyout_price is not None:
+    maturity = assess_auction_maturity(listing, settings)
+    if maturity.auction_type == "fixed_price":
         return "fixed_buyout"
-    remaining = _minutes_remaining(listing.time_remaining)
+    remaining = maturity.remaining_minutes
     if remaining is None:
         return "unknown"
     alert = (settings or {}).get("alert", {})
@@ -507,7 +681,7 @@ def _observation_maturity_state(
         return "ending"
     if remaining <= int(alert.get("auction_alert_max_remaining_hours", 12)) * 60:
         return "mature"
-    return "early"
+    return "early_with_buyout" if maturity.actionable_price_kind == "buyout" else "early"
 
 
 def _signature(
@@ -552,10 +726,10 @@ def _alert_material_snapshot(
         )
     )
     maturity_state = _observation_maturity_state(listing, settings)
-    if listing.buyout_price is not None:
+    if evaluation.auction_maturity.actionable_price_kind == "buyout":
         price_jpy = listing.buyout_price
         price_kind = "buyout"
-    elif evaluation.auction_maturity.price_actionable:
+    elif evaluation.auction_maturity.actionable_price_kind == "current_bid":
         price_jpy = listing.current_price
         price_kind = "current_bid"
     else:
@@ -585,6 +759,7 @@ def _alert_event_decision(
     price_drop_fraction: float = 0.15,
     price_drop_min_jpy: int = 1_000,
     price_drop_absolute_jpy: int = 5_000,
+    price_drop_absolute_min_fraction: float = 0.05,
 ) -> AlertEventDecision:
     """Decide explicit user-action events; route/display drift is never sufficient."""
     if previous is None:
@@ -617,7 +792,10 @@ def _alert_event_decision(
         fraction = drop / max(1, previous.last_material_price_jpy)
         if (
             (drop >= price_drop_min_jpy and fraction >= price_drop_fraction)
-            or drop >= price_drop_absolute_jpy
+            or (
+                drop >= price_drop_absolute_jpy
+                and fraction >= price_drop_absolute_min_fraction
+            )
         ):
             event = "material_price_drop"
 
@@ -679,8 +857,9 @@ async def scan_once(
         )
     )
     query_text = spec.query
+    scanner_settings = settings.get("scanner", {})
     source = BuyeeAuthenticatedSource(
-        max_pages=int(settings.get("scanner", {}).get("search_pages_per_query", 2)),
+        max_pages=search_page_budget(spec, scanner_settings),
         search_filters=spec.search_filters,
         discovery_context=spec.discovery_observation(),
     )
@@ -723,6 +902,11 @@ async def scan_once(
                 query_text,
                 db_path,
                 freshness_hours=int(settings.get("scanner", {}).get("listing_dedupe_hours", 6)),
+                fully_evaluated_freshness_hours=int(
+                    settings.get("scanner", {}).get(
+                        "fully_evaluated_dedupe_hours", 24
+                    )
+                ),
                 strategy_id=spec.strategy_id,
                 strategy_type=spec.strategy_type,
                 family=spec.family,
@@ -738,7 +922,25 @@ async def scan_once(
                         "decision_logic_reconsideration_max_per_hour", 2
                     )
                 ),
+                search_page=(listing.raw or {}).get("search_page"),
+                search_rank=(listing.raw or {}).get("search_rank_on_page")
+                or (listing.raw or {}).get("search_rank"),
+                retry_incomplete_processing=True,
             )
+            listing.raw = {
+                **(listing.raw or {}),
+                "dedupe": {
+                    "lifetime_first_seen": seen.lifetime_first_seen,
+                    "material_state_changed": seen.material_state_changed,
+                    "revisit_reason": seen.revisit_reason,
+                },
+            }
+            if seen.lifetime_first_seen:
+                result.lifetime_first_seen += 1
+            else:
+                result.historical_revisits += 1
+            if seen.material_state_changed:
+                result.material_state_changes += 1
             if seen.logic_reconsidered:
                 logic_reconsideration_used = True
                 result.logic_reconsidered += 1
@@ -810,24 +1012,66 @@ async def scan_once(
             funnel["category_valid"] += 1
         if not _is_relevant(listing):
             result.rejected_irrelevant += 1
-            reason = (
-                "missing_title"
-                if not listing.title_original
-                else "irrelevant_signal"
-                if any(
-                    signal.value.startswith("irrelevant:")
-                    for signal in evaluation.profile.negative_signals
-                )
-                else "brand_unresolved"
-            )
+            scope = evaluation.profile.product_scope
+            if not listing.title_original:
+                reason = "missing_title"
+            elif scope.target_role in {"style_reference", "contradicted"}:
+                reason = "target_identity_mismatch"
+            elif scope.offer_kind == "packaging_only":
+                reason = "offer_scope_mismatch"
+            elif scope.offer_clarity != "clear":
+                reason = "partial_offer_ambiguous"
+            elif scope.audience in {"womens", "kids"}:
+                reason = "category_mismatch"
+            elif any(
+                signal.value.startswith("irrelevant:")
+                for signal in evaluation.profile.negative_signals
+            ):
+                reason = "irrelevant_signal"
+            else:
+                reason = "brand_unresolved"
+            listing.raw = {
+                **(listing.raw or {}),
+                "stage_a": {
+                    "selected": False,
+                    "eligible": False,
+                    "brand_confirmed": confirmed,
+                    "detected_family": family,
+                    "category_valid": category_valid,
+                    "item_type_confident": evaluation.profile.item_type is not None,
+                    "hard_veto": True,
+                    "reject_reason": reason,
+                    "reasons": list(scope.reasons),
+                },
+            }
             assert result.stage_a_reject_counts is not None
             result.stage_a_reject_counts[reason] = result.stage_a_reject_counts.get(reason, 0) + 1
+            decision_classifications[(listing.source, listing.source_listing_id)] = (
+                f"stage_a:{reason}"
+            )
             continue
         if not _price_is_valid(listing):
             result.rejected_invalid += 1
+            listing.raw = {
+                **(listing.raw or {}),
+                "stage_a": {
+                    "selected": False,
+                    "eligible": False,
+                    "brand_confirmed": confirmed,
+                    "detected_family": family,
+                    "category_valid": category_valid,
+                    "item_type_confident": evaluation.profile.item_type is not None,
+                    "hard_veto": True,
+                    "reject_reason": "invalid_price",
+                    "reasons": ["card contains no plausible acquisition price"],
+                },
+            }
             assert result.stage_a_reject_counts is not None
             result.stage_a_reject_counts["invalid_price"] = (
                 result.stage_a_reject_counts.get("invalid_price", 0) + 1
+            )
+            decision_classifications[(listing.source, listing.source_listing_id)] = (
+                "stage_a:invalid_price"
             )
             continue
         valid_listings.append(listing)
@@ -866,6 +1110,9 @@ async def scan_once(
             reason = "candidate_budget" if capped else assessment.reject_reason or "ineligible"
             assert result.stage_a_reject_counts is not None
             result.stage_a_reject_counts[reason] = result.stage_a_reject_counts.get(reason, 0) + 1
+            decision_classifications[(listing.source, listing.source_listing_id)] = (
+                f"stage_a:{reason}"
+            )
     if global_dedupe:
         record_stage_a_outcomes(
             {
@@ -876,7 +1123,7 @@ async def scan_once(
                     if listing.source_listing_id in capped_ids
                     else "ineligible"
                 )
-                for listing in valid_listings
+                for listing in listings
             },
             db_path,
             strategy_type=spec.strategy_type,
@@ -887,7 +1134,8 @@ async def scan_once(
             DetailRepository(
                 db_path,
                 ttl_hours=int(settings.get("detail", {}).get("cache_ttl_hours", 24)),
-            )
+            ),
+            force_open_auction_refresh_minutes=ending_threshold,
         )
         try:
             result.stage_b_enriched, result.stage_b_failed = await detail_service.enrich(
@@ -980,15 +1228,38 @@ async def scan_once(
                 "exact_valuation_confidence": evaluation.valuation.confidence,
                 "identity_confidence": evaluation.identity.confidence,
                 "identity_score": evaluation.identity.score,
+                "item_type": (
+                    evaluation.profile.item_type.value
+                    if evaluation.profile.item_type
+                    else None
+                ),
                 "piece_relationship": (
                     evaluation.profile.relationship.value
                     if evaluation.profile.relationship
                     else "uncertain"
                 ),
-                "discovery_price_fraction": evaluation.directional.discovery_price_fraction,
+                "product_scope": {
+                    "target_role": evaluation.profile.product_scope.target_role,
+                    "offer_kind": evaluation.profile.product_scope.offer_kind,
+                    "audience": evaluation.profile.product_scope.audience,
+                    "offer_clarity": evaluation.profile.product_scope.offer_clarity,
+                    "remaining_variant": evaluation.profile.product_scope.remaining_variant,
+                    "acquisition_attributable": (
+                        evaluation.profile.product_scope.acquisition_attributable
+                    ),
+                    "reasons": list(evaluation.profile.product_scope.reasons),
+                },
+                "landed_cost_jpy": evaluation.economics.landed_cost_jpy,
+                "japan_market_fraction": evaluation.directional.japan_market_fraction,
+                "japan_market_median_jpy": (
+                    evaluation.directional.japan_market_median_jpy
+                ),
                 "directional_piece_signals": list(evaluation.directional.piece_signals),
                 "auction_maturity": evaluation.auction_maturity.level,
                 "price_actionable": evaluation.auction_maturity.price_actionable,
+                "actionable_price_kind": (
+                    evaluation.auction_maturity.actionable_price_kind
+                ),
             },
         }
         if listing.source_listing_id not in stage_b_ids:
@@ -1027,6 +1298,12 @@ async def scan_once(
                 bucket = result.confidence_counts.setdefault(dimension, {})
                 bucket[confidence] = bucket.get(confidence, 0) + 1
         if decision.route is None:
+            listing.raw["diagnostic"] = {
+                "route": None,
+                "reason": decision.reason,
+                "rejection_reason": decision.rejection_reason,
+                "alert_outcome": "not_eligible",
+            }
             result.below_threshold += 1
             if stage_b_status == "enriched":
                 result.stage_b_rejected += 1
@@ -1056,7 +1333,9 @@ async def scan_once(
                             if evaluation.profile.item_type
                             else None
                         ),
-                        "price_fraction": evaluation.directional.discovery_price_fraction,
+                        "japan_market_fraction": (
+                            evaluation.directional.japan_market_fraction
+                        ),
                         "price_actionable": evaluation.auction_maturity.price_actionable,
                         "risk": evaluation.auth_risk.level,
                         "rejection_reason": rejection_reason,
@@ -1074,6 +1353,12 @@ async def scan_once(
         decision_classifications[(listing.source, listing.source_listing_id)] = (
             f"final:{route}:{thesis}"
         )
+        listing.raw["diagnostic"] = {
+            "route": route,
+            "reason": reason,
+            "rejection_reason": None,
+            "alert_outcome": "pending",
+        }
         result.opportunity_counts[opportunity_kind] = (
             result.opportunity_counts.get(opportunity_kind, 0) + 1
         )
@@ -1094,7 +1379,7 @@ async def scan_once(
                         if evaluation.profile.item_type
                         else None
                     ),
-                    "price_fraction": evaluation.directional.discovery_price_fraction,
+                    "japan_market_fraction": evaluation.directional.japan_market_fraction,
                     "price_actionable": evaluation.auction_maturity.price_actionable,
                     "risk": evaluation.auth_risk.level,
                     "route": route,
@@ -1102,6 +1387,7 @@ async def scan_once(
                 }
             )
         if not send_alerts:
+            listing.raw["diagnostic"]["alert_outcome"] = "disabled"
             continue
         previous = before[listing.source_listing_id]
         material = _alert_material_snapshot(listing, evaluation, route, thesis, settings)
@@ -1121,8 +1407,17 @@ async def scan_once(
             price_drop_absolute_jpy=int(
                 alert_settings.get("material_price_drop_absolute_jpy", 5_000)
             ),
+            price_drop_absolute_min_fraction=float(
+                alert_settings.get(
+                    "material_price_drop_absolute_min_fraction", 0.05
+                )
+            ),
         )
         if alert_event.legacy_backfill:
+            listing.raw["diagnostic"].update(
+                alert_event=alert_event.event,
+                alert_outcome="suppressed",
+            )
             backfill_alert_material_state(
                 listing.source,
                 listing.source_listing_id,
@@ -1139,12 +1434,27 @@ async def scan_once(
             result.suppressed_alerts += 1
             continue
         if not alert_event.should_alert:
+            listing.raw["diagnostic"].update(
+                alert_event=alert_event.event,
+                alert_outcome="suppressed",
+            )
+            if alert_event.event.startswith("cooldown:"):
+                # The material event is still pending because AlertState was
+                # intentionally left unchanged.  Do not let the 24-hour
+                # fully-evaluated TTL hide it past the alert cooldown.
+                decision_classifications[
+                    (listing.source, listing.source_listing_id)
+                ] = f"pending_alert:{alert_event.event}"
             result.suppressed_alerts += 1
             continue
         sent, _, _ = send_listing_alert(
             listing, route, reason, evaluation.desirability.score, evaluation
         )
         if sent:
+            listing.raw["diagnostic"].update(
+                alert_event=alert_event.event,
+                alert_outcome="sent",
+            )
             save_alert_state(
                 listing.source,
                 listing.source_listing_id,
@@ -1167,6 +1477,16 @@ async def scan_once(
             assert result.alert_thesis_counts is not None
             result.alert_thesis_counts[thesis] = result.alert_thesis_counts.get(thesis, 0) + 1
         else:
+            listing.raw["diagnostic"].update(
+                alert_event=alert_event.event,
+                alert_outcome="failed",
+            )
+            # Delivery did not advance AlertState, so this remains retryable
+            # on the normal listing revisit window rather than the 24-hour
+            # fully-evaluated window.
+            decision_classifications[
+                (listing.source, listing.source_listing_id)
+            ] = f"pending_alert:delivery_failed:{alert_event.event}"
             result.failed_alerts += 1
     result.new_rows, result.updated_rows = save_listings(listings, db_path)
     result.comp_cache_hits = comp_service.cache_hits + japan_comp_service.cache_hits
@@ -1177,6 +1497,20 @@ async def scan_once(
             db_path,
             decision_logic_version=DECISION_LOGIC_VERSION,
         )
+        traces: dict[tuple[str, str], dict[str, Any]] = {}
+        for listing in listings:
+            key = (listing.source, listing.source_listing_id)
+            classification = decision_classifications.get(key)
+            if classification is None:
+                stage_a = (listing.raw or {}).get("stage_a") or {}
+                if stage_a.get("selected"):
+                    classification = "stage_a:selected"
+                elif stage_a.get("reject_reason"):
+                    classification = f"stage_a:{stage_a['reject_reason']}"
+                else:
+                    classification = "stage_a:ineligible"
+            traces[key] = _compact_listing_trace(listing, spec, classification)
+        record_listing_traces(traces, db_path)
     return result
 
 

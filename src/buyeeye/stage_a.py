@@ -21,6 +21,7 @@ class StageAAssessment:
     detected_family: str | None
     target_brand_match: bool
     category_valid: bool
+    item_type: str | None
     item_type_confident: bool
     actionable_price: bool
     price_in_discovery_band: bool
@@ -46,6 +47,7 @@ class StageAAssessment:
             "detected_family": self.detected_family,
             "target_brand_match": self.target_brand_match,
             "category_valid": self.category_valid,
+            "item_type": self.item_type,
             "item_type_confident": self.item_type_confident,
             "actionable_price": self.actionable_price,
             "price_in_discovery_band": self.price_in_discovery_band,
@@ -60,7 +62,7 @@ class StageAAssessment:
 
 PATH_ORDER = {
     "silver_jewelry": 5,
-    "market_value": 4,
+    "market_buyout_inspection": 4,
     "ending_auction": 3,
     "semantic_archive": 2,
     "unknown_interesting": 1,
@@ -115,7 +117,7 @@ def _discovery_price_context(
     filters = spec.search_filters
     if not filters:
         return False, None, None
-    if spec.strategy_type == "market_buyout":
+    if spec.strategy_type in {"market_buyout", "market_explore"}:
         price = getattr(listing, "buyout_price", None)
         minimum = filters.min_buyout_price_jpy
         maximum = filters.max_buyout_price_jpy
@@ -135,7 +137,7 @@ def _actionable_buyout_context(listing: Any, spec: QuerySpec) -> tuple[bool, flo
     buyout = getattr(listing, "buyout_price", None)
     if filters is None or buyout is None:
         return False, None
-    if spec.strategy_type == "market_buyout":
+    if spec.strategy_type in {"market_buyout", "market_explore"}:
         minimum = filters.min_buyout_price_jpy
         maximum = filters.max_buyout_price_jpy
     else:
@@ -208,7 +210,12 @@ def assess_stage_a(
             config.get("low_priority_collaboration_adjustment", -8)
         )
     homage_or_reference = relationship == "homage_reference"
-    hard_veto = evaluation.auth_risk.level == "do_not_touch"
+    severe_auth_veto = evaluation.auth_risk.level == "do_not_touch"
+    scope_veto = bool(
+        profile.product_scope.hard_non_target
+        or not profile.product_scope.acquisition_attributable
+    )
+    hard_veto = severe_auth_veto or scope_veto
     piece_context = bool(
         item_confident
         or profile.era
@@ -255,13 +262,14 @@ def assess_stage_a(
         and not generic_or_junk
         and not homage_or_reference
     ):
-        paths.append("market_value")
+        paths.append("market_buyout_inspection")
         reasons.append("target-brand actionable buyout inside its discovery context")
 
     if (
         is_market
-        and spec.strategy_type == "market_ending"
+        and spec.strategy_type in {"market_ending", "market_closing"}
         and evaluation.auction_maturity.auction_type == "open_auction"
+        and evaluation.auction_maturity.actionable_price_kind == "current_bid"
         and confirmed
         and target_match
         and category_valid
@@ -308,7 +316,10 @@ def assess_stage_a(
     priority += 5 if category_valid else 0
     priority += 10 if getattr(listing, "buyout_price", None) is not None else 0
     priority += (
-        7 if evaluation.auction_maturity.auction_type == "open_auction" and actionable else 0
+        7
+        if evaluation.auction_maturity.auction_type == "open_auction"
+        and evaluation.auction_maturity.actionable_price_kind == "current_bid"
+        else 0
     )
     priority += 4 if is_market else 0
     priority += min(8, 2 * len(evaluation.directional.piece_signals))
@@ -321,8 +332,16 @@ def assess_stage_a(
         priority -= 12
 
     primary = max(paths, key=lambda path: PATH_ORDER[path]) if paths else None
-    if hard_veto:
+    if severe_auth_veto:
         reject_reason = "severe_auth_veto"
+    elif profile.product_scope.target_role in {"style_reference", "contradicted"}:
+        reject_reason = "target_identity_mismatch"
+    elif profile.product_scope.offer_kind == "packaging_only":
+        reject_reason = "offer_scope_mismatch"
+    elif profile.product_scope.audience in {"womens", "kids"}:
+        reject_reason = "category_mismatch"
+    elif profile.product_scope.offer_clarity != "clear":
+        reject_reason = "partial_offer_ambiguous"
     elif homage_or_reference:
         reject_reason = "homage_or_reference"
     elif not confirmed and heat < archive_threshold:
@@ -334,9 +353,9 @@ def assess_stage_a(
     elif generic_or_junk and heat < archive_threshold:
         reject_reason = "generic_or_junk"
     elif (
-        spec.strategy_type == "market_ending"
+        spec.strategy_type in {"market_ending", "market_closing"}
         and evaluation.auction_maturity.auction_type == "open_auction"
-        and not actionable
+        and evaluation.auction_maturity.actionable_price_kind != "current_bid"
         and heat < archive_threshold
     ):
         reject_reason = "immature_auction"
@@ -354,6 +373,7 @@ def assess_stage_a(
         detected_family=family,
         target_brand_match=target_match,
         category_valid=category_valid,
+        item_type=profile.item_type.value if profile.item_type else None,
         item_type_confident=item_confident,
         actionable_price=actionable,
         price_in_discovery_band=in_band,

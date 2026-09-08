@@ -32,6 +32,30 @@ class ParserAnomalyError(RuntimeError):
     pass
 
 
+_PAGINATION_PAGE_PATTERN = re.compile(
+    r'''["']?page["']?\s*:\s*["']?(\d+)["']?''',
+    flags=re.IGNORECASE,
+)
+
+
+def _bound_page_number(data_bind: str | None) -> int | None:
+    """Read Buyee's Knockout pagination target without guessing a URL parameter."""
+    match = _PAGINATION_PAGE_PATTERN.search(str(data_bind or ""))
+    return int(match.group(1)) if match else None
+
+
+def _next_page_number_from_pagination_html(
+    pagination_html: str, current_page: int
+) -> int | None:
+    """Return only the verified next sequential page exposed by Buyee's paginator."""
+    soup = BeautifulSoup(pagination_html or "", "lxml")
+    expected = current_page + 1
+    for anchor in soup.select(".page_navi a[data-bind]"):
+        if _bound_page_number(anchor.get("data-bind")) == expected:
+            return expected
+    return None
+
+
 @dataclass
 class LiveListing:
     source: str
@@ -187,30 +211,48 @@ class BuyeeAuthenticatedSource(ListingSource):
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(8000)
                 listing_script = """
-                    () => Array.from(document.querySelectorAll('a[href]'))
-                        .map(a => {
-                            const card = a.closest('li');
-                            const titleNode = card?.querySelector(
-                                '.top-items__title, .top-items__name, [data-item-title], h2, h3'
-                            );
-                            return {
-                            href: a.href,
-                            text: (card?.innerText || a.textContent || '').replace(/\\s+/g, ' ').trim(),
-                            title: (a.textContent || '').replace(/\\s+/g, ' ').trim() || titleNode?.textContent?.trim() || a.getAttribute('title') || a.getAttribute('aria-label') || '',
-                            image_url: card?.querySelector('img')?.src || a.querySelector('img')?.src || '',
-                            image_alt: card?.querySelector('img')?.alt || a.querySelector('img')?.alt || '',
-                            data_title: a.getAttribute('data-title') || ''
-                            };
-                        })
-                        .filter(x => x.href.includes('/item/jdirectitems/auction/'))
-                        .slice(0, 500)
+                    () => {
+                      const resultLinks = Array.from(document.querySelectorAll(
+                        'a[href*="/item/jdirectitems/auction/"]'
+                      ));
+                      const cards = [...new Set(resultLinks.map(a => a.closest('li')).filter(Boolean))];
+                      return cards.map(card => {
+                        const links = Array.from(card.querySelectorAll(
+                          'a[href*="/item/jdirectitems/auction/"]'
+                        ));
+                        const titleLink = card.querySelector(
+                          '.itemCard__itemName a[href*="/item/jdirectitems/auction/"]'
+                        );
+                        const link = titleLink || links[0];
+                        const titleNode = card.querySelector(
+                          '.itemCard__itemName, .top-items__title, .top-items__name, '
+                          + '[data-item-title], h2, h3'
+                        );
+                        const image = card.querySelector('img');
+                        return {
+                          href: link?.href || '',
+                          text: (card.innerText || '').replace(/\\s+/g, ' ').trim(),
+                          item_title: (titleNode?.textContent || '').replace(/\\s+/g, ' ').trim(),
+                          title: (titleLink?.textContent || link?.getAttribute('title')
+                            || link?.getAttribute('aria-label') || '')
+                            .replace(/\\s+/g, ' ').trim(),
+                          image_url: image?.currentSrc || image?.src || '',
+                          image_alt: image?.alt || '',
+                          data_title: titleLink?.getAttribute('data-title')
+                            || link?.getAttribute('data-title') || ''
+                        };
+                      }).filter(x => x.href).slice(0, 500);
+                    }
                     """
-                all_rows: list[dict[str, str]] = []
-                visited_pages: set[str] = set()
-                for _ in range(self.max_pages):
-                    if page.url in visited_pages:
-                        break
-                    visited_pages.add(page.url)
+                card_signature_script = """
+                    () => [...new Set(Array.from(document.querySelectorAll(
+                      'a[href*="/item/jdirectitems/auction/"]'
+                    )).map(a => a.href))].slice(0, 30).join('|')
+                    """
+                all_rows: list[dict[str, Any]] = []
+                current_page = 1
+                seen_page_signatures: set[str] = set()
+                for page_index in range(self.max_pages):
                     try:
                         data = await page.evaluate(listing_script)
                     except PlaywrightError as exc:
@@ -219,27 +261,78 @@ class BuyeeAuthenticatedSource(ListingSource):
                         await page.wait_for_load_state("domcontentloaded", timeout=45000)
                         await page.wait_for_timeout(3000)
                         data = await page.evaluate(listing_script)
-                    all_rows.extend(data)
                     if not data:
                         await page.wait_for_timeout(4000)
                         data = await page.evaluate(listing_script)
-                        all_rows.extend(data)
-                    self.last_page_count += 1
-                    next_url = await page.evaluate(
-                        r"""
-                        () => {
-                          const links = [...document.querySelectorAll('a[href]')];
-                          const explicit = links.find(a =>
-                            a.rel === 'next' || /^(next|次へ|›|>)$/i.test(a.innerText.trim())
-                          );
-                          return explicit?.href || null;
-                        }
-                        """
+                    page_signature = "|".join(
+                        self._item_id_from_href(str(row.get("href") or "")) for row in data
                     )
-                    if not next_url or next_url in visited_pages:
+                    if page_signature and page_signature in seen_page_signatures:
                         break
-                    await page.goto(next_url, wait_until="domcontentloaded", timeout=60000)
-                    await page.wait_for_timeout(3000)
+                    if page_signature:
+                        seen_page_signatures.add(page_signature)
+                    for rank, row in enumerate(data, start=1):
+                        row["search_page"] = current_page
+                        row["search_rank_on_page"] = rank
+                    all_rows.extend(data)
+                    self.last_page_count += 1
+                    # The budget counts pages fetched, not pages parsed.  Do
+                    # not navigate to an extra page after collecting the final
+                    # allowed page: that would add source load while silently
+                    # discarding every card from the navigation.
+                    if page_index + 1 >= self.max_pages:
+                        break
+                    paginator = page.locator("nav.search_page_navi").first
+                    if await paginator.count() == 0:
+                        break
+                    paginator_html = await paginator.evaluate("node => node.outerHTML")
+                    next_page = _next_page_number_from_pagination_html(
+                        paginator_html, current_page
+                    )
+                    if next_page is None:
+                        break
+                    links = page.locator("nav.search_page_navi .page_navi a[data-bind]")
+                    next_link = None
+                    for index in range(await links.count()):
+                        candidate = links.nth(index)
+                        if (
+                            _bound_page_number(await candidate.get_attribute("data-bind"))
+                            == next_page
+                        ):
+                            next_link = candidate
+                            break
+                    if next_link is None:
+                        break
+                    before_signature = await page.evaluate(card_signature_script)
+                    try:
+                        await next_link.click(timeout=15000)
+                        await page.wait_for_function(
+                            """
+                            ({ expected, before }) => {
+                              const current = document.querySelector(
+                                'nav.search_page_navi .page_navi .current'
+                              )?.textContent?.trim();
+                              const signature = [...new Set(Array.from(document.querySelectorAll(
+                                'a[href*="/item/jdirectitems/auction/"]'
+                              )).map(a => a.href))].slice(0, 30).join('|');
+                              return current === String(expected)
+                                && Boolean(signature)
+                                && signature !== before;
+                            }
+                            """,
+                            {"expected": next_page, "before": before_signature},
+                            timeout=30000,
+                        )
+                    except PlaywrightError as exc:
+                        logging.getLogger("buyeeye.runtime").warning(
+                            "pagination_stopped query=%r page=%s error=%s",
+                            query,
+                            next_page,
+                            type(exc).__name__,
+                        )
+                        break
+                    current_page = next_page
+                    await page.wait_for_timeout(1000)
                 if not all_rows:
                     body_text = normalize_text((await page.locator("body").inner_text())[:10000])
                     state = self._empty_page_state(body_text)
@@ -253,7 +346,11 @@ class BuyeeAuthenticatedSource(ListingSource):
                     self.parser_reload_attempts += 1
                     await page.reload(wait_until="domcontentloaded", timeout=60000)
                     await page.wait_for_timeout(5000)
-                    all_rows.extend(await page.evaluate(listing_script))
+                    recovered_rows = await page.evaluate(listing_script)
+                    for rank, row in enumerate(recovered_rows, start=1):
+                        row["search_page"] = current_page
+                        row["search_rank_on_page"] = rank
+                    all_rows.extend(recovered_rows)
                     if all_rows:
                         self.parser_reload_successes += 1
                         logging.getLogger("buyeeye.runtime").info(
@@ -272,7 +369,12 @@ class BuyeeAuthenticatedSource(ListingSource):
                             raise ParserAnomalyError(
                                 "search page contained no recognizable listing cards"
                             )
-                return self._annotate_discovery(self._items_from_browser_payload(all_rows, query))
+                parsed = self._items_from_browser_payload(all_rows, query)
+                if all_rows and not parsed:
+                    raise ParserAnomalyError(
+                        "search cards were present but contained no usable listing titles"
+                    )
+                return self._annotate_discovery(parsed)
             finally:
                 await browser.close()
 
@@ -300,7 +402,6 @@ class BuyeeAuthenticatedSource(ListingSource):
     @staticmethod
     def _extract_card_title(row: dict[str, Any]) -> str:
         for key in (
-            "title",
             "item_title",
             "listing_title",
             "name",
@@ -309,12 +410,15 @@ class BuyeeAuthenticatedSource(ListingSource):
             "itemName",
             "data_title",
             "image_alt",
+            "title",
         ):
             value = row.get(key)
             if value:
                 cleaned = normalize_text(str(value))
                 if cleaned and not re.search(
-                    r"(?i)Time Remaining|YEN|JPY|US\$|^With Authentication$", cleaned
+                    r"(?i)Time Remaining|YEN|JPY|US\$|^With Authentication$|"
+                    r"^(?:With Authentication\s+)?\d+%\s*OFF$",
+                    cleaned,
                 ):
                     return cleaned
         return ""
@@ -363,10 +467,11 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _items_from_browser_payload(
-        rows: list[dict[str, str]], query: str | None = None
+        rows: list[dict[str, Any]], query: str | None = None
     ) -> list[LiveListing]:
         listings: list[LiveListing] = []
         seen: set[str] = set()
+        accepted_by_page: dict[int, int] = {}
         for row in rows:
             href = row.get("href", "")
             text = str(row.get("text") or "")
@@ -379,14 +484,28 @@ class BuyeeAuthenticatedSource(ListingSource):
             item_id = BuyeeAuthenticatedSource._item_id_from_href(href)
             if not item_id or item_id in seen:
                 continue
-            seen.add(item_id)
             title = BuyeeAuthenticatedSource._extract_card_title(row)
             title_original = title
             if title_original and title_original.lower() in {"time remaining", ""}:
                 title_original = ""
+            if not title_original:
+                continue
+            seen.add(item_id)
             time_remaining = BuyeeAuthenticatedSource._extract_time_remaining(text)
             price = BuyeeAuthenticatedSource._extract_price(text)
             buyout_price = BuyeeAuthenticatedSource._extract_buyout_price(text)
+            raw_page = row.get("search_page")
+            search_page = raw_page if isinstance(raw_page, int) and raw_page > 0 else None
+            if search_page is not None:
+                accepted_by_page[search_page] = accepted_by_page.get(search_page, 0) + 1
+            raw_rank = row.get("search_rank_on_page")
+            rank_on_page = (
+                raw_rank
+                if isinstance(raw_rank, int) and raw_rank > 0
+                else accepted_by_page.get(search_page)
+                if search_page is not None
+                else None
+            )
             raw = {
                 "query": query or "buyee-auction",
                 "time_remaining": time_remaining,
@@ -394,6 +513,9 @@ class BuyeeAuthenticatedSource(ListingSource):
                 "watch_count": BuyeeAuthenticatedSource._extract_watch_count(text),
                 "image_url": row.get("image_url") or row.get("img_src") or None,
                 "buyout_indicator": "buyout" if buyout_price is not None else None,
+                "search_page": search_page,
+                "search_rank_on_page": rank_on_page,
+                "search_rank": len(listings) + 1,
             }
             listings.append(
                 LiveListing(
@@ -424,59 +546,46 @@ class BuyeeAuthenticatedSource(ListingSource):
     @staticmethod
     def _parse_listing_html(html: str, query: str | None = None) -> list[LiveListing]:
         soup = BeautifulSoup(html, "lxml")
-        listings: list[LiveListing] = []
-        seen: set[str] = set()
-
-        candidates = soup.select("a[href*='/item/jdirectitems/auction/'], a[href*='/item/search/']")
-        for item in candidates[:40]:
-            href = item.get("href") or ""
-            text = item.get_text(" ", strip=True)
-            if (
-                not href
-                or not text
-                or not BuyeeAuthenticatedSource._is_primary_search_result(href, query)
-            ):
+        rows: list[dict[str, Any]] = []
+        seen_cards: set[int] = set()
+        for anchor in soup.select("a[href*='/item/jdirectitems/auction/']"):
+            card = anchor.find_parent("li")
+            if card is None or id(card) in seen_cards:
                 continue
-            item_id = BuyeeAuthenticatedSource._item_id_from_href(href)
-            if not item_id or item_id in seen:
+            seen_cards.add(id(card))
+            links = card.select("a[href*='/item/jdirectitems/auction/']")
+            title_link = card.select_one(
+                ".itemCard__itemName a[href*='/item/jdirectitems/auction/']"
+            )
+            link = title_link or (links[0] if links else None)
+            if link is None:
                 continue
-            seen.add(item_id)
-            time_remaining = BuyeeAuthenticatedSource._extract_time_remaining(text)
-            price = BuyeeAuthenticatedSource._extract_price(text)
-            title = BuyeeAuthenticatedSource._extract_card_title(
-                {"text": text, "title": item.get("title")}
+            title_node = card.select_one(
+                ".itemCard__itemName, .top-items__title, .top-items__name, "
+                "[data-item-title], h2, h3"
             )
-            buyout_price = BuyeeAuthenticatedSource._extract_buyout_price(text)
-            raw = {
-                "query": query or "buyee-auction",
-                "time_remaining": time_remaining,
-                "bid_count": BuyeeAuthenticatedSource._extract_bid_count(text),
-                "watch_count": BuyeeAuthenticatedSource._extract_watch_count(text),
-                "buyout_indicator": "buyout" if buyout_price is not None else None,
-            }
-            listings.append(
-                LiveListing(
-                    source="buyee",
-                    source_listing_id=item_id,
-                    url=href if href.startswith("http") else f"https://buyee.jp{href}",
-                    title_original=title,
-                    title_normalized=normalize_text(title),
-                    brand=normalize_brand(BuyeeAuthenticatedSource._extract_brand(title or text)),
-                    category=BuyeeAuthenticatedSource._infer_category(title),
-                    current_price=price,
-                    buyout_price=buyout_price,
-                    starting_price=price,
-                    seller_name=None,
-                    condition=None,
-                    image_url=item.select_one("img") and item.select_one("img").get("src"),
-                    time_remaining=time_remaining,
-                    buyout_indicator=raw["buyout_indicator"],
-                    bid_count=raw["bid_count"],
-                    watch_count=raw["watch_count"],
-                    raw=raw,
-                )
+            image = card.select_one("img")
+            href = str(link.get("href") or "")
+            rows.append(
+                {
+                    "href": href if href.startswith("http") else f"https://buyee.jp{href}",
+                    "text": card.get_text(" ", strip=True),
+                    "item_title": title_node.get_text(" ", strip=True) if title_node else "",
+                    "title": (
+                        title_link.get_text(" ", strip=True)
+                        if title_link
+                        else link.get("title") or link.get_text(" ", strip=True)
+                    ),
+                    "image_url": image.get("src") if image else "",
+                    "image_alt": image.get("alt") if image else "",
+                    "data_title": link.get("data-title") or "",
+                    "search_page": 1,
+                    "search_rank_on_page": len(rows) + 1,
+                }
             )
-        return listings
+            if len(rows) >= 500:
+                break
+        return BuyeeAuthenticatedSource._items_from_browser_payload(rows, query)
 
     @staticmethod
     def _extract_brand(title: str) -> str:

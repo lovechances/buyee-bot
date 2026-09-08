@@ -38,6 +38,8 @@ brands:
   - Chrome Hearts
   - Gaboratory
   - King Baby
+  - Alexander McQueen
+  - Vintage band tees
 alias_map:
   "NUMBER (N)INE": "Number (N)ine"
   "NUMBER NINE": "Number (N)ine"
@@ -49,3 +51,4 @@ alias_map:
   "Le Grand Bleu": "L.G.B."
   "LGB": "L.G.B."
   "Rebuild": "Rebuild by Needles"
+  "McQueen": "Alexander McQueen"

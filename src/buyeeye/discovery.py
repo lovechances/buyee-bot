@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlencode
 
@@ -128,6 +128,7 @@ class QuerySpec:
     strategy_id: str | None = None
     strategy_type: str | None = None
     search_filters: MarketplaceSearchFilters | None = None
+    deep_search: bool = False
 
     def __post_init__(self) -> None:
         if not self.query.strip():
@@ -155,6 +156,7 @@ class QuerySpec:
             "query_layer": self.query_layer,
             "strategy_id": self.strategy_id,
             "strategy_type": self.strategy_type,
+            "search_depth_role": "deep_anchor" if self.deep_search else "shallow",
             "search_filters": self.search_filters.observations() if self.search_filters else {},
         }
 
@@ -172,6 +174,46 @@ def query_layer_counts(specs: list[QuerySpec]) -> dict[str, int]:
     return {
         layer: counts.get(layer, 0) for layer in ("broad", "medium", "surgical", "market_structure")
     }
+
+
+def search_page_budget(spec: QuerySpec, scanner_settings: dict[str, Any]) -> int:
+    """Return a bounded depth allocation without multiplying every hot scan.
+
+    The global page limit is a hard ceiling.  Core broad searches and the slow
+    exploration/price-band strategies can sample a second page; rapidly
+    changing buyout and closing searches stay on page one unless explicitly
+    configured otherwise.  Lower-priority aliases remain shallow so adding
+    depth does not multiply all broad-source traffic.
+    """
+    ceiling = max(1, min(5, int(scanner_settings.get("search_pages_per_query", 2))))
+    layer_defaults = {
+        "broad": 1,
+        "medium": 1,
+        "surgical": 1,
+        "market_structure": 1,
+    }
+    strategy_defaults = {
+        "market_explore": 2,
+        "market_price_band": 2,
+    }
+    layer_depth = {
+        **layer_defaults,
+        **(scanner_settings.get("search_pages_by_layer", {}) or {}),
+    }
+    strategy_depth = {
+        **strategy_defaults,
+        **(scanner_settings.get("search_pages_by_strategy", {}) or {}),
+    }
+    requested = strategy_depth.get(
+        spec.strategy_type,
+        layer_depth.get(spec.query_layer, 1),
+    )
+    if spec.deep_search:
+        requested = max(
+            int(requested),
+            int(scanner_settings.get("deep_broad_pages", 2)),
+        )
+    return max(1, min(ceiling, int(requested)))
 
 
 def _taxonomy_family_lookup(taxonomy: dict[str, Any]) -> dict[str, str]:
@@ -235,12 +277,16 @@ def build_market_structure_queries(
     cooldowns = {
         "market_buyout": 75,
         "market_ending": 45,
+        "market_closing": 30,
+        "market_explore": 360,
         "market_price_band": 240,
         **defaults.get("cooldown_minutes", {}),
     }
     priorities = {
         "market_buyout": 88,
         "market_ending": 86,
+        "market_closing": 92,
+        "market_explore": 68,
         "market_price_band": 72,
         **defaults.get("priority", {}),
     }
@@ -336,6 +382,23 @@ def build_market_structure_queries(
                         priority_adjustment=2,
                         cooldown_adjustment=-15,
                     )
+            if "explore" in intents:
+                add_spec(
+                    "buyout.explore",
+                    "market_explore",
+                    MarketplaceSearchFilters(
+                        category_id=category_id,
+                        category_group=group,
+                        min_buyout_price_jpy=ultra_min,
+                        max_buyout_price_jpy=bargain_max,
+                        buy_now_only=True,
+                        item_type="auction",
+                        sort_by="bidorbuy",
+                        sort_order="a",
+                        price_bucket="exploration",
+                        discovery_intent="retained_family_buyout_exploration",
+                    ),
+                )
             if "ending" in intents:
                 add_spec(
                     "ending.mature",
@@ -355,7 +418,7 @@ def build_market_structure_queries(
                 if category_config.get("closing_hour"):
                     add_spec(
                         "ending.closing_hour",
-                        "market_ending",
+                        "market_closing",
                         MarketplaceSearchFilters(
                             category_id=category_id,
                             category_group=group,
@@ -538,7 +601,44 @@ def build_query_universe(
         key = spec.runtime_identity
         if spec.query and (key not in best or spec.priority > best[key].priority):
             best[key] = spec
-    return sorted(best.values(), key=lambda spec: (-spec.priority, spec.family, spec.query))
+    deduped = list(best.values())
+    canonical_by_family = {
+        key: normalize_text(str(record.get("canonical") or key)).casefold()
+        for key, record in taxonomy.get("brands", {}).items()
+    }
+    # One stable broad anchor per retained family samples page two. This gives
+    # every family sustained depth without granting duplicate English/Japanese
+    # aliases multiple deep slots. Slow market exploration/price-band slices
+    # retain their independent depth allocation through strategy settings.
+    anchor_identity_by_family: dict[str, str] = {}
+    for family, canonical in canonical_by_family.items():
+        family_broad = [
+            spec
+            for spec in deduped
+            if spec.family == family and spec.query_layer == "broad"
+        ]
+        if not family_broad:
+            continue
+        anchor = max(
+            family_broad,
+            key=lambda spec: (
+                normalize_text(spec.query).casefold() == canonical,
+                spec.provenance.endswith(".canonical"),
+                spec.priority,
+                -len(spec.query),
+            ),
+        )
+        anchor_identity_by_family[family] = anchor.runtime_identity
+    deduped = [
+        replace(spec, deep_search=True)
+        if (
+            spec.query_layer == "broad"
+            and anchor_identity_by_family.get(spec.family) == spec.runtime_identity
+        )
+        else spec
+        for spec in deduped
+    ]
+    return sorted(deduped, key=lambda spec: (-spec.priority, spec.family, spec.query))
 
 
 def dedupe_listings(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

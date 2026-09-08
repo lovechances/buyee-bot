@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import fcntl
+import json
 import logging
 import os
 import random
@@ -88,7 +89,12 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("send-test-alert")
     status_event = subparsers.add_parser("status-event")
     status_event.add_argument("event", choices=sorted(MAJOR_UPDATE_MESSAGES))
-    subparsers.add_parser("backtest")
+    backtest = subparsers.add_parser("backtest")
+    backtest.add_argument("--cohort")
+    backtest.add_argument("--full", action="store_true")
+    diagnose = subparsers.add_parser("diagnose-listing")
+    diagnose.add_argument("url_or_id")
+    diagnose.add_argument("--source", default="buyee")
 
     intel = subparsers.add_parser("intelligence")
     intel_sub = intel.add_subparsers(dest="intelligence_command")
@@ -125,7 +131,8 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings()
     db_path = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
-    init_db(db_path)
+    if args.command not in {"backtest", "diagnose-listing"}:
+        init_db(db_path)
 
     if args.command == "status":
         print("BuyEye status: ready")
@@ -143,12 +150,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Current/last query: {runtime.current_query or '-'} / {runtime.last_query or '-'}")
         print(f"Consecutive source failures: {runtime.consecutive_source_failures}")
         print(f"Browser restarts: {runtime.browser_restart_count}")
-        print(f"Unique listings scanned: {runtime.unique_listings_scanned}")
+        print(
+            "Processed listing passes (legacy counter): "
+            f"{runtime.unique_listings_scanned}"
+        )
+        print(
+            "Lifetime-first-seen listings (since Ultra telemetry): "
+            f"{runtime.lifetime_first_seen_count or 0}"
+        )
         print(f"Alerts emitted: {runtime.alerts_emitted}")
         print(
             "Last hour: "
             f"queries={metrics['queries']} pages={metrics['search_pages']} cards={metrics['cards']} "
-            f"unique={metrics['unique']} duplicates={metrics['duplicates']} "
+            f"processable={metrics['unique']} duplicates={metrics['duplicates']} "
             f"stage_a_telemetry_scans={metrics['stage_a_telemetry_scans']} "
             f"stage_a_telemetry_unique={metrics['stage_a_telemetry_unique']} "
             f"decision_telemetry_scans={metrics['decision_telemetry_scans']} "
@@ -171,6 +185,9 @@ def main(argv: list[str] | None = None) -> int:
             f"relationships={metrics['piece_relationships']} "
             f"confidences={metrics['confidence_counts']} "
             f"recoveries={metrics['recovery_counts']} "
+            f"lifetime_first_seen={metrics['lifetime_first_seen']} "
+            f"historical_revisits={metrics['historical_revisits']} "
+            f"material_state_changes={metrics['material_state_changes']} "
             f"suppressed_alerts={metrics['suppressed_alerts']} "
             f"failed_alerts={metrics['failed_alerts']} "
             f"logic_reconsidered={metrics['logic_reconsidered']} "
@@ -305,12 +322,14 @@ def main(argv: list[str] | None = None) -> int:
                     last_auth_success=datetime.now(UTC),
                     consecutive_source_failures=0,
                     unique_listings_scanned=prior.unique_listings_scanned + result.unique_listings,
+                    lifetime_first_seen_count=(prior.lifetime_first_seen_count or 0)
+                    + result.lifetime_first_seen,
                     alerts_emitted=prior.alerts_emitted + result.new_alerts,
                 )
                 record_query_result(spec, result, db_path)
                 logger.info(
                     "scan query=%r family=%s layer=%s strategy=%s strategy_id=%s "
-                    "pages=%s cards=%s unique=%s duplicates=%s "
+                    "pages=%s cards=%s processable=%s duplicates=%s "
                     "brand_confirmed=%s category_valid=%s stage_a_eligible=%s "
                     "stage_a_capped=%s stage_a_rejected=%s stage_a_paths=%s stage_a_rejects=%s "
                     "stage_b=%s enriched=%s failed=%s post_detail_rejected=%s "
@@ -318,7 +337,8 @@ def main(argv: list[str] | None = None) -> int:
                     "comps=%s cache=%s/%s "
                     "final=%s alerts=%s suppressed=%s failed_alerts=%s "
                     "routes=%s final_theses=%s alert_theses=%s opportunities=%s "
-                    "recoveries=%s logic_reconsidered=%s decisions=%s",
+                    "recoveries=%s lifetime_first_seen=%s historical_revisits=%s "
+                    "material_state_changes=%s logic_reconsidered=%s decisions=%s",
                     spec.query,
                     spec.family,
                     spec.query_layer,
@@ -354,6 +374,9 @@ def main(argv: list[str] | None = None) -> int:
                     getattr(result, "alert_thesis_counts", {}),
                     result.opportunity_counts,
                     recovery_counts,
+                    getattr(result, "lifetime_first_seen", 0),
+                    getattr(result, "historical_revisits", 0),
+                    getattr(result, "material_state_changes", 0),
                     getattr(result, "logic_reconsidered", 0),
                     getattr(result, "post_detail_decisions", []),
                 )
@@ -380,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(
             f"query={query!r} pages={result.search_pages} scanned={result.scanned} "
-            f"unique={result.unique_listings} stage_a_rejected={result.stage_a_rejected} "
+            f"processable={result.unique_listings} stage_a_rejected={result.stage_a_rejected} "
             f"brand_confirmed={result.stage_a_brand_confirmed} "
             f"category_valid={result.stage_a_category_valid} "
             f"stage_a_eligible={result.stage_a_eligible} stage_a_capped={result.stage_a_capped} "
@@ -397,6 +420,9 @@ def main(argv: list[str] | None = None) -> int:
             f"alert_theses={getattr(result, 'alert_thesis_counts', {})} "
             f"opportunities={result.opportunity_counts} "
             f"recoveries={getattr(result, 'recovery_counts', {})} "
+            f"lifetime_first_seen={getattr(result, 'lifetime_first_seen', 0)} "
+            f"historical_revisits={getattr(result, 'historical_revisits', 0)} "
+            f"material_state_changes={getattr(result, 'material_state_changes', 0)} "
             f"logic_reconsidered={getattr(result, 'logic_reconsidered', 0)}"
         )
         return 0 if result.scanned else 1
@@ -427,12 +453,15 @@ def main(argv: list[str] | None = None) -> int:
             f"comps_accepted={result.comps_accepted} japan_comp_candidates={result.japan_comp_candidates} "
             f"japan_comps_accepted={result.japan_comps_accepted} comp_cache_hits={result.comp_cache_hits} "
             f"comp_cache_misses={result.comp_cache_misses} pages={result.search_pages} "
-            f"unique={result.unique_listings} duplicates={result.duplicates} "
+            f"processable={result.unique_listings} duplicates={result.duplicates} "
             f"final_candidates={result.final_candidates} "
             f"routes={result.route_counts} final_theses={result.thesis_counts} "
             f"alert_theses={getattr(result, 'alert_thesis_counts', {})} "
             f"opportunities={result.opportunity_counts} "
             f"recoveries={getattr(result, 'recovery_counts', {})} "
+            f"lifetime_first_seen={getattr(result, 'lifetime_first_seen', 0)} "
+            f"historical_revisits={getattr(result, 'historical_revisits', 0)} "
+            f"material_state_changes={getattr(result, 'material_state_changes', 0)} "
             f"logic_reconsidered={getattr(result, 'logic_reconsidered', 0)}"
         )
         return 0 if result.scanned else 1
@@ -465,8 +494,36 @@ def main(argv: list[str] | None = None) -> int:
         return send_test_alert()
 
     if args.command == "backtest":
-        print("Backtest initialized. Fixture-backed behaviors available in tests.")
-        return 0
+        from .calibration import CalibrationError, run_calibration
+
+        try:
+            report = run_calibration(args.cohort)
+        except (CalibrationError, FileNotFoundError, ValueError) as exc:
+            print(f"backtest: {exc}")
+            return 2
+        output = report if args.full else {
+            "cohort_version": report["cohort_version"],
+            "decision_logic_version": report["decision_logic_version"],
+            "historical_note": report["historical_note"],
+            "summary": report["summary"],
+        }
+        print(json.dumps(output, ensure_ascii=False, indent=2, default=str))
+        return 0 if report["summary"]["alignment"].get("misaligned", 0) == 0 else 1
+
+    if args.command == "diagnose-listing":
+        from .diagnostics import diagnose_listing
+
+        try:
+            report = diagnose_listing(
+                db_path,
+                args.url_or_id,
+                source=args.source,
+            )
+        except ValueError as exc:
+            print(f"diagnose-listing: {exc}")
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return 0 if report.get("seen") else 1
 
     if args.command == "feedback":
         print(f"Feedback recorded for listing {args.listing_id}: {args.label}")

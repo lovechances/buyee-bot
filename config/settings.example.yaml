@@ -5,16 +5,32 @@ scanner:
   concurrency: 1
   query_gap_seconds: 20
   search_pages_per_query: 2
+  # Page two is sampled for core broad/slow exploration, while lower-priority
+  # aliases and urgent high-cadence marketplace slices stay shallow.
+  search_pages_by_layer:
+    broad: 1
+    medium: 1
+    surgical: 1
+    market_structure: 1
+  deep_broad_pages: 2
+  search_pages_by_strategy:
+    market_explore: 2
+    market_price_band: 2
   listing_dedupe_hours: 6
+  # Unchanged listings that already consumed Stage B yield to unseen cards.
+  # Price/bid/buyout/maturity signature changes still re-enter immediately.
+  fully_evaluated_dedupe_hours: 24
   query_layer_shares:
     broad: 0.35
-    medium: 0.20
-    surgical: 0.10
-    market_structure: 0.35
+    medium: 0.15
+    surgical: 0.05
+    market_structure: 0.45
   market_strategy_shares:
-    market_buyout: 0.45
-    market_ending: 0.45
+    market_buyout: 0.35
+    market_ending: 0.25
+    market_closing: 0.20
     market_price_band: 0.10
+    market_explore: 0.10
   max_source_attempts: 3
   decision_logic_reconsideration_max_age_hours: 24
   decision_logic_reconsideration_max_per_hour: 2
@@ -47,6 +63,7 @@ alert:
   material_price_drop_fraction: 0.15
   material_price_drop_min_jpy: 1000
   material_price_drop_absolute_jpy: 5000
+  material_price_drop_absolute_min_fraction: 0.05
   archive_watch_min_heat: 70
   archive_directional_min_heat: 55
   archive_directional_min_score: 75
@@ -96,13 +113,17 @@ stage_a:
 directional_opportunity:
   minimum_score: 72
   exceptional_actionable_price_jpy: 10000
+  exceptional_actionable_price_bonus: 24
   exceptional_actionable_minimum_score: 62
   exceptional_diffusion_minimum_score: 58
+  exceptional_low_priority_collaboration_minimum_score: 48
   exceptional_landed_usd: 30
   max_landed_usd: 65
   favorable_condition_bonus: 6
-  ordinary_context_max_fraction: 0.45
-  archive_context_max_fraction: 0.85
+  # Actual piece-matched Yahoo-ended transactions may support only a
+  # directional Japan-market discount; they never become U.S. FMV.
+  japan_market_max_fraction: 0.65
+  japan_market_min_similarity: 0.80
   diffusion_minimum_score: 85
   low_priority_collaboration_minimum_score: 88
 

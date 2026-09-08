@@ -119,6 +119,28 @@ python -m buyeeye feedback 123 generic
 python -m buyeeye feedback 123 fake
 ```
 
+## Calibration and listing diagnosis
+
+Run the fixed, no-network/no-Discord calibration cohort:
+
+```bash
+python -m buyeeye backtest
+python -m buyeeye backtest --full
+```
+
+Trace a Buyee/JDirectItems URL or bare auction ID through its persisted discovery,
+Stage A/B, evaluation, route, alert, and revisit evidence:
+
+```bash
+python -m buyeeye diagnose-listing 'https://buyee.jp/item/jdirectitems/auction/ID'
+```
+
+The recomputed section is explicitly hypothetical when historical comp inputs are
+unavailable; the stored decision trace remains authoritative for the recorded pass.
+Never-inspected Stage A traces are retained for 14 days to support the manual benchmark
+without filling the persistent Railway volume; listing identity/dedupe state and every
+inspected-candidate trace remain persistent.
+
 ## Test and lint
 
 ```bash

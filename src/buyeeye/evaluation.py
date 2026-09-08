@@ -73,6 +73,8 @@ class DirectionalOpportunityResult:
     landed_usd: float | None
     us_valuation_state: str
     discovery_price_fraction: float | None
+    japan_market_fraction: float | None
+    japan_market_median_jpy: int | None
     piece_signals: tuple[str, ...]
     reasons: list[str] = field(default_factory=list)
 
@@ -85,6 +87,7 @@ class AuctionMaturityResult:
     price_actionable: bool
     current_bid_provisional: bool
     reason: str
+    actionable_price_kind: str | None = None
 
 
 @dataclass
@@ -104,10 +107,8 @@ class ListingEvaluation:
 def assess_auction_maturity(
     listing: Any, settings: dict[str, Any] | None = None
 ) -> AuctionMaturityResult:
-    if getattr(listing, "buyout_price", None) is not None:
-        return AuctionMaturityResult(
-            "fixed_price", "high", None, True, False, "actionable buyout price"
-        )
+    buyout_price = getattr(listing, "buyout_price", None)
+    current_price = getattr(listing, "current_price", None)
     text = str(getattr(listing, "time_remaining", None) or "")
     matches = re.findall(r"(\d+)\s*(day|hour|minute)s?(?:\(s\))?", text.casefold())
     remaining = (
@@ -118,6 +119,22 @@ def assess_auction_maturity(
         if matches
         else None
     )
+    has_open_bid_with_buyout = bool(
+        buyout_price is not None
+        and current_price is not None
+        and current_price < buyout_price
+        and remaining is not None
+    )
+    if buyout_price is not None and not has_open_bid_with_buyout:
+        return AuctionMaturityResult(
+            "fixed_price",
+            "high",
+            remaining,
+            True,
+            False,
+            "actionable buyout price",
+            "buyout",
+        )
     max_hours = int(
         (settings or {}).get("alert", {}).get("auction_alert_max_remaining_hours", 12)
     )
@@ -130,13 +147,29 @@ def assess_auction_maturity(
     bids = getattr(listing, "bid_count", None) or 0
     watches = getattr(listing, "watch_count", None) or 0
     activity = f"{bids} bid(s), {watches} watcher(s)"
-    reason = (
-        f"auction outside {max_hours}h actionability window; {activity}"
-        if level == "low"
-        else f"auction within actionability window; {activity}"
-    )
+    if has_open_bid_with_buyout:
+        actionable_price_kind = "current_bid" if level in {"medium", "high"} else "buyout"
+        reason = (
+            f"auction outside {max_hours}h bid-actionability window; "
+            f"buyout remains actionable; {activity}"
+            if level == "low"
+            else f"auction bid is within actionability window; buyout also available; {activity}"
+        )
+    else:
+        actionable_price_kind = "current_bid" if level in {"medium", "high"} else None
+        reason = (
+            f"auction outside {max_hours}h actionability window; {activity}"
+            if level == "low"
+            else f"auction within actionability window; {activity}"
+        )
     return AuctionMaturityResult(
-        "open_auction", level, remaining, level in {"medium", "high"}, True, reason
+        "open_auction",
+        level,
+        remaining,
+        actionable_price_kind is not None,
+        True,
+        reason,
+        actionable_price_kind,
     )
 
 
@@ -170,6 +203,7 @@ _DIRECTIONAL_DESIGN_TERMS = (
     "reconstruction",
     "tailored",
     "runway",
+    "shotgun",
     "single stitch",
     "skull",
     "アップリケ",
@@ -183,6 +217,8 @@ _DIRECTIONAL_DESIGN_TERMS = (
     "ペンキ",
     "ボンテージ",
     "スカル",
+    "散弾銃",
+    "音符",
     "再構築",
     "刺繍",
     "加工",
@@ -205,6 +241,23 @@ _DIRECTIONAL_CONTEXT_ONLY_SIGNALS = {
     "marilyn manson",
     "sonic youth",
     "nine inch nails",
+}
+
+# Useful acquisition descriptors are not automatically interruption-worthy
+# grail evidence, and generic visual nouns cannot establish an exact comp.
+_WEAK_GRAIL_DESIGN_SIGNALS = {
+    "1b",
+    "one button",
+    "runway",
+    "tailored",
+}
+_NON_DISTINCT_COMP_SIGNALS = {
+    *_DIRECTIONAL_CONTEXT_ONLY_SIGNALS,
+    *_WEAK_GRAIL_DESIGN_SIGNALS,
+    "graphic",
+    "patterned",
+    "processed",
+    "single stitch",
 }
 
 _VINTAGE_BAND_PRODUCTION_TERMS = (
@@ -325,8 +378,12 @@ def _has_poor_condition_evidence(condition: str | None) -> bool:
     return any(_phrase_present(normalized, term) for term in _POOR_CONDITION_TERMS)
 
 
-def has_explicit_non_menswear_evidence(listing: Any) -> bool:
+def has_explicit_non_menswear_evidence(
+    listing: Any, profile: FashionProfile | None = None
+) -> bool:
     """Use richer Stage B category evidence to reject explicit women's inventory."""
+    if profile and profile.product_scope.audience in {"womens", "kids"}:
+        return True
     observed = ((getattr(listing, "raw", None) or {}).get("stage_b") or {}).get(
         "observed", {}
     )
@@ -346,6 +403,74 @@ def has_specific_design_evidence(piece_signals: Iterable[str]) -> bool:
     """Distinguish construction/motif evidence from collection-name repetition."""
     design_terms = {normalize_text(term).casefold() for term in _DIRECTIONAL_DESIGN_TERMS}
     return any(normalize_text(signal).casefold() in design_terms for signal in piece_signals)
+
+
+def has_grail_design_evidence(piece_signals: Iterable[str]) -> bool:
+    """Require more than seller boilerplate or generic tailoring language."""
+    design_terms = {normalize_text(term).casefold() for term in _DIRECTIONAL_DESIGN_TERMS}
+    return any(
+        (normalized := normalize_text(signal).casefold()) in design_terms
+        and normalized not in _WEAK_GRAIL_DESIGN_SIGNALS
+        for signal in piece_signals
+    )
+
+
+def _distinct_piece_signals(
+    profile: FashionProfile, evidence_text: str
+) -> set[str]:
+    contextual = {
+        normalize_text(value).casefold()
+        for evidence in (profile.collection, profile.era, profile.season)
+        if evidence
+        for value in (evidence.value, evidence.matched_term)
+    }
+    return {
+        normalized
+        for signal in _piece_signals(profile, evidence_text)
+        if (normalized := normalize_text(signal).casefold())
+        not in _NON_DISTINCT_COMP_SIGNALS | contextual
+    }
+
+
+def _piece_matched_japan_sales(
+    profile: FashionProfile,
+    evidence_text: str,
+    japan_market: CompResult,
+    minimum_similarity: float,
+) -> list[Comp]:
+    """Keep only ended sales sharing actual motif/construction evidence."""
+    target_signals = _distinct_piece_signals(profile, evidence_text)
+    if not target_signals:
+        return []
+    matches: list[Comp] = []
+    seen: set[tuple[Any, ...]] = set()
+    for comp in japan_market.matches:
+        if comp.similarity < minimum_similarity:
+            continue
+        comp_profile = enrich_title(comp.title)
+        if profile.item_type and (
+            not comp_profile.item_type
+            or comp_profile.item_type.value != profile.item_type.value
+        ):
+            continue
+        if profile.collection and (
+            not comp_profile.collection
+            or comp_profile.collection.value != profile.collection.value
+        ):
+            continue
+        if not target_signals & _distinct_piece_signals(comp_profile, comp.title):
+            continue
+        identity = (
+            comp.source,
+            comp.source_listing_id
+            or comp.url
+            or (normalize_text(comp.title).casefold(), comp.price_jpy),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        matches.append(comp)
+    return matches
 
 
 def assess_identity_confidence(
@@ -387,95 +512,21 @@ def assess_identity_confidence(
     if identity_conflict:
         score = min(score, 24)
         reasons.append(identity_conflict)
+    if profile.product_scope.target_role in {"style_reference", "contradicted"}:
+        score = min(score, 24)
+        reasons.extend(profile.product_scope.reasons)
+    elif not profile.product_scope.acquisition_attributable:
+        score = min(score, 49)
+        reasons.extend(profile.product_scope.reasons)
     score = min(100, score)
     confidence = "high" if score >= 75 else "medium" if score >= 50 else "low"
     return IdentityConfidenceResult(score, confidence, reasons)
-
-
-_EXPLICIT_NON_TARGET_DETAIL_BRANDS = {
-    "gu",
-    "uniqlo",
-    "ジーユー",
-    "ユニクロ",
-}
-_NON_TARGET_DETAIL_BRAND_KEYS = {
-    "ジーユー": "gu",
-    "ユニクロ": "uniqlo",
-}
-
-
-def _detail_brand_conflict(
-    stage_b_record: dict[str, Any],
-    identity_evidence_text: str,
-) -> str | None:
-    """Detect only strong detail-brand contradictions; unknown labels stay advisory."""
-    if stage_b_record.get("status") != "enriched":
-        return None
-    observed = str((stage_b_record.get("observed") or {}).get("brand_observed") or "").strip()
-    if not observed:
-        return None
-    identity_profile = enrich_title(identity_evidence_text)
-    if not identity_profile.brand:
-        return None
-    observed_profile = enrich_title(observed)
-    if observed_profile.brand:
-        if observed_profile.brand.value != identity_profile.brand.value:
-            return (
-                f"detail brand {observed!r} contradicts "
-                f"{identity_profile.brand.value!r} identity"
-            )
-        return None
-
-    normalized_observed = " ".join(observed.casefold().split())
-    if normalized_observed not in _EXPLICIT_NON_TARGET_DETAIL_BRANDS:
-        return None
-    observed_participant = _NON_TARGET_DETAIL_BRAND_KEYS.get(
-        normalized_observed, normalized_observed
-    )
-    relationship = identity_profile.relationship
-    if (
-        relationship
-        and relationship.value == "collaboration"
-        and observed_participant in relationship.participants
-    ):
-        return None
-    return (
-        f"detail brand {observed!r} contradicts "
-        f"{identity_profile.brand.value!r} identity"
-    )
 
 
 def assess_exact_valuation_confidence(comps: CompResult) -> ExactValuationConfidenceResult:
     """Expose exact resale confidence without borrowing from directional evidence."""
     confidence = "unavailable" if comps.confidence == "none" else comps.confidence
     return ExactValuationConfidenceResult(confidence, comps.reason)
-
-
-def _discovery_price_fraction(listing: Any) -> float | None:
-    """Return exploration-band position; this is context, never an FMV estimate."""
-    discovery = (getattr(listing, "raw", None) or {}).get("discovery", {})
-    if discovery.get("query_layer") != "market_structure":
-        return None
-    filters = discovery.get("search_filters", {})
-    if not isinstance(filters, dict):
-        return None
-    buyout = getattr(listing, "buyout_price", None)
-    if buyout is not None:
-        maximum = filters.get("max_buyout_price_jpy") or filters.get(
-            "max_current_price_jpy"
-        )
-        price = buyout
-    else:
-        maximum = filters.get("max_current_price_jpy")
-        price = getattr(listing, "current_price", None)
-    try:
-        price_value = int(price)
-        maximum_value = int(maximum)
-    except (TypeError, ValueError):
-        return None
-    if price_value <= 0 or maximum_value <= 0:
-        return None
-    return round(price_value / maximum_value, 4)
 
 
 def assess_directional_opportunity(
@@ -486,7 +537,9 @@ def assess_directional_opportunity(
     listing: Any,
     identity: IdentityConfidenceResult,
     valuation: ExactValuationConfidenceResult,
+    japan_market: CompResult,
     evidence_text: str,
+    acquisition_price_jpy: int | None = None,
     settings: dict[str, Any] | None = None,
 ) -> DirectionalOpportunityResult:
     """Assess bargain direction without manufacturing an exact resale estimate."""
@@ -496,29 +549,33 @@ def assess_directional_opportunity(
     max_landed = float(config.get("max_landed_usd", 65))
     exceptional_landed = float(config.get("exceptional_landed_usd", 30))
     minimum_score = int(config.get("minimum_score", 72))
-    archive_context_fraction = float(config.get("archive_context_max_fraction", 0.85))
-    ordinary_context_fraction = float(config.get("ordinary_context_max_fraction", 0.45))
+    japan_market_max_fraction = float(config.get("japan_market_max_fraction", 0.65))
+    japan_market_min_similarity = float(
+        config.get("japan_market_min_similarity", 0.80)
+    )
     exceptional_actionable_price = int(
         config.get("exceptional_actionable_price_jpy", 10_000)
     )
     exceptional_actionable_minimum_score = int(
         config.get("exceptional_actionable_minimum_score", 62)
     )
+    exceptional_actionable_price_bonus = int(
+        config.get("exceptional_actionable_price_bonus", 24)
+    )
     exceptional_diffusion_minimum_score = int(
         config.get("exceptional_diffusion_minimum_score", 58)
+    )
+    exceptional_low_priority_collaboration_minimum_score = int(
+        config.get("exceptional_low_priority_collaboration_minimum_score", 48)
     )
     favorable_condition_bonus = int(config.get("favorable_condition_bonus", 6))
     relationship = profile.relationship.value if profile.relationship else "uncertain"
     relationship_provenance = profile.relationship.provenance if profile.relationship else ""
     design_signals = _piece_signals(profile, evidence_text)
-    # A discovery-band position is useful only when the observed acquisition
-    # price is actionable. An early current bid is provisional marketplace
-    # state, not directional bargain evidence.
-    discovery_fraction = (
-        _discovery_price_fraction(listing)
-        if economics.landed_cost_jpy is not None
-        else None
-    )
+    # Search bands decide where BuyEye looks. They are deliberately absent from
+    # final value scoring so changing an unrelated query ceiling cannot change
+    # the opportunity thesis for an unchanged listing.
+    discovery_fraction = None
     generic = any(
         is_generic_signal(signal, profile.relationship)
         for signal in profile.negative_signals
@@ -567,17 +624,52 @@ def assess_directional_opportunity(
         score += 7
         reasons.append(f"bounded absolute acquisition cost (~${landed_usd:.0f} landed)")
 
-    if discovery_fraction is not None:
-        if discovery_fraction <= 0.35:
-            score += 24
-        elif discovery_fraction <= 0.60:
-            score += 17
-        elif discovery_fraction <= archive_context_fraction:
-            score += 9
-        else:
-            score += 3
+    actionable_price = acquisition_price_jpy
+    if (
+        economics.landed_cost_jpy is not None
+        and actionable_price is not None
+        and 0 < int(actionable_price) <= exceptional_actionable_price
+        and relationship in {"collaboration", "diffusion", "uncertain"}
+    ):
+        # The normal core-line escape already has its own bounded score floor.
+        # This bonus offsets a relationship prior only for an exceptionally
+        # cheap substantive diffusion/collaboration/uncertain piece.
+        score += exceptional_actionable_price_bonus
         reasons.append(
-            f"actionable price is {discovery_fraction:.0%} of its discovery-band ceiling"
+            "exceptionally low actionable acquisition price "
+            f"(¥{int(actionable_price):,})"
+        )
+    japan_fraction = None
+    japan_median = None
+    piece_matched_japan = _piece_matched_japan_sales(
+        profile,
+        evidence_text,
+        japan_market,
+        japan_market_min_similarity,
+    )
+    if (
+        actionable_price
+        and len(piece_matched_japan) >= 3
+        and statistics.mean(comp.similarity for comp in piece_matched_japan)
+        >= japan_market_min_similarity
+    ):
+        japan_median = int(
+            statistics.median(
+                int(comp.price_jpy)
+                for comp in piece_matched_japan
+                if comp.price_jpy is not None
+            )
+        )
+        japan_fraction = round(int(actionable_price) / japan_median, 4)
+        if japan_fraction <= 0.35:
+            score += 18
+        elif japan_fraction <= japan_market_max_fraction:
+            score += 10
+        elif japan_fraction <= 0.85:
+            score += 4
+        reasons.append(
+            "piece-matched Japan ended-sales evidence: "
+            f"¥{japan_median:,} median ({japan_fraction:.0%} acquisition price)"
         )
     if valuation.confidence in {"medium", "high"}:
         score += 10
@@ -649,19 +741,14 @@ def assess_directional_opportunity(
         score += favorable_condition_bonus
         reasons.append("favorable new/unworn condition supports an already substantive piece")
     score = max(0, min(100, score))
-    contextual_price_ok = bool(
-        discovery_fraction is not None
-        and discovery_fraction
-        <= (archive_context_fraction if archive_context else ordinary_context_fraction)
+    japan_market_ok = bool(
+        japan_fraction is not None and japan_fraction <= japan_market_max_fraction
     )
     absolute_downside_ok = bool(
         landed_usd is not None
         and landed_usd <= max_landed
         and substantive
     )
-    actionable_price = getattr(listing, "buyout_price", None)
-    if actionable_price is None and economics.landed_cost_jpy is not None:
-        actionable_price = getattr(listing, "current_price", None)
     exceptional_acquisition_ok = bool(
         economics.landed_cost_jpy is not None
         and actionable_price is not None
@@ -679,11 +766,14 @@ def assess_directional_opportunity(
         reasons.append(
             "actionable acquisition price is inside the bounded low-downside threshold"
         )
-    exceptional_relationship_minimum = (
-        exceptional_diffusion_minimum_score
-        if relationship == "diffusion"
-        else exceptional_actionable_minimum_score
-    )
+    if relationship == "diffusion":
+        exceptional_relationship_minimum = exceptional_diffusion_minimum_score
+    elif relationship_provenance.endswith(".collaboration_low_priority"):
+        exceptional_relationship_minimum = (
+            exceptional_low_priority_collaboration_minimum_score
+        )
+    else:
+        exceptional_relationship_minimum = exceptional_actionable_minimum_score
     score_is_sufficient = bool(
         score >= minimum_score
         or (
@@ -710,7 +800,14 @@ def assess_directional_opportunity(
     ):
         relationship_ok = bool(
             substantive
-            and score >= int(config.get("low_priority_collaboration_minimum_score", 88))
+            and (
+                score >= int(config.get("low_priority_collaboration_minimum_score", 88))
+                or (
+                    exceptional_acquisition_ok
+                    and has_specific_design_evidence(design_signals)
+                    and score >= exceptional_low_priority_collaboration_minimum_score
+                )
+            )
         )
     qualifies = bool(
         economics.landed_cost_jpy is not None
@@ -723,9 +820,10 @@ def assess_directional_opportunity(
         and relationship_ok
         and auth.level != "do_not_touch"
         and not irrelevant
-        and not has_explicit_non_menswear_evidence(listing)
+        and not has_explicit_non_menswear_evidence(listing, profile)
+        and profile.product_scope.acquisition_attributable
         and score_is_sufficient
-        and (contextual_price_ok or absolute_downside_ok or exceptional_acquisition_ok)
+        and (japan_market_ok or absolute_downside_ok or exceptional_acquisition_ok)
     )
     thesis = "asymmetric_value" if qualifies else None
     if economics.landed_cost_jpy is None:
@@ -748,6 +846,8 @@ def assess_directional_opportunity(
         landed_usd,
         valuation_state,
         discovery_fraction,
+        japan_fraction,
+        japan_median,
         design_signals,
         reasons,
     )
@@ -797,6 +897,12 @@ def score_desirability(profile: FashionProfile, title: str, condition: str | Non
     if irrelevant:
         score = 0
         warnings.append("non-fashion or irrelevant item language")
+    if profile.product_scope.target_role in {"style_reference", "contradicted"}:
+        score = 0
+        warnings.append("target name is not manufacturer evidence")
+    if profile.product_scope.offer_kind == "packaging_only":
+        score = 0
+        warnings.append("offer is packaging rather than the target product")
     if _has_poor_condition_evidence(condition):
         score -= 15
         warnings.append("poor-condition wording")
@@ -807,6 +913,13 @@ def score_desirability(profile: FashionProfile, title: str, condition: str | Non
 
 def _comp_similarity(profile: FashionProfile, comp: Comp) -> float:
     comp_profile = enrich_title(comp.title)
+    if (
+        not profile.product_scope.acquisition_attributable
+        or profile.product_scope.hard_non_target
+        or not comp_profile.product_scope.acquisition_attributable
+        or comp_profile.product_scope.hard_non_target
+    ):
+        return 0.0
     if not profile.brand or not comp_profile.brand or profile.brand.value != comp_profile.brand.value:
         return 0.0
     target_relationship = profile.relationship.value if profile.relationship else "uncertain"
@@ -1010,7 +1123,7 @@ def evaluate_listing(
     # resale economics.
     us_comp_candidates = [comp for comp in supplied_comps if comp.source != "yahoo_ended"]
     japan_comp_candidates = [
-        *supplied_japan_comps,
+        *(comp for comp in supplied_japan_comps if comp.source == "yahoo_ended"),
         *(comp for comp in supplied_comps if comp.source == "yahoo_ended"),
     ]
     stage_b_record = (getattr(listing, "raw", None) or {}).get("stage_b", {})
@@ -1027,24 +1140,39 @@ def evaluate_listing(
         )
         if value
     )
-    evidence_text = " ".join(
-        value
-        for value in (
-            identity_evidence_text,
-            str(stage_b.get("brand_observed") or "").strip(),
-        )
-        if value
+    evidence_text = identity_evidence_text
+    profile = enrich_title(
+        evidence_text,
+        getattr(listing, "brand", None),
+        brand_observed=str(stage_b.get("brand_observed") or "").strip() or None,
+        category_hierarchy=tuple(str(value) for value in stage_b.get("category_hierarchy", [])),
+        scope_title=str(getattr(listing, "title_original", "") or ""),
     )
-    identity_conflict = _detail_brand_conflict(stage_b_record, identity_evidence_text)
-    profile = enrich_title(evidence_text, getattr(listing, "brand", None))
+    identity_conflict = next(
+        (
+            reason
+            for reason in profile.product_scope.reasons
+            if profile.product_scope.target_role == "contradicted"
+        ),
+        None,
+    )
     desirability = score_desirability(profile, evidence_text, getattr(listing, "condition", None))
     comp_result = evaluate_comps(profile, us_comp_candidates)
     if stage_b_record.get("status") == "failed" and comp_result.confidence in {"medium", "high"}:
         comp_result.confidence = "low"
         comp_result.reason = f"{comp_result.reason}; Stage B identity unavailable"
     maturity = assess_auction_maturity(listing, settings)
+    if maturity.actionable_price_kind == "buyout":
+        actionable_price = getattr(listing, "buyout_price", None)
+    elif maturity.actionable_price_kind == "current_bid":
+        actionable_price = getattr(listing, "current_price", None)
+    else:
+        actionable_price = None
+    acquisition_price = (
+        actionable_price if profile.product_scope.acquisition_attributable else None
+    )
     economics = evaluate_economics(
-        getattr(listing, "buyout_price", None) or listing.current_price,
+        acquisition_price,
         comp_result,
         settings,
     )
@@ -1060,9 +1188,7 @@ def evaluate_listing(
             comp_result.confidence,
             ["current bid is provisional; auction is outside the maturity window"],
         )
-    auth_price_jpy = getattr(listing, "buyout_price", None)
-    if auth_price_jpy is None and maturity.price_actionable:
-        auth_price_jpy = getattr(listing, "current_price", None)
+    auth_price_jpy = actionable_price
     auth_raw = dict(getattr(listing, "raw", None) or {})
     if identity_conflict:
         auth_raw["provenance_inconsistency"] = True
@@ -1074,6 +1200,7 @@ def evaluate_listing(
     )
     identity = assess_identity_confidence(profile, stage_b_record, identity_conflict)
     valuation = assess_exact_valuation_confidence(comp_result)
+    japan_result = evaluate_comps(profile, japan_comp_candidates)
     directional = assess_directional_opportunity(
         profile,
         desirability,
@@ -1082,10 +1209,11 @@ def evaluate_listing(
         listing,
         identity,
         valuation,
+        japan_result,
         evidence_text,
+        acquisition_price,
         settings,
     )
-    japan_result = evaluate_comps(profile, japan_comp_candidates)
     return ListingEvaluation(
         profile=profile,
         desirability=desirability,

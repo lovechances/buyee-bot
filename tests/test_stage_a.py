@@ -184,7 +184,7 @@ def test_sub_40_target_brand_buyout_can_enter_detail_without_becoming_fmv() -> N
 
     assert evaluation.desirability.score < 40
     assert assessment.eligible is True
-    assert assessment.primary_path == "market_value"
+    assert assessment.primary_path == "market_buyout_inspection"
     assert assessment.actionable_price is True
     assert assessment.price_in_discovery_band is True
     assert evaluation.economics.resale_median_jpy is None
@@ -211,7 +211,7 @@ def test_market_path_uses_confident_item_identity_not_designer_heat_points() -> 
 
     assert evaluation.desirability.score == 12
     assert assessment.item_type_confident is True
-    assert assessment.primary_path == "market_value"
+    assert assessment.primary_path == "market_buyout_inspection"
 
 
 def test_ending_path_requires_mature_auction_price() -> None:
@@ -407,8 +407,8 @@ def test_known_undercover_card_uses_engineer_boot_identity() -> None:
     assert evaluation.profile.item_type.matched_term == "エンジニアブーツ"
     assert evaluation.profile.collaboration is None
     assert assessment.eligible is True
-    assert assessment.primary_path == "market_value"
-    assert assessment.eligible_paths == ("market_value",)
+    assert assessment.primary_path == "market_buyout_inspection"
+    assert assessment.eligible_paths == ("market_buyout_inspection",)
 
 
 def test_early_current_bid_cannot_make_buyout_an_unknown_cheap_candidate() -> None:
@@ -429,7 +429,7 @@ def test_early_current_bid_cannot_make_buyout_an_unknown_cheap_candidate() -> No
     )
 
     assert assessment.actionable_buyout_fraction == 1.0
-    assert "market_value" in assessment.eligible_paths
+    assert "market_buyout_inspection" in assessment.eligible_paths
     assert "unknown_interesting" not in assessment.eligible_paths
     assert "ending_auction" not in assessment.eligible_paths
 
@@ -485,7 +485,10 @@ def test_counterfeit_terms_use_tokens_without_weakening_explicit_detection() -> 
     japanese_evaluation = evaluate_listing(japanese, settings=settings)
 
     assert harmless_evaluation.auth_risk.level != "do_not_touch"
-    assert standalone_evaluation.auth_risk.level == "do_not_touch"
+    assert standalone_evaluation.profile.relationship
+    assert standalone_evaluation.profile.relationship.value == "homage_reference"
+    assert standalone_evaluation.profile.product_scope.target_role == "style_reference"
+    assert standalone_evaluation.auth_risk.level != "do_not_touch"
     assert japanese_evaluation.auth_risk.level == "do_not_touch"
 
 
@@ -540,7 +543,7 @@ def test_prior_production_market_near_misses_have_conservative_card_outcomes() -
                 time_remaining="15 hour(s)",
             ),
             _market_spec("vetements", "market_buyout", maximum_jpy=40_000),
-            "market_value",
+            "market_buyout_inspection",
         ),
         (
             _listing(
@@ -550,7 +553,7 @@ def test_prior_production_market_near_misses_have_conservative_card_outcomes() -
                 buyout_price=7_500,
             ),
             _market_spec("needles", "market_buyout", maximum_jpy=9_000),
-            "market_value",
+            "market_buyout_inspection",
         ),
         (
             _listing(
@@ -560,7 +563,7 @@ def test_prior_production_market_near_misses_have_conservative_card_outcomes() -
                 buyout_price=25_000,
             ),
             _market_spec("undercover", "market_buyout", maximum_jpy=25_000),
-            "market_value",
+            "market_buyout_inspection",
         ),
         (
             _listing(
@@ -608,9 +611,9 @@ def test_prior_production_market_near_misses_have_conservative_card_outcomes() -
         assert assessment.primary_path == expected_path
 
     assert outcomes == {
-        "d1239838430": "market_value",
-        "f1216156045": "market_value",
-        "t1231271479": "market_value",
+        "d1239838430": "market_buyout_inspection",
+        "f1216156045": "market_buyout_inspection",
+        "t1231271479": "market_buyout_inspection",
         "p1231987775": "unknown_interesting",
         "j1242941908": None,
         "v1140788266": None,
@@ -684,7 +687,7 @@ def test_declared_diffusion_word_does_not_become_a_blanket_generic_reject() -> N
 
     assert assessment.piece_relationship == "diffusion"
     assert assessment.eligible is True
-    assert assessment.primary_path == "market_value"
+    assert assessment.primary_path == "market_buyout_inspection"
 
 
 def test_known_diffusion_aliases_do_not_inherit_mainline_designer_context() -> None:
@@ -756,7 +759,7 @@ def test_piece_specific_strength_can_compensate_for_collaboration_rank_prior() -
     assert assessments[1].piece_relationship == "collaboration"
 
 
-def test_brand_specific_generic_signal_now_blocks_market_value_path() -> None:
+def test_brand_specific_generic_signal_now_blocks_market_buyout_inspection_path() -> None:
     settings = _settings()
     listing = _listing(
         "generic-dior",
@@ -790,7 +793,7 @@ def test_homage_relationship_rejects_but_stereotype_remains_core() -> None:
 
     assert homage_assessment.piece_relationship == "homage_reference"
     assert homage_assessment.eligible is False
-    assert homage_assessment.reject_reason == "homage_or_reference"
+    assert homage_assessment.reject_reason == "target_identity_mismatch"
     assert harmless_assessment.piece_relationship == "core"
     assert harmless_assessment.eligible is True
 
@@ -819,9 +822,9 @@ def test_japanese_chrome_hearts_homage_fails_closed_before_and_after_detail() ->
     assert evaluation.profile.relationship.value == "homage_reference"
     assert evaluation.profile.relationship.matched_term == "オマージュ"
     assert assessment.eligible is False
-    assert assessment.reject_reason == "homage_or_reference"
+    assert assessment.reject_reason == "target_identity_mismatch"
     assert post_detail.route is None
-    assert post_detail.rejection_reason == "homage_or_secondary_brand"
+    assert post_detail.rejection_reason == "target_identity_mismatch"
 
 
 def test_size_or_dimension_x_does_not_create_a_collaboration_relationship() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
@@ -32,6 +33,35 @@ class PieceRelationship:
     participants: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ProductScope:
+    """What the seller is offering, independently of a matched brand token."""
+
+    target_role: str = "unknown"
+    offer_kind: str = "product"
+    audience: str = "unknown"
+    offer_clarity: str = "clear"
+    remaining_variant: str | None = None
+    confidence: float = 0.6
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def hard_non_target(self) -> bool:
+        return bool(
+            self.target_role in {"style_reference", "contradicted"}
+            or self.offer_kind == "packaging_only"
+            or self.audience in {"womens", "kids"}
+        )
+
+    @property
+    def acquisition_attributable(self) -> bool:
+        return bool(
+            not self.hard_non_target
+            and self.offer_clarity == "clear"
+            and self.offer_kind != "packaging_only"
+        )
+
+
 @dataclass
 class FashionProfile:
     brand: Evidence | None = None
@@ -46,6 +76,7 @@ class FashionProfile:
     color: Evidence | None = None
     collaboration: Evidence | None = None
     relationship: PieceRelationship | None = None
+    product_scope: ProductScope = field(default_factory=ProductScope)
     positive_signals: list[Evidence] = field(default_factory=list)
     negative_signals: list[Evidence] = field(default_factory=list)
     auth_sensitive: bool = False
@@ -94,6 +125,322 @@ def _longest_term_match(text: str, terms: list[str]) -> str | None:
     return max(matches, key=lambda term: len(normalize_text(term)), default=None)
 
 
+def _brand_match(
+    text: str, taxonomy: dict[str, Any]
+) -> tuple[str, dict[str, Any], str, bool] | None:
+    """Return the most specific configured target alias in the evidence text."""
+    matches: list[tuple[int, bool, str, dict[str, Any], str]] = []
+    for brand_key, record in taxonomy.get("brands", {}).items():
+        core_aliases = [str(alias) for alias in record.get("aliases", [])]
+        recognition_aliases = [
+            str(alias) for alias in record.get("recognition_aliases", [])
+        ]
+        for alias in (*core_aliases, *recognition_aliases):
+            if _term_matches(text, alias):
+                matches.append(
+                    (
+                        len(normalize_text(alias)),
+                        alias in core_aliases,
+                        brand_key,
+                        record,
+                        alias,
+                    )
+                )
+    if not matches:
+        return None
+    _, core_alias, brand_key, record, alias = max(
+        matches, key=lambda match: (match[0], match[1])
+    )
+    return brand_key, record, alias, core_alias
+
+
+def _brand_reference_match(text: str, matched_term: str) -> str | None:
+    """Find language that syntactically makes the target a style reference."""
+    relationships = load_taxonomy().get("relationship_terms", {})
+    alias = normalize_text(matched_term).casefold()
+    escaped = re.escape(alias)
+    if any(character.isascii() and character.isalnum() for character in alias):
+        alias_pattern = rf"(?<![a-z0-9]){escaped}(?![a-z0-9])"
+    else:
+        alias_pattern = escaped
+
+    suffixes = [
+        normalize_text(str(term)).casefold()
+        for term in relationships.get("style_reference_suffixes", [])
+    ]
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        match = re.search(
+            rf"{alias_pattern}\s*(?:[-:：/]\s*)?{re.escape(suffix)}",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return normalize_text(match.group(0))
+
+    prefixes = [
+        normalize_text(str(term)).casefold()
+        for term in relationships.get("style_reference_prefixes", [])
+    ]
+    alias_match = re.search(alias_pattern, text, flags=re.IGNORECASE)
+    if alias_match:
+        for prefix in sorted(prefixes, key=len, reverse=True):
+            for prefix_match in re.finditer(re.escape(prefix), text, flags=re.IGNORECASE):
+                # Prefix constructions can include an offered object between
+                # "homage" and a hashtagged target. Keep the window local.
+                if 0 <= alias_match.start() - prefix_match.end() <= 64:
+                    return normalize_text(prefix_match.group(0))
+
+    for phrase in relationships.get("cultural_reference_phrases", []):
+        normalized_phrase = normalize_text(str(phrase)).casefold()
+        if _term_matches(text, normalized_phrase) and alias in normalized_phrase:
+            return str(phrase)
+    return None
+
+
+_BRAND_OBSERVED_PLACEHOLDERS = {
+    "-",
+    "--",
+    "n/a",
+    "not specified",
+    "other",
+    "unknown",
+    "その他",
+    "不明",
+}
+
+
+def _identity_key(value: str | None) -> str:
+    """Compare structured maker values despite harmless punctuation/accents."""
+    decomposed = unicodedata.normalize("NFKD", normalize_text(value).casefold())
+    unaccented = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+    return re.sub(r"[^\w]+", "", unaccented)
+
+
+def _observed_brand_matches_target(
+    observed: str,
+    matched_brand: Evidence,
+    taxonomy: dict[str, Any],
+) -> bool:
+    """Allow explicit marketplace parent-house values without title broadening."""
+    observed_match = _brand_match(observed, taxonomy)
+    if observed_match and observed_match[1].get("canonical") == matched_brand.value:
+        return True
+    observed_key = _identity_key(observed)
+    if observed_key == _identity_key(matched_brand.value):
+        return True
+    target_record = next(
+        (
+            record
+            for record in taxonomy.get("brands", {}).values()
+            if record.get("canonical") == matched_brand.value
+        ),
+        {},
+    )
+    return observed_key in {
+        _identity_key(alias)
+        for alias in target_record.get("observed_brand_aliases", [])
+        if alias
+    }
+
+
+def _participant_matches_observed(
+    observed: str, relationship: PieceRelationship | None
+) -> bool:
+    if not relationship or relationship.value != "collaboration":
+        return False
+    normalized = normalize_text(observed).casefold()
+    return any(
+        normalized == participant
+        or _term_matches(normalized, participant)
+        or _term_matches(participant, normalized)
+        for participant in relationship.participants
+        if participant
+    )
+
+
+def _scope_audience(text: str, category_hierarchy: tuple[str, ...]) -> tuple[str, str | None]:
+    hierarchy = " ".join(normalize_text(value).casefold() for value in category_hierarchy)
+    if re.search(
+        r"(?i)(?:^|[ >/＞])(?:kids?|children|junior|キッズ|子供服|子ども)(?:$|[ >/＞])",
+        hierarchy,
+    ):
+        return "kids", "detail category identifies kids inventory"
+    if re.search(
+        r"(?i)(?:^|[ >/＞])(?:women'?s?|ladies|レディース|女性用)(?:$|[ >/＞])",
+        hierarchy,
+    ):
+        return "womens", "detail category identifies women's inventory"
+
+    item_words = (
+        r"jacket|coat|shirt|tee|t-?shirt|hoodie|sweater|pants|trousers|jeans|"
+        r"boots?|shoes?|ジャケット|コート|シャツ|パーカー|ニット|パンツ|デニム|ブーツ"
+        r"|tシャツ|ポロシャツ"
+    )
+    if re.search(
+        rf"(?i)\b(?:kids?|children|junior)\b\s*(?:size\s*)?(?:\d{{2,3}}\s*)?(?:{item_words})",
+        text,
+    ):
+        return "kids", "title grammatically scopes the product to kids"
+    if re.search(
+        rf"(?:キッズ|子供服|子ども|ジュニア)(?:用|サイズ)?\s*(?:\d{{2,3}}\s*)?(?:{item_words})",
+        text,
+    ):
+        return "kids", "title grammatically scopes the product to kids"
+    if re.search(r"(?i)\b(?:women'?s?|womens|ladies)\b|レディース|女性用", text):
+        return "womens", "title identifies women's inventory"
+    if re.search(
+        r"(?i)(?:^|[ >/＞])(?:men'?s?|mens|メンズ|男性用)(?:$|[ >/＞])",
+        hierarchy,
+    ):
+        return "mens", "detail category identifies men's inventory"
+    return "unknown", None
+
+
+def _partial_offer(text: str) -> tuple[str, str | None, str | None]:
+    pairs = (
+        (r"(?i)\bleft\b.{0,30}\b(?:sold|sold out)\b", "right"),
+        (r"(?i)\bright\b.{0,30}\b(?:sold|sold out)\b", "left"),
+        (r"左.{0,30}(?:売り切れ|売れました|販売済)", "right"),
+        (r"右.{0,30}(?:売り切れ|売れました|販売済)", "left"),
+    )
+    multi_item_context = bool(
+        re.search(
+            r"(?i)\b(?:pair|set|two|2\s*(?:items?|pcs?)|both|"
+            r"pictured\s+(?:items?|variants?)|variants?)\b|"
+            r"(?:2点|二点|セット|左右|掲載(?:商品|品)|画像(?:の商品)?)",
+            text,
+        )
+    )
+    for pattern, remaining in pairs:
+        sold_match = re.search(pattern, text)
+        counterpart_available = bool(
+            sold_match
+            and re.search(
+                rf"(?i)\b{remaining}\b.{{0,30}}\b"
+                r"(?:remain(?:s|ing)?|available|included|for sale)\b",
+                text,
+            )
+        )
+        if sold_match and (multi_item_context or counterpart_available):
+            return "partial", remaining, "one pictured/listed variant is already sold"
+    if re.search(
+        r"(?i)(?:one|one item|片方|一部|1点).{0,30}(?:sold|sold out|売り切れ|売れました|販売済)",
+        text,
+    ):
+        return "ambiguous", None, "multi-item offer is only partially available"
+    return "clear", None, None
+
+
+def analyze_product_scope(
+    text: str,
+    *,
+    relationship: PieceRelationship | None,
+    matched_brand: Evidence | None,
+    brand_observed: str | None = None,
+    category_hierarchy: tuple[str, ...] = (),
+    scope_title: str | None = None,
+) -> ProductScope:
+    """Parse manufacturer role, offered object, audience, and offer clarity once."""
+    taxonomy = load_taxonomy()
+    normalized = normalize_text(text).casefold()
+    reasons: list[str] = []
+    target_role = {
+        "core": "manufacturer",
+        "diffusion": "diffusion",
+        "collaboration": "collaborator",
+        "homage_reference": "style_reference",
+    }.get(relationship.value if relationship else "", "unknown")
+    if target_role == "style_reference":
+        reasons.append("target name is explicitly a style/reference, not manufacturer evidence")
+    non_target_maker = _longest_term_match(
+        normalized,
+        [str(term) for term in taxonomy.get("negative_terms", {}).get("non_target_maker", [])],
+    )
+    if non_target_maker and matched_brand:
+        target_role = "contradicted"
+        reasons.append(f"seller identifies a non-target maker ({non_target_maker})")
+
+    observed = normalize_text(brand_observed).casefold()
+    if (
+        observed
+        and observed not in _BRAND_OBSERVED_PLACEHOLDERS
+        and matched_brand
+        and not _observed_brand_matches_target(observed, matched_brand, taxonomy)
+        and not _participant_matches_observed(observed, relationship)
+    ):
+        target_role = "contradicted"
+        reasons.append(f"detail brand {brand_observed!r} contradicts target manufacturer")
+
+    scope_terms = taxonomy.get("product_scope_terms", {})
+    scope_title_text = normalize_text(scope_title).casefold() if scope_title else normalized
+    packaging_match = _longest_term_match(
+        normalized,
+        [str(term) for term in scope_terms.get("packaging_only", [])],
+    )
+    if not packaging_match:
+        product_box = re.search(
+            r"(?i)\b(?:wallet|cardholder|card holder|coin case|shoes?|sneakers?|"
+            r"boots?|belt|bag)\s+(?:empty\s+)?box\b",
+            scope_title_text,
+        )
+        if product_box:
+            without_box_phrase = (
+                scope_title_text[: product_box.start()]
+                + " "
+                + scope_title_text[product_box.end() :]
+            )
+            if not _first_match(
+                without_box_phrase,
+                taxonomy.get("item_types", {}),
+                "product_scope",
+            ):
+                packaging_match = product_box.group(0)
+    if not packaging_match:
+        dust_bag = re.search(r"(?i)\bdust bag\b|保存袋", scope_title_text)
+        if dust_bag:
+            without_dust_bag = (
+                scope_title_text[: dust_bag.start()]
+                + " "
+                + scope_title_text[dust_bag.end() :]
+            )
+            if not _first_match(
+                without_dust_bag,
+                taxonomy.get("item_types", {}),
+                "product_scope",
+            ):
+                packaging_match = dust_bag.group(0)
+    container_match = _longest_term_match(
+        normalized,
+        [str(term) for term in scope_terms.get("container_products", [])],
+    )
+    if packaging_match:
+        offer_kind = "packaging_only"
+        reasons.append(f"offer is packaging/accessory only ({packaging_match})")
+    elif container_match:
+        offer_kind = "container"
+        reasons.append(f"offered product is a container ({container_match})")
+    else:
+        offer_kind = "product"
+
+    audience, audience_reason = _scope_audience(scope_title_text, category_hierarchy)
+    if audience_reason:
+        reasons.append(audience_reason)
+    clarity, remaining_variant, partial_reason = _partial_offer(normalized)
+    if partial_reason:
+        reasons.append(partial_reason)
+    return ProductScope(
+        target_role=target_role,
+        offer_kind=offer_kind,
+        audience=audience,
+        offer_clarity=clarity,
+        remaining_variant=remaining_variant,
+        confidence=0.95 if reasons else 0.7,
+        reasons=tuple(reasons),
+    )
+
+
 def _collaboration_participants(term: str) -> tuple[str, ...]:
     """Normalize an explicit two-party collaboration without guessing partners."""
     normalized = normalize_text(term).casefold()
@@ -111,9 +458,61 @@ def _collaboration_participants(term: str) -> tuple[str, ...]:
     return tuple(sorted(cleaned))
 
 
+def _participant_label(value: str) -> str:
+    return re.sub(r"^[\W_]+|[\W_]+$", "", normalize_text(value).casefold())
+
+
+def _term_pattern(term: str) -> str:
+    normalized = normalize_text(term).casefold()
+    escaped = re.escape(normalized)
+    if any(character.isascii() and character.isalnum() for character in normalized):
+        return rf"(?<![a-z0-9]){escaped}(?![a-z0-9])"
+    return escaped
+
+
+def _known_partner_at_edge(
+    fragment: str,
+    taxonomy: dict[str, Any],
+    *,
+    from_start: bool,
+    target_canonical: str,
+) -> tuple[str, int, int] | None:
+    candidates: list[tuple[int, str, int, int]] = []
+    for record in taxonomy.get("brands", {}).values():
+        canonical = str(record.get("canonical") or "")
+        if not canonical or canonical == target_canonical:
+            continue
+        terms = (
+            canonical,
+            *record.get("aliases", []),
+            *record.get("recognition_aliases", []),
+        )
+        for term in terms:
+            pattern = _term_pattern(str(term))
+            edge_pattern = (
+                rf"^\s*(?P<term>{pattern})"
+                if from_start
+                else rf"(?P<term>{pattern})\s*$"
+            )
+            match = re.search(edge_pattern, fragment, flags=re.IGNORECASE)
+            if match:
+                candidates.append(
+                    (
+                        len(normalize_text(str(term))),
+                        _participant_label(canonical),
+                        match.start("term"),
+                        match.end("term"),
+                    )
+                )
+    if not candidates:
+        return None
+    _, label, start, end = max(candidates, key=lambda candidate: candidate[0])
+    return label, start, end
+
+
 def _find_brand_collaboration_match(
-    text: str, record: dict[str, Any]
-) -> re.Match[str] | None:
+    text: str, record: dict[str, Any], taxonomy: dict[str, Any]
+) -> tuple[str, tuple[str, ...]] | None:
     """Return only an explicit collaboration that actually names the matched house.
 
     Marketplace titles commonly contain dimensions and variants such as
@@ -121,27 +520,69 @@ def _find_brand_collaboration_match(
     corrupts relationship ranking and comp matching, so one participant must
     share a meaningful token with a configured brand alias.
     """
-    alias_tokens = {
-        token
-        for alias in (*record.get("aliases", []), *record.get("recognition_aliases", []))
-        for token in re.findall(r"[^\W_]+", normalize_text(str(alias)).casefold())
-        if len(token) >= 2
-    }
-    pattern = re.compile(
-        r"(?i)(?:[^\s×]+\s+(?:x|×)\s+[^\s×]+|[^\s×]+×[^\s×]+)"
+    target_canonical = str(record.get("canonical") or "")
+    target_label = _participant_label(target_canonical)
+    aliases = sorted(
+        {
+            str(alias)
+            for alias in (
+                target_canonical,
+                *record.get("aliases", []),
+                *record.get("recognition_aliases", []),
+            )
+            if alias
+        },
+        key=lambda alias: len(normalize_text(alias)),
+        reverse=True,
     )
-    for match in pattern.finditer(text):
-        participants = _collaboration_participants(match.group(0))
-        if not participants:
-            continue
-        participant_tokens = {
-            token
-            for participant in participants
-            for token in re.findall(r"[^\W_]+", participant.casefold())
-            if len(token) >= 2
-        }
-        if alias_tokens & participant_tokens:
-            return match
+    for alias in aliases:
+        for target_match in re.finditer(_term_pattern(alias), text, flags=re.IGNORECASE):
+            tail = text[target_match.end() :]
+            forward_connector = re.match(r"\s*(?:x|×)\s*", tail, flags=re.IGNORECASE)
+            if forward_connector:
+                partner_fragment = tail[forward_connector.end() :]
+                known = _known_partner_at_edge(
+                    partner_fragment,
+                    taxonomy,
+                    from_start=True,
+                    target_canonical=target_canonical,
+                )
+                if known:
+                    partner, _, end = known
+                else:
+                    token = re.match(r"[^\s×|,/;:()\[\]]+", partner_fragment)
+                    if not token:
+                        continue
+                    partner, end = _participant_label(token.group(0)), token.end()
+                if partner and partner != target_label:
+                    match_end = target_match.end() + forward_connector.end() + end
+                    return (
+                        text[target_match.start() : match_end],
+                        tuple(sorted((target_label, partner))),
+                    )
+
+            prefix = text[: target_match.start()]
+            reverse_connector = re.search(r"\s*(?:x|×)\s*$", prefix, flags=re.IGNORECASE)
+            if reverse_connector:
+                partner_fragment = prefix[: reverse_connector.start()]
+                known = _known_partner_at_edge(
+                    partner_fragment,
+                    taxonomy,
+                    from_start=False,
+                    target_canonical=target_canonical,
+                )
+                if known:
+                    partner, start, _ = known
+                else:
+                    token = re.search(r"[^\s×|,/;:()\[\]]+$", partner_fragment)
+                    if not token:
+                        continue
+                    partner, start = _participant_label(token.group(0)), token.start()
+                if partner and partner != target_label:
+                    return (
+                        text[start : target_match.end()],
+                        tuple(sorted((target_label, partner))),
+                    )
     return None
 
 
@@ -152,14 +593,10 @@ def _classify_relationship(
     record: dict[str, Any],
     matched_term: str,
     matched_core_alias: bool,
-    collaboration_match: re.Match[str] | None,
+    collaboration_match: tuple[str, tuple[str, ...]] | None,
 ) -> PieceRelationship:
     """Classify only relationships evidenced by title/detail text or taxonomy."""
-    global_relationships = load_taxonomy().get("relationship_terms", {})
-    homage_match = _longest_term_match(
-        text,
-        [str(term) for term in global_relationships.get("homage_reference", [])],
-    )
+    homage_match = _brand_reference_match(text, matched_term)
     if homage_match:
         return PieceRelationship(
             "homage_reference",
@@ -194,13 +631,13 @@ def _classify_relationship(
             _collaboration_participants(low_priority_collaboration_match),
         )
     if collaboration_match:
-        matched_collaboration = collaboration_match.group(0).strip()
+        matched_collaboration, participants = collaboration_match
         return PieceRelationship(
             "collaboration",
             0.75,
             "title.relationship.collaboration",
             matched_collaboration,
-            _collaboration_participants(matched_collaboration),
+            participants,
         )
     if brand_key == "vintage_band_tees":
         # A recognized band subject is not a mainline fashion-house
@@ -257,34 +694,41 @@ def is_generic_signal(
     )
 
 
-def enrich_title(title: str, hinted_brand: str | None = None) -> FashionProfile:
+def enrich_title(
+    title: str,
+    hinted_brand: str | None = None,
+    *,
+    brand_observed: str | None = None,
+    category_hierarchy: tuple[str, ...] = (),
+    scope_title: str | None = None,
+) -> FashionProfile:
     taxonomy = load_taxonomy()
     text = normalize_text(title).casefold()
     profile = FashionProfile()
     matched_brand: dict[str, Any] | None = None
-    collaboration_match: re.Match[str] | None = None
+    collaboration_match: tuple[str, tuple[str, ...]] | None = None
 
-    for brand_key, record in taxonomy.get("brands", {}).items():
-        core_aliases = [str(alias) for alias in record.get("aliases", [])]
-        recognition_aliases = [
-            str(alias) for alias in record.get("recognition_aliases", [])
-        ]
-        recognition_terms = [*core_aliases, *recognition_aliases]
-        match = next(
-            (str(alias) for alias in recognition_terms if _term_matches(text, str(alias))),
-            None,
-        )
-        if not match:
-            continue
+    brand_match = _brand_match(text, taxonomy)
+    observed_text = normalize_text(brand_observed).casefold()
+    observed_match = _brand_match(observed_text, taxonomy) if observed_text else None
+    if brand_match is None and observed_match is not None:
+        brand_match = observed_match
+    if brand_match is not None:
+        brand_key, record, match, matched_core_alias = brand_match
         profile.brand = Evidence(record["canonical"], 0.98, f"taxonomy.brands.{brand_key}", match)
         matched_brand = record
-        collaboration_match = _find_brand_collaboration_match(text, record)
+        relationship_text = normalize_text(
+            " ".join(value for value in (text, observed_text) if value)
+        )
+        collaboration_match = _find_brand_collaboration_match(
+            relationship_text, record, taxonomy
+        )
         profile.relationship = _classify_relationship(
-            text,
+            relationship_text,
             brand_key=brand_key,
             record=record,
             matched_term=match,
-            matched_core_alias=match in core_aliases,
+            matched_core_alias=matched_core_alias,
             collaboration_match=collaboration_match,
         )
         inherits_mainline_context = profile.relationship.value in {"core", "collaboration"} and not (
@@ -348,7 +792,6 @@ def enrich_title(title: str, hinted_brand: str | None = None) -> FashionProfile:
                         str(term), 0.85, f"taxonomy.brands.{brand_key}.generic_signals", str(term)
                     )
                 )
-        break
 
     profile.item_type = _first_match(text, taxonomy.get("item_types", {}), "taxonomy.item_types")
     profile.material = _first_match(text, taxonomy.get("materials", {}), "taxonomy.materials")
@@ -375,7 +818,7 @@ def enrich_title(title: str, hinted_brand: str | None = None) -> FashionProfile:
     profile.color = _first_match(text, colors, "title.colors")
     if collaboration_match:
         profile.collaboration = Evidence(
-            "collaboration", 0.8, "title.collaboration", collaboration_match.group(0).strip()
+            "collaboration", 0.8, "title.collaboration", collaboration_match[0]
         )
     if profile.item_type:
         category = (
@@ -383,7 +826,8 @@ def enrich_title(title: str, hinted_brand: str | None = None) -> FashionProfile:
             if profile.item_type.value == "jewelry"
             else (
                 "accessory"
-                if profile.item_type.value in {"accessory", "bag", "belt", "wallet", "footwear"}
+                if profile.item_type.value
+                in {"accessory", "bag", "belt", "wallet", "footwear", "eyewear_case"}
                 else "menswear"
             )
         )
@@ -420,6 +864,14 @@ def enrich_title(title: str, hinted_brand: str | None = None) -> FashionProfile:
         profile.relationship = PieceRelationship(
             "uncertain", 0.55, "marketplace_hint", hinted_brand
         )
+    profile.product_scope = analyze_product_scope(
+        text,
+        relationship=profile.relationship,
+        matched_brand=profile.brand,
+        brand_observed=brand_observed,
+        category_hierarchy=category_hierarchy,
+        scope_title=scope_title,
+    )
     return profile
 
 

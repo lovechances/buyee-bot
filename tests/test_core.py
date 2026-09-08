@@ -532,8 +532,10 @@ def test_economics_stays_separate_and_fails_closed_without_comps():
 def test_auth_risk_is_explainable_and_conservative():
     profile = enrich_title("Chrome Hearts style 925 ring")
     risk = assess_auth_risk(profile, "Chrome Hearts style 925 ring", 3_000, {})
-    assert risk.level == "do_not_touch"
-    assert "counterfeit-associated seller wording" in risk.reasons
+    assert profile.relationship and profile.relationship.value == "homage_reference"
+    assert profile.product_scope.target_role == "style_reference"
+    assert risk.level == "high"
+    assert "implausibly low price for auth-sensitive item" in risk.reasons
 
 
 def test_auth_risk_blocks_apparently_excellent_economics():
@@ -761,14 +763,13 @@ def test_buyee_browser_payload_parser_extracts_live_listing_fields_from_real_dom
     ]
 
     items = BuyeeAuthenticatedSource._items_from_browser_payload(rows, "Number (N)ine")
-    assert len(items) == 2
+    # An unlabelled card cannot support identity or Stage A; ignore it instead
+    # of silently treating badge/card chrome as the listing title.
+    assert len(items) == 1
     assert items[0].title_original == "Number (N)ine overshirt"
     assert items[0].time_remaining == "6 day(s)"
     assert items[0].current_price == 3300
     assert items[0].source_listing_id.endswith("1242650927")
-    assert items[1].title_original == ""
-    assert items[1].time_remaining == "13 hour(s)"
-    assert items[1].current_price == 4000
     assert (
         BuyeeAuthenticatedSource._extract_time_remaining(
             "Current Price 3,300 YEN Time Remaining 2 day(s) Number of Bids 4"
@@ -967,7 +968,12 @@ def test_scan_suppresses_unchanged_qualifying_alert(monkeypatch, tmp_path):
         return [listing]
 
     async def fake_detail(self, listings):
-        return 0, len(listings)
+        for item in listings:
+            item.raw = {
+                **(item.raw or {}),
+                "stage_b": {"status": "enriched", "observed": {}},
+            }
+        return len(listings), 0
 
     async def fake_comps(self, profile, minimum_candidates=8):
         return []
@@ -1014,7 +1020,12 @@ def test_scan_backfills_historical_alert_without_deployment_reflood(monkeypatch,
         return [listing]
 
     async def fake_detail(self, listings):
-        return 0, len(listings)
+        for item in listings:
+            item.raw = {
+                **(item.raw or {}),
+                "stage_b": {"status": "enriched", "observed": {}},
+            }
+        return len(listings), 0
 
     async def fake_comps(self, profile, minimum_candidates=8):
         return []
@@ -1284,7 +1295,7 @@ def test_yahoo_ended_evidence_never_becomes_us_fmv_even_if_misrouted():
     assert evaluation.japan_comps and evaluation.japan_comps.median_jpy == 50_000
 
 
-def test_stage_b_failure_cannot_create_directional_buyout_but_preserves_archive_watch():
+def test_stage_b_failure_cannot_create_directional_buyout_or_archive_route():
     failed_buyout = LiveListing(
         source="buyee",
         source_listing_id="failed-directional-buyout",
@@ -1328,10 +1339,7 @@ def test_stage_b_failure_cannot_create_directional_buyout_but_preserves_archive_
     assert _route_evaluation(failed_buyout, buyout_evaluation) is None
     assert archive_evaluation.identity.confidence == "medium"
     assert archive_evaluation.directional.thesis is None
-    assert _route_evaluation(failed_archive, archive_evaluation) == (
-        "grails",
-        "early archive discovery; current bid is provisional",
-    )
+    assert _route_evaluation(failed_archive, archive_evaluation) is None
 
 
 def test_time_migration_archive_opportunity_routes_with_seller_warning():
@@ -1451,8 +1459,9 @@ def test_enriched_core_buyout_keeps_identity_and_directional_value_separate_from
     assert evaluation.valuation.confidence == "unavailable"
     assert evaluation.economics.opportunity_score == 0
     assert evaluation.directional.confidence == "high"
-    assert evaluation.directional.thesis == "asymmetric_value"
-    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+    assert evaluation.directional.thesis is None
+    assert evaluation.directional.discovery_price_fraction is None
+    assert _route_evaluation(listing, evaluation) is None
 
 
 def test_generic_margiela_at_normal_price_without_comps_is_suppressed():
@@ -1503,7 +1512,7 @@ def test_generic_cheap_prada_sport_polo_needs_substantive_piece_evidence():
 
     evaluation = evaluate_listing(listing)
 
-    assert evaluation.directional.discovery_price_fraction == 0.392
+    assert evaluation.directional.discovery_price_fraction is None
     assert evaluation.directional.thesis is None
     assert "insufficient substantive piece-quality evidence" in evaluation.directional.reasons
     assert _route_evaluation(listing, evaluation) is None
@@ -1937,7 +1946,7 @@ def test_generic_modern_band_tee_is_not_core_or_asymmetric_value():
     evaluation = evaluate_listing(listing)
 
     assert evaluation.profile.relationship.value == "uncertain"
-    assert evaluation.directional.discovery_price_fraction == 0.1671
+    assert evaluation.directional.discovery_price_fraction is None
     assert evaluation.directional.thesis is None
     assert _route_evaluation(listing, evaluation) is None
 
@@ -2597,7 +2606,8 @@ def test_actionable_buyout_is_not_suppressed_by_long_time_remaining():
 
     evaluation = evaluate_listing(listing)
 
-    assert evaluation.auction_maturity.auction_type == "fixed_price"
+    assert evaluation.auction_maturity.auction_type == "open_auction"
+    assert evaluation.auction_maturity.actionable_price_kind == "buyout"
     assert evaluation.auction_maturity.price_actionable is True
     assert evaluation.directional.thesis == "asymmetric_value"
     assert _route_evaluation(listing, evaluation)[0] == "buyouts"

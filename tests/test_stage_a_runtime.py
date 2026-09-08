@@ -201,7 +201,7 @@ def test_stage_a_telemetry_migration_is_null_safe_and_new_events_are_attributed(
         stage_a_category_valid=6,
         stage_a_eligible=5,
         stage_a_capped=1,
-        stage_a_path_counts={"market_value": 3, "unknown_interesting": 1},
+        stage_a_path_counts={"market_buyout_inspection": 3, "unknown_interesting": 1},
         stage_a_reject_counts={"brand_unresolved": 2, "candidate_budget": 1},
         stage_b_candidates=4,
         stage_b_enriched=3,
@@ -278,7 +278,7 @@ def test_stage_a_telemetry_migration_is_null_safe_and_new_events_are_attributed(
     assert totals["logic_reconsidered"] == 1
     assert len(totals["post_detail_decisions"]) == 6
     assert totals["stage_a_paths"] == {
-        "market_value": 3,
+        "market_buyout_inspection": 3,
         "unknown_interesting": 1,
     }
     assert totals["stage_a_reject_reasons"] == {

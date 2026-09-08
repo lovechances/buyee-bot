@@ -47,10 +47,14 @@ defaults:
   cooldown_minutes:
     market_buyout: 75
     market_ending: 45
+    market_closing: 30
+    market_explore: 360
     market_price_band: 240
   priority:
     market_buyout: 88
     market_ending: 86
+    market_closing: 92
+    market_explore: 68
     market_price_band: 72
 
 market_families:
@@ -154,3 +158,122 @@ market_families:
     query: "ヴィンテージ バンドT"
     categories:
       - {group: mens_fashion, profile: accessible, intents: [buyout, ending]}
+
+  # Low-frequency, steal-first coverage for retained interests which previously
+  # existed only in manual config (or not in the active query universe at all).
+  # These are deliberately one bounded slice per family; production yield and
+  # the manual benchmark can justify expansion later.
+  - family: takahiromiyashita_thesoloist
+    query: "TAKAHIROMIYASHITATheSoloist"
+    categories:
+      - {group: mens_fashion, profile: premium, intents: [explore]}
+
+  - family: kapital
+    query: "KAPITAL"
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [explore]}
+
+  - family: hysteric_glamour
+    query: "HYSTERIC GLAMOUR"
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [explore]}
+
+  - family: lgb
+    query: "L.G.B."
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [explore]}
+
+  - family: mastermind_japan
+    query: "mastermind JAPAN"
+    categories:
+      - {group: mens_fashion, profile: premium, intents: [explore]}
+
+  - family: rebuild_by_needles
+    query: "Rebuild by Needles"
+    categories:
+      - {group: mens_fashion, profile: low, intents: [explore]}
+
+  - family: yohji_yamamoto
+    query: "Yohji Yamamoto"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: comme_des_garcons_homme_plus
+    query: "Comme des Garcons Homme Plus"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: junya_watanabe
+    query: "Junya Watanabe MAN"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: issey_miyake
+    query: "ISSEY MIYAKE MEN"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: final_home
+    query: "FINAL HOME"
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [explore]}
+
+  - family: raf_simons
+    query: "Raf Simons"
+    categories:
+      - {group: mens_fashion, profile: premium, intents: [explore]}
+
+  - family: helmut_lang
+    query: "Helmut Lang"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: jean_paul_gaultier
+    query: "Jean Paul Gaultier Homme"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: vivienne_westwood
+    query: "Vivienne Westwood MAN"
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [explore]}
+
+  - family: miu_miu
+    query: "MIU MIU メンズ"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: gucci
+    query: "GUCCI メンズ"
+    categories:
+      - {group: mens_fashion, profile: luxury, intents: [explore]}
+
+  - family: dolce_gabbana
+    query: "Dolce & Gabbana メンズ"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: roberto_cavalli
+    query: "Roberto Cavalli メンズ"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: oakley
+    query: "OAKLEY メンズ"
+    categories:
+      - {group: mens_fashion_goods, profile: accessible, intents: [explore]}
+
+  - family: enfants_riches_deprimes
+    query: "Enfants Riches Deprimes"
+    categories:
+      - {group: mens_fashion, profile: premium, intents: [explore]}
+
+  - family: y_project
+    query: "Y/Project メンズ"
+    categories:
+      - {group: mens_fashion, profile: standard, intents: [explore]}
+
+  - family: alyx
+    query: "1017 ALYX 9SM"
+    categories:
+      - {group: mens_fashion, profile: accessible, intents: [explore]}

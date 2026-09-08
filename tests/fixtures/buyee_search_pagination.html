@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <body>
+    <ul class="itemCardList">
+      <li class="itemCard">
+        <a
+          class="itemCard__thumbnail"
+          href="https://buyee.jp/item/jdirectitems/auction/a111111111?conversionType=jdirectitems_auction_DirectSearch"
+        >
+          <span>With Authentication 10% OFF</span>
+          <img src="https://img.example/a111.jpg" alt="auction thumbnail">
+        </a>
+        <p class="itemCard__itemName">
+          <a
+            href="https://buyee.jp/item/jdirectitems/auction/a111111111?conversionType=jdirectitems_auction_DirectSearch"
+          >Maison Margiela reconstructed denim jacket</a>
+        </p>
+        <div>
+          Current Price 6,980 YEN Buyout Price 8,000 YEN
+          Time Remaining 2 day(s) Number of Bids 0 12 Watch
+        </div>
+      </li>
+      <li class="itemCard">
+        <a
+          class="itemCard__thumbnail"
+          href="https://buyee.jp/item/jdirectitems/auction/b222222222?conversionType=jdirectitems_auction_DirectSearch"
+        >
+          <img src="https://img.example/b222.jpg" alt="Needles cardigan">
+        </a>
+        <p class="itemCard__itemName">
+          <a
+            href="https://buyee.jp/item/jdirectitems/auction/b222222222?conversionType=jdirectitems_auction_DirectSearch"
+          >Needles V-neck mohair cardigan</a>
+        </p>
+        <div>
+          Current Price 7,500 YEN Time Remaining 45 minute(s)
+          Number of Bids 2 4 Watch
+        </div>
+      </li>
+      <li class="itemCard recommendation">
+        <a
+          href="https://buyee.jp/item/jdirectitems/auction/r999999999?conversionType=yac_top_recommend_list"
+        >Recommended unrelated jacket Current Price 50,000 YEN</a>
+      </li>
+      <li class="itemCard">
+        <a
+          href="https://buyee.jp/item/jdirectitems/auction/c333333333?conversionType=jdirectitems_auction_DirectSearch"
+        >With Authentication 10% OFF</a>
+        <div>Current Price 500 YEN Time Remaining 5 day(s)</div>
+      </li>
+    </ul>
+    <nav class="search_page_navi">
+      <div class="page_navi">
+        <span class="current">1</span>
+        <a data-bind='click: search.bind($data, {"page":2,"sort":"end"})'>2</a>
+        <a data-bind='click: search.bind($data, {"page":3,"sort":"end"})'>3</a>
+        <a
+          class="arrow"
+          data-bind='click: search.bind($data, {"page":2,"sort":"end"})'
+        >&gt;</a>
+      </div>
+    </nav>
+  </body>
+</html>

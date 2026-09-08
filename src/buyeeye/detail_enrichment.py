@@ -238,11 +238,24 @@ def parse_detail_payload(
     )
 
 
-def apply_detail(listing: Any, observation: DetailObservation) -> None:
+def apply_detail(
+    listing: Any,
+    observation: DetailObservation,
+    *,
+    retrieval: str = "live_fetch",
+) -> None:
+    if retrieval not in {"cache_hit", "live_fetch"}:
+        raise ValueError("Detail retrieval must be cache_hit or live_fetch")
     observed = asdict(observation)
     listing.raw = {
         **(listing.raw or {}),
-        "stage_b": {"status": "enriched", "observed": observed},
+        "stage_b": {
+            "status": "enriched",
+            "retrieval": retrieval,
+            "cache_hit": retrieval == "cache_hit",
+            "live_fetch": retrieval == "live_fetch",
+            "observed": observed,
+        },
     }
     if observation.title_original:
         listing.title_original = observation.title_original
@@ -253,17 +266,20 @@ def apply_detail(listing: Any, observation: DetailObservation) -> None:
         listing.condition = observation.condition_original
     if observation.seller_name:
         listing.seller_name = observation.seller_name
-    if observation.current_price:
-        listing.current_price = observation.current_price
-    if observation.buyout_price:
-        listing.buyout_price = observation.buyout_price
-        listing.buyout_indicator = "buyout"
-    if observation.starting_price:
-        listing.starting_price = observation.starting_price
-    if observation.bid_count is not None:
-        listing.bid_count = observation.bid_count
-    if observation.watch_count is not None:
-        listing.watch_count = observation.watch_count
+    # A cached identity observation can be up to the configured Stage B TTL old.
+    # Never let it replace fresher auction state from the current search card.
+    if retrieval == "live_fetch":
+        if observation.current_price:
+            listing.current_price = observation.current_price
+        if observation.buyout_price:
+            listing.buyout_price = observation.buyout_price
+            listing.buyout_indicator = "buyout"
+        if observation.starting_price:
+            listing.starting_price = observation.starting_price
+        if observation.bid_count is not None:
+            listing.bid_count = observation.bid_count
+        if observation.watch_count is not None:
+            listing.watch_count = observation.watch_count
     if observation.image_urls:
         listing.image_url = observation.image_urls[0]
     if observation.seller_feedback_percent is not None:
@@ -274,16 +290,50 @@ def apply_detail(listing: Any, observation: DetailObservation) -> None:
 
 
 class BuyeeDetailService:
-    def __init__(self, repository: DetailRepository):
+    def __init__(
+        self,
+        repository: DetailRepository,
+        *,
+        force_open_auction_refresh_minutes: int = 60,
+    ):
         self.repository = repository
+        self.force_open_auction_refresh_minutes = max(
+            0, int(force_open_auction_refresh_minutes)
+        )
+
+    def _force_live_refresh(self, listing: Any) -> bool:
+        buyout_price = getattr(listing, "buyout_price", None)
+        current_price = getattr(listing, "current_price", None)
+        has_live_bid = bool(
+            buyout_price is None
+            or (current_price is not None and current_price < buyout_price)
+        )
+        if not has_live_bid:
+            return False
+        text = normalize_text(str(getattr(listing, "time_remaining", None) or ""))
+        matches = re.findall(
+            r"(\d+)\s*(day|hour|minute)s?(?:\(s\))?", text.casefold()
+        )
+        if not matches:
+            return False
+        remaining = sum(
+            int(amount) * {"day": 1440, "hour": 60, "minute": 1}[unit]
+            for amount, unit in matches
+        )
+        return remaining <= self.force_open_auction_refresh_minutes
+
+    def _cached_observation(self, listing: Any) -> DetailObservation | None:
+        if self._force_live_refresh(listing):
+            return None
+        return self.repository.get_fresh(listing.source, listing.source_listing_id)
 
     async def enrich(self, listings: list[Any]) -> tuple[int, int]:
         pending: list[Any] = []
         enriched = 0
         for listing in listings:
-            cached = self.repository.get_fresh(listing.source, listing.source_listing_id)
+            cached = self._cached_observation(listing)
             if cached is not None:
-                apply_detail(listing, cached)
+                apply_detail(listing, cached, retrieval="cache_hit")
                 enriched += 1
             else:
                 pending.append(listing)
@@ -351,7 +401,7 @@ class BuyeeDetailService:
                         if not observation.title_original:
                             raise ValueError("detail title unavailable")
                         self.repository.put(observation)
-                        apply_detail(listing, observation)
+                        apply_detail(listing, observation, retrieval="live_fetch")
                         enriched += 1
                     except (OSError, PlaywrightError, TimeoutError, ValueError) as exc:
                         listing.raw = {

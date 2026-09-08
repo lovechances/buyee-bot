@@ -1,0 +1,395 @@
+version: 1
+description: >-
+  Fixed, non-production calibration observations for deterministic replay. These
+  cases encode user judgments and known semantic failures, never listing-ID rules.
+
+cases:
+  - key: gu_undercover_distressed_denim
+    cohort: positive
+    human_label: FIRE / purchased
+    prior_observation:
+      source: user_calibration
+      outcome: purchased
+      note: BuyEye surfaced the real listing at roughly ¥200.
+    acceptable_outcomes: [route:buyouts]
+    listing:
+      title_original: "GU × UNDERCOVER distressed reconstruction denim jeans"
+      brand: GU
+      category: menswear
+      current_price: 200
+      buyout_price: 200
+      starting_price: 200
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: GU
+      item_type_observed: Jeans
+      description_original: "GU and UNDERCOVER collaboration distressed reconstruction denim jeans"
+
+  - key: vintage_ysl_open_collar_stripe
+    cohort: positive
+    human_label: purchased
+    prior_observation:
+      source: user_calibration
+      outcome: purchased
+      note: Mainline-listed vintage-looking YSL open-collar shirt at roughly ¥5,415.
+    acceptable_outcomes: [route:buyouts]
+    listing:
+      title_original: "YSL Yves Saint Laurent 90s open collar striped patterned shirt"
+      brand: Saint Laurent
+      category: menswear
+      current_price: 5415
+      buyout_price: 5415
+      starting_price: 5415
+      time_remaining: "3 day(s)"
+      condition: Used
+      brand_observed: Yves Saint Laurent
+      item_type_observed: Shirt
+      description_original: "Vintage open-collar striped rayon shirt, mens size M"
+
+  - key: roen_velour_rhinestone_zip
+    cohort: positive
+    human_label: GREAT TARGET
+    prior_observation:
+      source: user_calibration
+      outcome: considered
+      note: Cheap Roen velour zip at roughly ¥2,000; not purchased.
+    acceptable_outcomes: [route:buyouts]
+    listing:
+      title_original: "Roen skull rhinestone velour zip hoodie"
+      brand: Roen
+      category: menswear
+      current_price: 2000
+      buyout_price: 2000
+      starting_price: 2000
+      time_remaining: "4 day(s)"
+      condition: Used
+      brand_observed: Roen
+      item_type_observed: Zip hoodie
+      description_original: "Black velour zip hoodie with rhinestone skull back graphic"
+
+  - key: needles_patterned_shorts
+    cohort: positive
+    human_label: decent
+    prior_observation:
+      source: user_calibration
+      outcome: positive_target
+      note: Patterned Needles shorts around ¥3,500.
+    acceptable_outcomes: [route:buyouts]
+    listing:
+      title_original: "Needles patchwork patterned shorts butterfly"
+      brand: Needles
+      category: menswear
+      current_price: 3500
+      buyout_price: 3500
+      starting_price: 3500
+      time_remaining: "6 day(s)"
+      condition: Used
+      brand_observed: Needles
+      item_type_observed: Shorts
+      description_original: "Mens patchwork patterned shorts with butterfly embroidery"
+
+  - key: number_nine_fleece_anorak
+    cohort: positive
+    human_label: good / considered, price reservation
+    prior_observation:
+      source: user_calibration
+      outcome: considered
+      note: Number (N)ine fleece/anorak around ¥9,900.
+    acceptable_outcomes: [route:buyouts, route:grails]
+    listing:
+      title_original: "Number (N)ine 2004 Miyashita patchwork fleece anorak parka"
+      brand: Number (N)ine
+      category: menswear
+      current_price: 9900
+      buyout_price: 9900
+      starting_price: 9900
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Number (N)ine
+      item_type_observed: Parka
+      description_original: "Original Miyashita-era paneled patchwork fleece anorak"
+
+  - key: number_nine_corduroy_flares
+    cohort: mixed
+    human_label: borderline thumbs-up
+    prior_observation:
+      source: user_calibration
+      outcome: mixed_positive
+      note: Early Number (N)ine corduroy flares around ¥12,000.
+    acceptable_outcomes: [route:buyouts, route:grails, reject:missing_us_valuation_but_directional_weak, reject:route_threshold]
+    listing:
+      title_original: "Number (N)ine 2002 Miyashita corduroy flare trousers"
+      brand: Number (N)ine
+      category: menswear
+      current_price: 12000
+      buyout_price: 12000
+      starting_price: 12000
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Number (N)ine
+      item_type_observed: Trousers
+      description_original: "Early original-era corduroy flared trousers"
+
+  - key: roen_skull_knit
+    cohort: mixed
+    human_label: decent piece, price reserve
+    prior_observation:
+      source: user_calibration
+      outcome: mixed_positive
+      note: Roen skull knit around ¥9,800.
+    acceptable_outcomes: [route:buyouts, route:grails, reject:missing_us_valuation_but_directional_weak, reject:route_threshold]
+    listing:
+      title_original: "Roen skull jacquard knit sweater"
+      brand: Roen
+      category: menswear
+      current_price: 9800
+      buyout_price: 9800
+      starting_price: 9800
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Roen
+      item_type_observed: Knitwear
+      description_original: "Skull jacquard knit in black"
+
+  - key: undercover_plant_graphic_tee
+    cohort: mixed
+    human_label: reasonable target, personal design miss
+    prior_observation:
+      source: user_calibration
+      outcome: mixed_positive
+      note: Undercover 25AW plant graphic tee around ¥7,590.
+    acceptable_outcomes: [route:buyouts, route:grails, reject:route_threshold]
+    listing:
+      title_original: "UNDERCOVER 25AW plant graphic T-shirt"
+      brand: Undercover
+      category: menswear
+      current_price: 7590
+      buyout_price: 7590
+      starting_price: 7590
+      time_remaining: "4 day(s)"
+      condition: New with tags
+      brand_observed: Undercover
+      item_type_observed: T-shirt
+      description_original: "Mens plant artwork graphic tee, new with tags"
+
+  - key: undercover_scab_no_gods_expensive
+    cohort: mixed
+    human_label: exciting identity, not an established deal
+    prior_observation:
+      source: user_calibration
+      outcome: market_price_reservation
+      note: User found Grailed alternatives at similar or lower asking prices.
+    acceptable_outcomes: [route:grails, reject:missing_us_valuation_but_directional_weak, reject:route_threshold]
+    listing:
+      title_original: "UNDERCOVER 03SS SCAB No Gods graphic T-shirt"
+      brand: Undercover
+      category: menswear
+      current_price: 50000
+      buyout_price: 50000
+      starting_price: 50000
+      time_remaining: "3 day(s)"
+      condition: Used
+      brand_observed: Undercover
+      item_type_observed: T-shirt
+      description_original: "SCAB No Gods artwork graphic tee from 03SS"
+
+  - key: chrome_hearts_style_ring
+    cohort: negative
+    human_label: explicit style reference / not target identity
+    prior_observation:
+      source: production_observation
+      outcome: route:review
+      note: A real クロムハーツ風 ring was incorrectly treated as HIGH/core identity.
+    acceptable_outcomes: [reject:target_identity_mismatch]
+    listing:
+      title_original: "クロムハーツ風 シルバー925 タイプ リング"
+      brand: unknown
+      category: jewelry
+      current_price: 830
+      buyout_price: 830
+      starting_price: 830
+      time_remaining: "5 day(s)"
+      condition: New
+      brand_observed: ノーブランド
+      item_type_observed: Ring
+      category_hierarchy: [Auction, Fashion, Men, Jewelry, Rings]
+      description_original: "ノーブランド クロムハーツ風デザイン"
+
+  - key: devil_wears_prada_avv_tee
+    cohort: negative
+    human_label: film reference / non-Prada maker
+    prior_observation:
+      source: production_observation
+      outcome: route:grails
+      note: A real a.v.v film-title tee was incorrectly attributed to Prada.
+    acceptable_outcomes: [reject:target_identity_mismatch]
+    listing:
+      title_original: "新品 a.v.v プラダを着た悪魔 The Devil Wears Prada Tシャツ"
+      brand: a.v.v
+      category: menswear
+      current_price: 10000
+      buyout_price: 10000
+      starting_price: 10000
+      time_remaining: "5 day(s)"
+      condition: New
+      brand_observed: a.v.v
+      item_type_observed: T-shirt
+      description_original: "映画 The Devil Wears Prada artwork T-shirt by a.v.v"
+
+  - key: mcqueen_packaging_only_case
+    cohort: negative
+    human_label: packaging only
+    prior_observation:
+      source: production_observation
+      outcome: route:buyouts
+      note: A real McQueen eyewear-case listing was treated as an acquisition opportunity.
+    acceptable_outcomes: [reject:category_mismatch, reject:offer_scope_mismatch]
+    listing:
+      title_original: "Alexander McQueen sunglasses case only メガネケース 本体なし"
+      brand: Alexander McQueen
+      category: accessory
+      current_price: 5999
+      buyout_price: 5999
+      starting_price: 5999
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Alexander McQueen
+      item_type_observed: Eyewear case
+      description_original: "ケースのみ。サングラス本体なし。"
+
+  - key: undercover_kids_polo
+    cohort: negative
+    human_label: kids item / not adult menswear
+    prior_observation:
+      source: production_observation
+      outcome: route:buyouts
+      note: A real KIDS Undercover skull polo tee was routed as adult menswear.
+    acceptable_outcomes: [reject:category_mismatch]
+    listing:
+      title_original: "UNDERCOVER スカルポロシャツ KIDS Tシャツ"
+      brand: Undercover
+      category: kids
+      current_price: 2600
+      buyout_price: 2600
+      starting_price: 2600
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Undercover
+      item_type_observed: T-shirt
+      category_hierarchy: [Auction, Fashion, Kids, Tops]
+      description_original: "キッズサイズのスカルポロシャツ"
+
+  - key: number_nine_partial_sale
+    cohort: negative
+    human_label: current offer is ambiguous
+    prior_observation:
+      source: production_observation
+      outcome: route:grails
+      note: A two-jacket listing saying the left item sold was routed as a grail.
+    acceptable_outcomes: [reject:category_mismatch, reject:price_context_uncertain, reject:partial_offer_ambiguous]
+    listing:
+      title_original: "Number (N)ine 2003 patchwork jacket 2点 左は売り切れました"
+      brand: Number (N)ine
+      category: menswear
+      current_price: 25000
+      buyout_price: 25000
+      starting_price: 25000
+      time_remaining: "4 day(s)"
+      condition: Used
+      brand_observed: Number (N)ine
+      item_type_observed: Jacket
+      description_original: "写真は2着です。左は売り切れました。残りの仕様は不明です。"
+
+  - key: expensive_generic_dior_basic
+    cohort: negative
+    human_label: expensive generic archive/basic
+    prior_observation:
+      source: user_calibration
+      outcome: weak_stream
+      note: Generic expensive grails and ordinary designer formalwear lack a thesis.
+    acceptable_outcomes: [reject:generic_after_detail, reject:missing_us_valuation_but_directional_weak, reject:route_threshold]
+    listing:
+      title_original: "Dior Homme basic plain black simple shirt"
+      brand: Dior Homme
+      category: menswear
+      current_price: 180000
+      buyout_price: 180000
+      starting_price: 180000
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Dior Homme
+      item_type_observed: Shirt
+      description_original: "Plain black basic long sleeve shirt"
+
+  - key: immature_margiela_auction
+    cohort: auction
+    human_label: watch, not current-price deal
+    prior_observation:
+      source: product_acceptance_case
+      outcome: should_defer
+      note: A six-day current bid must remain provisional even for a strong piece.
+    acceptable_outcomes: [reject:immature_auction]
+    listing:
+      title_original: "Maison Martin Margiela artisanal reconstruction leather jacket"
+      brand: Maison Margiela
+      category: menswear
+      current_price: 1000
+      starting_price: 1000
+      time_remaining: "6 day(s)"
+      bid_count: 1
+      watch_count: 2
+      condition: Used
+      brand_observed: Maison Martin Margiela
+      item_type_observed: Jacket
+      description_original: "Artisanal reconstructed leather paneled jacket"
+    us_comps:
+      - {source: grailed_sold, title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 180000, similarity: 0.95}
+      - {source: grailed_sold, title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 200000, similarity: 0.95}
+      - {source: grailed_sold, title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 220000, similarity: 0.95}
+
+  - key: mature_margiela_ending
+    cohort: auction
+    human_label: actionable ending opportunity
+    prior_observation:
+      source: product_acceptance_case
+      outcome: may_alert_ending
+      note: Same fashion evidence becomes actionable inside 60 minutes.
+    acceptable_outcomes: [route:ending]
+    listing:
+      title_original: "Maison Martin Margiela artisanal reconstruction leather jacket"
+      brand: Maison Margiela
+      category: menswear
+      current_price: 1000
+      starting_price: 1000
+      time_remaining: "45 minute(s)"
+      bid_count: 8
+      watch_count: 21
+      condition: Used
+      brand_observed: Maison Martin Margiela
+      item_type_observed: Jacket
+      description_original: "Artisanal reconstructed leather paneled jacket"
+
+  - key: verified_time_migration_buyout
+    cohort: evidence_backed
+    human_label: verified arbitrage calibration
+    prior_observation:
+      source: product_acceptance_case
+      outcome: should_surface
+      note: Exact-piece U.S. sold evidence may support an actionable buyout.
+    acceptable_outcomes: [route:buyouts]
+    listing:
+      title_original: "Number (N)ine 2001SS Time Migration graphic T-shirt"
+      brand: Number (N)ine
+      category: menswear
+      current_price: 8000
+      buyout_price: 8000
+      starting_price: 8000
+      time_remaining: "5 day(s)"
+      condition: Used
+      brand_observed: Number (N)ine
+      item_type_observed: T-shirt
+      description_original: "2001SS Time Migration original Miyashita graphic tee"
+    us_comps:
+      - {source: grailed_sold, title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 40000, similarity: 0.98}
+      - {source: grailed_sold, title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 45000, similarity: 0.98}
+      - {source: grailed_sold, title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 50000, similarity: 0.98}

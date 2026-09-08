@@ -116,6 +116,8 @@ def alert_thesis(route: str, evaluation: Any) -> str:
     if (
         evaluation.auction_maturity.auction_type == "open_auction"
         and evaluation.auction_maturity.level == "low"
+        and getattr(evaluation.auction_maturity, "actionable_price_kind", None)
+        != "buyout"
     ):
         return "archive_watch"
     if (
@@ -312,7 +314,14 @@ def build_listing_alert_payload(
     listing_url = str(_read(listing, "url", "") or "")
     image_url = _read(listing, "image_url")
 
-    if buyout_price:
+    acquisition_kind = (
+        _nested(evaluation, "auction_maturity", "actionable_price_kind")
+        if evaluation is not None
+        else None
+    )
+    if acquisition_kind == "current_bid" and current_price:
+        price_label = f"¥{int(current_price):,} CURRENT BID"
+    elif buyout_price:
         price_label = f"¥{int(buyout_price):,} BUYOUT"
     elif current_price:
         price_label = f"¥{int(current_price):,} CURRENT BID" if evaluation else f"¥{int(current_price):,}"
