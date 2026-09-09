@@ -831,6 +831,72 @@ def _incomplete_product_offer(
             "指輪", "サングラス", "メガネ", "眼鏡", "スカーフ", "帽子", "時計",
         ),
     )
+    # Link/コマ is a component only in a watch relationship. The same words
+    # describe complete chain-link jewelry or unrelated objects elsewhere.
+    compact_categories = {re.sub(r"[\s_-]+", "", value) for value in categories}
+    watch_categories = {
+        "watches", "wristwatches", "watchparts", "watchstraps", "watchbands",
+        "watchbracelets", "watchrepairparts", "腕時計", "時計部品", "時計ベルト",
+        "腕時計用ベルト", "腕時計用パーツ",
+    }
+    watch_context = bool(
+        re.search(r"(?i)\b(?:watch(?:es)?|wristwatch(?:es)?)\b|時計", scope_title)
+        or compact_categories & watch_categories
+    )
+    if watch_context:
+        if compact_categories & {"strapparts", "bandparts", "braceletparts", "koma"}:
+            return "component_only", "structured watch-strap component category"
+        watch_links = (
+            r"(?<![a-z0-9])(?:"
+            r"(?:replacement|spare|extra|repair)\s+(?:watch\s+)?"
+            r"(?:(?:bracelet|band|strap)\s+)?links?"
+            r"|(?:watch\s+)?(?:bracelet|band|strap)\s+links?"
+            r"|watch\s+links?|\d+\s+links?|links?\s+only"
+            r"|links?\s+(?:for|fits?|compatible with))(?![a-z0-9])"
+            r"|(?:純正|余り|余剰|予備|交換(?:用)?|補修(?:用)?)\s*"
+            r"(?:[0-9一二三]+\s*)?(?:コマ|駒)"
+            r"|[0-9一二三]+\s*(?:コマ|駒)|(?:コマ|駒)\s*(?:のみ|単品)"
+            r"|(?:コマ|駒)\s*\d+(?:\.\d+)?\s*mm(?:用)?"
+        )
+        link_offer = re.search(watch_links, scope_title, flags=re.IGNORECASE)
+        if link_offer:
+            watch_chain_jewelry = bool(
+                re.search(
+                    r"(?i)\bwatch\s+chain\s+(?:link\s+)?(?:necklace|bracelet)\b",
+                    scope_title,
+                )
+                and not re.search(
+                    r"(?i)\b(?:spare|replacement|repair|extra)\s+(?:\d+\s+)?"
+                    r"(?:(?:watch|bracelet|band|strap)\s+)?links?\b"
+                    r"|\blinks?\s+(?:for|fits?|compatible with|replacement|repair)\b"
+                    r"|\bparts?\s+only\b"
+                    r"|(?:交換用|補修用|修理用|余り|予備)\s*(?:コマ|駒)"
+                    r"|(?:コマ|駒)\s*(?:のみ|単品)",
+                    scope_title,
+                )
+            )
+            # This exception applies only to watch-link interpretation. Other
+            # independent component/case evidence below must still be checked.
+            if not watch_chain_jewelry:
+                included_links = re.search(
+                    rf"(?i)(?:\b(?:watch|wristwatch)\b|腕時計|時計).{{0,40}}"
+                    rf"(?:\b(?:with|includes?|including)\b.{{0,24}}(?:{watch_links})"
+                    rf"|(?:{watch_links})\s+included\b"
+                    rf"|(?:余り|余剰|予備)?(?:コマ|駒)(?:\s*[0-9一二三]+(?:コマ|駒)?)?"
+                    rf"\s*(?:付き|付属))"
+                    rf"|\bcomplete\s+(?:watch|wristwatch)\b.{{0,24}}\+\s*"
+                    rf"(?:{watch_links})",
+                    scope_title,
+                )
+                depicted_links = re.search(
+                    rf"(?i)(?:{watch_links})\s*(?:graphic|print|motif|pattern|柄|"
+                    rf"モチーフ|プリント).{{0,20}}{product_nouns}",
+                    scope_title,
+                )
+                if included_links and included_links.start() < link_offer.start():
+                    return "complete", "complete watch explicitly includes spare bracelet links"
+                if not depicted_links:
+                    return "component_only", "watch-bracelet links offered as parts"
     protective_case = re.compile(
         r"(?i)(?<![a-z0-9])(?:sun(?:glasses)?|eye(?:wear|glass)|glasses|phone|"
         r"smartphone|iphone|camera|electronics?)\s+(?:protective\s+)?case(?![a-z0-9])"

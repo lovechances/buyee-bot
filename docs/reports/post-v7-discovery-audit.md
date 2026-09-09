@@ -162,3 +162,67 @@ Feature tests cover retained query coverage, self-named designer cleanup, unchan
 ## Limits and follow-up evidence
 
 No forced inspections or benchmark alerts were generated. Strong low-cost discoveries surviving the replacement rule must be validated through the next natural production interval. The rule can allocate an inspection to a cheap item later rejected for weak taste; it does not call that item a bargain. The longer-run balance of 446 searches still needs more than one 8.4-hour window. Exact final-quality, replacement-component, and status-incident analyses are handled in the companion production audit.
+
+## Natural v8 first-hour validation
+
+The exact first hour of commit `e8a2240b54a5e46b3fa1d9a208cde96fc713fd0b` / `ultra-refinement-v8` was frozen at **2026-09-09 14:34:17.186563–15:34:17.186563 UTC**. Read-only extraction completed at 15:34:58 UTC. These are completed natural scan events, not a forced test or a fresh-session-only demonstration.
+
+| First-hour measure | Observed |
+| --- | ---: |
+| Scans | 58 |
+| Cards / processable / duplicates | 3,857 / 3,150 / 707 |
+| Lifetime-first listings / historical revisits | 1,407 / 2,450 |
+| Stage A eligible / candidate-budgeted | 806 / 719 |
+| Stage B / enriched / failed | 87 / 75 / 12 |
+| Rejected after successful detail / finals | 69 / 6 |
+| Sent / dedupe-suppressed / failed alerts | 3 / 3 / 0 |
+| Exhausted source failures | 1, recovered |
+
+Broad/medium/surgical/market scan counts were **22/13/4/19**. The early new-process cohort initially appeared skewed toward market searches, but the persisted rolling 100-scan allocation was 35 broad, 14 medium, 5 surgical, 46 market at 14:48 UTC. Medium and surgical queries then ran naturally. This is persisted quota carryover, not a collapsed lane. No allocation, cooldown, or page-depth change was made.
+
+The first hour's 1,407 new IDs, 87 details, six finals, and three alerts exceed the v7 audit's corresponding hourly averages, but the windows differ in duration and query/inventory mix. This short, non-random comparison does not establish durable improvement in useful alerts or human-benchmark superiority.
+
+### What the one-slot reservation actually changed
+
+Retained Stage A observations were replayed with the deployed selector and with only `value_inspection_reserved_slots=0`. A substitution is counted **only** when the complete processable card group was retained and the deployed replay exactly matched the selected production IDs. Rounded scores or overwritten/missing traces prevent a causal claim. The final snapshot had 34 complete reconstructed groups and 12 incomplete/unreproduced groups; earlier immutable captures preserve groups subsequently overwritten by normal scans.
+
+The union proves **10 one-slot substitutions, with identical selected-candidate counts in all 10 scans**. Nine promoted details succeeded and one failed. Seven were rejected for weak directional evidence; one was a low-signal early-auction/buyout listing described below; one was a previously alerted Cavalli final correctly deduped. **None of the three sent alerts can be attributed to the reservation.** Five promoted IDs were newly discovered during v8, and six received their first-ever inspection. This proves unchanged inspection capacity, not identical actual browser requests: replacing a cached candidate with a fresh one can change cache reuse within the same cap.
+
+| Promoted listing | Actionable buyout | Natural outcome |
+| --- | ---: | --- |
+| `b1195310431` YEEZY Season 7 title also containing YZY GAP/Balenciaga references | ¥3,800 | Detail failed; no alert; keyword-neighbor precision concern, not a useful win |
+| `p1217639526` RE: Number (N)ine argyle polyester knit | ¥9,460 | New ID, first detail; weak directional value, rejected |
+| `x1239863511` Gaultier FEMME 94AW wool knit | ¥8,360 | New ID, first detail; weak value/poor condition, rejected; audience evidence conflicts |
+| `e1207613323` ALYX cotton tee | ¥7,260 | Previously seen, first detail; weak directional value, rejected |
+| `c1163086876` Just Cavalli skull-embroidered distressed denim | ¥6,800 | Existing asymmetric final; repeat notification suppressed |
+| `d1242318039` L.G.B. linen/silk skirt-suit set | ¥7,800 | Revisited, rejected; audience and rejection-label limitations below |
+| `1232732559` Vivienne Westwood all-over cotton tee | ¥7,260 | New ID, first detail; weak directional value, rejected |
+| `o1220951851` TheSoloist 22AW wool turtleneck | ¥9,460 | Revisited; weak directional value, rejected |
+| `c1242046575` Supreme × Yohji Yamamoto tee | ¥10,000 | New ID, first detail; weak directional value, rejected |
+| `j1243142866` Raf Simons color-panel shirt | ¥9,888 | New ID, first detail; weak directional value, rejected |
+
+For example, the Number (N)ine knit replaced a ¥19,888 Time Migration jacket within the existing six-detail budget for 88 processable cards. The new Vivienne tee replaced a ¥28,160 Orb ring within the existing two-detail budget for 197 cards. This demonstrates cheaper complete garments surviving the inspection allocation; it does not prove the displaced item was bad or the inspected item was good.
+
+### Actual delivered alerts: attribution and quality
+
+All three natural deliveries went to buyouts, with U.S. resale explicitly unverified. They were not forced and did not depend on provisional early bids.
+
+| Listing | Price / landed estimate | Discovery and actual attribution |
+| --- | --- | --- |
+| `h1240186223` Celine HOMME white patterned/striped shirt | ¥3,698 / ~$45.96 | Medium CELINE HOMME メンズ, page 1/rank 70; first seen earlier that day; freshness revisit. Micro-asymmetry. Complete replay proves ordinary selection already chose it without reserve. |
+| `u1240894753` Oakley SKULL leopard golf polo | ¥5,980 / ~$65.37 | Broad Oakley, page 2/rank 32; first-ever discovery in v8. Asymmetric value. Complete 200-card replay proves ordinary selection already chose it without reserve. |
+| `h1241459053` Margiela × H&M asymmetric patchwork docking shirt, title size XS | ¥9,888 / ~$98.60 | Medium Margiela アーティザナル, page 1/rank 4; seen since September 2, first-ever detail in v8 through candidate rotation. Asymmetric value; explicitly identified as collaboration. Reservation causality is unproven because the complete group was not retained. |
+
+The cached Celine photograph shows a largely conventional/formal shirt. The Oakley polo is a complete garment but style-dependent, not demonstrated FIRE. The Margiela collaboration has independently stated construction detail, but no verified U.S. valuation and no human purchase-quality confirmation. Three inexpensive pings are not three proven exceptional finds.
+
+### Remaining precision and benchmark limits
+
+Gaultier FEMME conflicts with its actual marketplace **Men's > Sweaters > L Size** hierarchy. L.G.B.'s skirt-suit has a brand hierarchy without gender. The selected pre-detail card strings were not retained separately from the full detail titles, so the audit cannot assert exactly when all audience cues became visible. No blanket FEMME/audience veto was justified or added.
+
+The L.G.B. trace says `immature_auction`, but its ¥7,800 buyout was correctly recognized as actionable and used for the ¥11,978 landed estimate. Directional score was only 49 with no value thesis. The early-auction branch uses the maturity label as fallback when neither a qualifying buyout thesis nor archive-watch thesis exists. This is imprecise rejection attribution, **not evidence of ignoring a buyout or blocking an otherwise qualified buyout**.
+
+The displaced Cavalli `d1200060694` was different: its retained card explicitly offered one genuine watch-bracelet link, and older cached details classified it **Watch Straps > Strap Parts > Koma**. It was still typed as a belt. That is a demonstrated component-recognition gap, prompting the separately tested narrow follow-up; it did not send an alert.
+
+The original 18-ID read-only benchmark was repeated at **15:10:46** and **15:35:02 UTC**. Both remain **9/18 seen, zero alerts**, with eight supported-source discovery misses and one unsupported PayPay miss. No new benchmark inspection occurred. The ¥9,900 Number (N)ine cargo reappeared at 14:59 but remained budgeted; its older cached inspection still exists. The ¥5,000 cargo discovered on page two under v7 was not naturally re-seen during this hour. Historical cached replays are not new production outcomes.
+
+The bounded reservation therefore has real inspection-recall evidence, but **no demonstrated additional useful alert and no human-benchmark improvement yet**. Preserve that distinction while assessing longer natural operation. Sanitized captures and exact reconstructed substitutions are retained locally under ignored `data/audits/post_v7/`; no browser, Discord, authentication, database, or scheduling writes were performed by these diagnostics.

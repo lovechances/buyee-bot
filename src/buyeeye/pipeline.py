@@ -53,7 +53,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "ultra-refinement-v8"
+DECISION_LOGIC_VERSION = "ultra-refinement-v9"
 
 
 @dataclass
