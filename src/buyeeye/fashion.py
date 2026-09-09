@@ -44,6 +44,10 @@ class ProductScope:
     remaining_variant: str | None = None
     confidence: float = 0.6
     reasons: tuple[str, ...] = ()
+    # A category can describe the host product even when only one of its parts
+    # is sold. Unspecified is intentional: absence of a parts marker is not
+    # proof that a poorly described listing is complete.
+    product_completeness: str = "unspecified"
 
     @property
     def hard_non_target(self) -> bool:
@@ -123,6 +127,34 @@ def _first_match(text: str, mapping: dict[str, list[str]], provenance: str) -> E
 def _longest_term_match(text: str, terms: list[str]) -> str | None:
     matches = [str(term) for term in terms if _term_matches(text, str(term))]
     return max(matches, key=lambda term: len(normalize_text(term)), default=None)
+
+
+def _item_type_evidence(
+    text: str,
+    item_types: dict[str, list[str]],
+    category_hierarchy: tuple[str, ...],
+) -> Evidence | None:
+    """Use an explicit tee category and mixed-script garment noun as type evidence.
+
+    Sellers commonly join a Latin motif/model directly to Tシャツ. Generic
+    Latin boundaries remain unchanged for brand, counterfeit and other tokens.
+    """
+    matched = _first_match(text, item_types, "taxonomy.item_types")
+    tee_categories = {
+        "t-shirts", "t shirts", "t-shirts & tanks", "short sleeve t shirts",
+        "long sleeve t shirts", "tシャツ", "半袖tシャツ", "長袖tシャツ",
+    }
+    for category in reversed(category_hierarchy):
+        normalized = normalize_text(category).casefold().strip(" /＞")
+        if normalized in tee_categories:
+            return Evidence("t_shirt", 0.95, "marketplace.category_hierarchy", category)
+    if (matched is None or matched.value == "shirt") and (
+        mixed_tee := re.search(r"t\s*シャツ", text, flags=re.IGNORECASE)
+    ):
+        return Evidence(
+            "t_shirt", 0.9, "taxonomy.item_types.mixed_script", mixed_tee.group(0)
+        )
+    return matched
 
 
 def _brand_match(
@@ -754,6 +786,170 @@ def _stationery_non_fashion_offer(
     return stationery_match
 
 
+def _incomplete_product_offer(
+    scope_title: str,
+    category_hierarchy: tuple[str, ...],
+) -> tuple[str, str] | None:
+    """Resolve the offered part separately from the product it fits or depicts.
+
+    A host category such as Sunglasses cannot rescue replacement lenses. The
+    reverse also matters: a complete pair supplied with spare lenses, or a
+    wearable with an automotive graphic, is still the complete fashion object.
+    """
+    part_categories = {
+        "replacement lenses", "eyewear parts", "sunglasses parts", "watch parts",
+        "watch repair parts", "replacement parts", "repair parts", "spare parts",
+        "交換レンズ", "交換用レンズ", "メガネ部品", "眼鏡部品", "時計部品",
+        "時計用パーツ", "補修部品", "修理部品",
+    }
+    categories = {
+        normalize_text(value).casefold().strip(" /＞")
+        for value in category_hierarchy
+    }
+    if matched_category := next(iter(sorted(categories & part_categories)), None):
+        return "component_only", f"structured repair/component category ({matched_category})"
+    protective_categories = {
+        "sunglasses cases", "eyeglass cases", "glasses cases", "phone cases",
+        "smartphone cases", "camera cases", "メガネケース", "眼鏡ケース",
+        "サングラスケース", "スマホケース", "カメラケース",
+    }
+    if matched_category := next(iter(sorted(categories & protective_categories)), None):
+        return "protective_only", f"structured protective-case category ({matched_category})"
+
+    product_nouns = _mixed_term_pattern(
+        (
+            "t-shirt", "t shirt", "tshirt", "tee", "shirt", "hoodie", "jacket",
+            "coat", "sweater", "cardigan", "pants", "trousers", "jeans", "shorts",
+            "boots", "shoes", "sneakers", "belt", "bag", "wallet", "pendant",
+            "necklace", "bracelet", "ring", "sunglasses", "eyeglasses", "glasses",
+            "scarf", "hat", "cap", "watch",
+        ),
+        (
+            "tシャツ", "シャツ", "パーカー", "ジャケット", "コート", "ニット",
+            "カーディガン", "パンツ", "デニム", "ブーツ", "シューズ", "スニーカー",
+            "ベルト", "バッグ", "財布", "ペンダント", "ネックレス", "ブレスレット",
+            "指輪", "サングラス", "メガネ", "眼鏡", "スカーフ", "帽子", "時計",
+        ),
+    )
+    protective_case = re.compile(
+        r"(?i)(?<![a-z0-9])(?:sun(?:glasses)?|eye(?:wear|glass)|glasses|phone|"
+        r"smartphone|iphone|camera|electronics?)\s+(?:protective\s+)?case(?![a-z0-9])"
+        r"|(?:サングラス|アイウェア|メガネ|眼鏡|めがね|スマホ|スマートフォン|"
+        r"アイフォン|iPhone|カメラ)(?:用)?ケース"
+    )
+    protective = protective_case.search(scope_title)
+    protective_bundle = False
+    if protective:
+        residual = protective_case.sub(" ", scope_title)
+        # The product noun must exist outside the matched case phrase. A
+        # sunglasses case cannot supply its own purported complete sunglasses.
+        bundled = bool(
+            re.search(product_nouns, residual, re.IGNORECASE)
+            and re.search(
+                r"(?i)\b(?:with|includes?|including|supplied|comes with)\b"
+                r"|(?:ケース\s*(?:付属|付き|付)|付属品[:：].*ケース)",
+                scope_title,
+            )
+        )
+        depicted_case = bool(
+            re.search(
+                rf"(?:{protective_case.pattern.removeprefix('(?i)')})\s*"
+                rf"(?:print|graphic|motif|pattern|柄|"
+                rf"モチーフ|プリント).{{0,20}}{product_nouns}",
+                scope_title, re.IGNORECASE,
+            )
+        )
+        if not bundled and not depicted_case:
+            return "protective_only", f"protective case, not its contents ({protective.group(0)})"
+        protective_bundle = True
+
+    part_nouns = _mixed_term_pattern(
+        (
+            "replacement lens", "lens", "lenses", "temple arm", "temple arms",
+            "nose pad", "nose pads", "ear sock", "ear socks", "buckle", "buckles",
+            "sole", "soles", "heel tip", "heel tips", "watch movement", "watch dial",
+            "watch hands", "watch bezel", "watch crown", "zipper", "zip pull",
+            "laces", "shoelaces", "shoe laces",
+        ),
+        (
+            "偏光レンズ", "レンズ", "テンプル", "ノーズパッド", "イヤーソック",
+            "鼻パッド", "バックル", "靴底", "アウトソール", "ヒールチップ",
+            "ムーブメント", "文字盤", "時計針", "ベゼル", "リューズ", "ファスナー",
+            "靴紐", "シューレース",
+        ),
+    )
+    part = re.search(part_nouns, scope_title, re.IGNORECASE)
+    if not part:
+        return (
+            ("complete", "complete fashion object explicitly includes its protective case")
+            if protective_bundle else None
+        )
+    marker = re.search(
+        r"(?i)\b(?:replacement|replace|spare|repair|repairs|repairing|parts?\s+only)\b"
+        r"|(?:交換(?:用)?|替え|補修(?:用)?|修理用|部品のみ|パーツのみ)",
+        scope_title,
+    )
+    compatibility = re.search(
+        rf"(?i)(?:\b(?:for|fits?|compatible with)\b.{{0,55}}{part_nouns}"
+        rf"|{part_nouns}.{{0,55}}\b(?:for|fits?|compatible with)\b"
+        rf"|用.{{0,24}}{part_nouns}|{part_nouns}\s*(?:のみ|単品))",
+        scope_title,
+    )
+    if not marker and not compatibility:
+        residual = re.sub(part_nouns, " ", scope_title, flags=re.IGNORECASE)
+        intrinsic_component = re.search(
+            r"(?i)\blens(?:es)?\b|\btemple arms?\b|\bnose pads?\b|\bear socks?\b"
+            r"|\bsoles?\b|\b(?:shoe\s*)?laces\b|\bheel tips?\b"
+            r"|\bwatch (?:movement|dial|hands|bezel|crown)\b"
+            r"|レンズ|テンプル|ノーズパッド|鼻パッド|イヤーソック|靴底|アウトソール"
+            r"|ムーブメント|文字盤|時計針|リューズ|靴紐|シューレース",
+            part.group(0),
+        )
+        if intrinsic_component and not re.search(product_nouns, residual, re.IGNORECASE):
+            return "component_only", f"component offered without a complete object ({part.group(0)})"
+        return (
+            ("complete", "complete fashion object explicitly includes its protective case")
+            if protective_bundle else None
+        )
+
+    offered_product = re.search(product_nouns, scope_title, re.IGNORECASE)
+    repair_condition = re.search(
+        r"(?i)\b(?:needs?|requires?)\s+(?:a\s+)?(?:replacement|repair)\b"
+        r"|\b(?:replacement|repair)\s+(?:needed|required)\b|\bfor repair\b"
+        rf"|{part_nouns}\s*(?:fitted|installed)\b"
+        r"|(?:交換|修理)(?:が)?必要|(?:レンズ|靴底|ソール)(?:を)?交換済み",
+        scope_title,
+    )
+    if (
+        repair_condition
+        and offered_product
+        and offered_product.start() < part.start()
+    ):
+        return "complete", "complete object described with a repair condition"
+
+    # A complete object with additional/fitted parts remains a valid object.
+    # No blanket "sunglasses" exception: replacement lenses FOR sunglasses
+    # mention the host but do not include it.
+    included = re.search(
+        rf"(?i){product_nouns}.{{0,50}}\b(?:with|includes?|including)\b"
+        rf".{{0,24}}(?:spare|replacement)?.{{0,12}}{part_nouns}"
+        rf"|{product_nouns}.{{0,30}}{part_nouns}\s*(?:付き|付属|装着済み|交換済み)",
+        scope_title,
+    )
+    if included and part.start() >= included.start():
+        return "complete", "complete fashion object explicitly includes additional/fitted parts"
+    # Depicted components require a separate wearable noun and a direct
+    # motif/print relation, not arbitrary keyword stuffing elsewhere.
+    depicted = re.search(
+        rf"(?i){part_nouns}\s*(?:graphic|print|motif|pattern|柄|モチーフ|プリント)"
+        rf".{{0,20}}{product_nouns}",
+        scope_title,
+    )
+    if depicted:
+        return None
+    return "component_only", f"replacement/compatible component ({part.group(0)})"
+
+
 def analyze_product_scope(
     text: str,
     *,
@@ -833,7 +1029,7 @@ def analyze_product_scope(
             ):
                 packaging_match = dust_bag.group(0)
     container_match = _longest_term_match(
-        normalized,
+        scope_title_text,
         [str(term) for term in scope_terms.get("container_products", [])],
     )
     media_match = _media_ephemera_offer(
@@ -851,6 +1047,7 @@ def analyze_product_scope(
         category_hierarchy,
         [str(term) for term in scope_terms.get("stationery_non_fashion", [])],
     )
+    incomplete_offer = _incomplete_product_offer(scope_title_text, category_hierarchy)
     if packaging_match:
         offer_kind = "packaging_only"
         reasons.append(f"offer is packaging/accessory only ({packaging_match})")
@@ -865,7 +1062,10 @@ def analyze_product_scope(
         reasons.append(
             f"offered object is stationery or a non-wearable tool ({stationery_match})"
         )
-    elif container_match:
+    elif incomplete_offer and incomplete_offer[0] != "complete":
+        offer_kind = "non_fashion"
+        reasons.append(incomplete_offer[1])
+    elif container_match and not incomplete_offer:
         offer_kind = "container"
         reasons.append(f"offered product is a container ({container_match})")
     else:
@@ -885,6 +1085,7 @@ def analyze_product_scope(
         remaining_variant=remaining_variant,
         confidence=0.95 if reasons else 0.7,
         reasons=tuple(reasons),
+        product_completeness=incomplete_offer[0] if incomplete_offer else "unspecified",
     )
 
 
@@ -1164,8 +1365,8 @@ def enrich_title(
     taxonomy = load_taxonomy()
     text = normalize_text(title).casefold()
     profile = FashionProfile()
-    profile.item_type = _first_match(
-        text, taxonomy.get("item_types", {}), "taxonomy.item_types"
+    profile.item_type = _item_type_evidence(
+        text, taxonomy.get("item_types", {}), category_hierarchy
     )
     matched_brand: dict[str, Any] | None = None
     collaboration_match: tuple[str, tuple[str, ...]] | None = None

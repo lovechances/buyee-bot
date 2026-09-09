@@ -19,7 +19,7 @@ from .browser_session import has_valid_session, launch_manual_buyee_login, save_
 from .db import init_db
 from .discord_alerts import send_test_alert
 from .discovery import build_query_universe, query_layer_counts
-from .live_sources import AuthExpiredError, LiveMarketLoop, load_live_queries
+from .live_sources import AuthExpiredError, LiveMarketLoop, ParserAnomalyError, load_live_queries
 from .pipeline import health_report, scan_once
 from .runtime_state import (
     choose_query,
@@ -58,6 +58,18 @@ def _runtime_logger() -> logging.Logger:
         logger.addHandler(logging.StreamHandler())
         logger.setLevel(logging.INFO)
     return logger
+
+
+def _record_source_attempt_failure(db_path: str | os.PathLike[str], exc: Exception) -> None:
+    """Record actual parser failures; a valid empty search is not an anomaly."""
+    now = datetime.now(UTC)
+    values: dict[str, object] = {
+        "last_failure_at": now,
+        "browser_restart_count": get_health(db_path).browser_restart_count + 1,
+    }
+    if isinstance(exc, ParserAnomalyError):
+        values["last_parser_anomaly"] = now
+    update_health(db_path, **values)
 
 
 def _acquire_runtime_lock() -> Any | None:
@@ -224,7 +236,6 @@ def main(argv: list[str] | None = None) -> int:
         jitter = int(scanner.get("jitter_seconds", 30))
         max_attempts = int(scanner.get("max_source_attempts", 3))
         stopping = False
-        zero_result_streak = 0
 
         def stop_handler(_signum: int, _frame: Any) -> None:
             nonlocal stopping
@@ -271,11 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                             type(exc).__name__,
                             wait_seconds,
                         )
-                        update_health(
-                            db_path,
-                            last_failure_at=datetime.now(UTC),
-                            browser_restart_count=get_health(db_path).browser_restart_count + 1,
-                        )
+                        _record_source_attempt_failure(db_path, exc)
                         if isinstance(exc, AuthExpiredError):
                             break
                         if attempt + 1 < max_attempts:
@@ -300,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
                     if isinstance(last_error, AuthExpiredError):
                         record_auth_failure(
                             db_path,
+                            query=spec.query,
+                            query_scope=spec.query_layer,
                             confirmation_threshold=int(
                                 status_settings.get("auth_confirmation_threshold", 2)
                             ),
@@ -308,6 +317,9 @@ def main(argv: list[str] | None = None) -> int:
                         record_source_failure(
                             failures,
                             db_path,
+                            query=spec.query,
+                            query_scope=spec.query_layer,
+                            error_type=type(last_error).__name__,
                             outage_threshold=int(
                                 status_settings.get("outage_consecutive_failures", 6)
                             ),
@@ -329,12 +341,6 @@ def main(argv: list[str] | None = None) -> int:
                         time.sleep(1)
                     continue
 
-                if result.scanned == 0:
-                    zero_result_streak += 1
-                    if zero_result_streak == 3:
-                        update_health(db_path, last_parser_anomaly=datetime.now(UTC))
-                else:
-                    zero_result_streak = 0
                 recovery_counts = dict(getattr(result, "recovery_counts", {}) or {})
                 recovery_counts["source_retries"] = max(0, attempts_made - 1)
                 result.recovery_counts = recovery_counts
@@ -410,6 +416,9 @@ def main(argv: list[str] | None = None) -> int:
                 # cards. Parser anomalies raise before reaching this point.
                 record_scanning_success(
                     db_path,
+                    query=spec.query,
+                    query_scope=spec.query_layer,
+                    cards_seen=result.scanned,
                     recovery_confirmation_scans=int(
                         status_settings.get("recovery_confirmation_scans", 2)
                     ),

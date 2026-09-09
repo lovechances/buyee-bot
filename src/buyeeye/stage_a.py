@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .discovery import QuerySpec
-from .evaluation import ListingEvaluation
+from .evaluation import ListingEvaluation, has_structurally_generic_product
 from .fashion import is_generic_signal
 
 
@@ -31,6 +31,7 @@ class StageAAssessment:
     hard_veto: bool
     reject_reason: str | None
     reasons: tuple[str, ...]
+    value_inspection_candidate: bool = False
 
     @property
     def eligible(self) -> bool:
@@ -50,6 +51,7 @@ class StageAAssessment:
             "item_type": self.item_type,
             "item_type_confident": self.item_type_confident,
             "actionable_price": self.actionable_price,
+            "value_inspection_candidate": self.value_inspection_candidate,
             "price_in_discovery_band": self.price_in_discovery_band,
             "discovery_price_fraction": self.discovery_price_fraction,
             "actionable_buyout_fraction": self.actionable_buyout_fraction,
@@ -436,6 +438,31 @@ def assess_stage_a(
 
     if contextual_price is not None and in_band:
         reasons.append(f"discovery price observed in configured band ({contextual_price} JPY)")
+    # This is an allocation preference among already-eligible cards, not a new
+    # eligibility path or evidence that a cheap item has resale value.
+    value_inspection_candidate = bool(
+        paths
+        and confirmed
+        and target_match
+        and category_valid
+        and item_confident
+        and profile.item_type
+        and profile.item_type.value
+        in {
+            "t_shirt", "shirt", "hoodie", "knitwear", "denim", "trousers",
+            "jacket", "coat", "footwear",
+        }
+        and actionable
+        and actionable_price is not None
+        and 0 < actionable_price <= int(
+            config.get("value_inspection_max_actionable_jpy", 10_000)
+        )
+        and not profile.auth_sensitive
+        and not generic_or_junk
+        and not has_structurally_generic_product(profile, listing.title_original or "")
+        and not hard_veto
+        and not homage_or_reference
+    )
     return StageAAssessment(
         listing_id=str(listing.source_listing_id),
         eligible_paths=tuple(dict.fromkeys(paths)),
@@ -455,6 +482,7 @@ def assess_stage_a(
         hard_veto=hard_veto,
         reject_reason=None if paths and not hard_veto else reject_reason,
         reasons=tuple(reasons),
+        value_inspection_candidate=value_inspection_candidate,
     )
 
 
@@ -502,4 +530,31 @@ def select_stage_a_candidates(
             continue
         selected.append(assessment)
         path_counts[path] = path_counts.get(path, 0) + 1
+
+    reserve = max(0, min(1, int(config.get("value_inspection_reserved_slots", 1))))
+    if reserve and selected and not any(item.value_inspection_candidate for item in selected):
+        for candidate in ranked:
+            if not candidate.value_inspection_candidate or candidate in selected:
+                continue
+            path = candidate.primary_path or "unknown_interesting"
+            path_cap = path_caps.get(path)
+            if path_cap == 0:
+                continue
+            # Preserve a saturated path budget by replacing within that path.
+            # Otherwise the lowest-ranked selected card can yield one slot.
+            compatible = [
+                item
+                for item in reversed(selected)
+                if path_cap is None
+                or path_counts.get(path, 0) < path_cap
+                or (item.primary_path or "unknown_interesting") == path
+            ]
+            if not compatible:
+                continue
+            displaced = compatible[0]
+            selected = [item for item in selected if item != displaced] + [candidate]
+            selected_ids = {item.listing_id for item in selected}
+            selected = [item for item in ranked if item.listing_id in selected_ids]
+            capped = [item for item in ranked if item.listing_id not in selected_ids]
+            break
     return selected, capped

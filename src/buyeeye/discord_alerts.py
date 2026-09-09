@@ -445,6 +445,15 @@ def build_listing_alert_payload(
         "content": f"BuyEye live listing [{route}]",
         "embeds": [embed],
     }
+    attention = _nested(listing, "raw", "diagnostic", "attention") or {}
+    if _read(attention, "delivery") == "quiet":
+        # Discord's documented SUPPRESS_NOTIFICATIONS keeps the archive card
+        # visible (and badged), without a push. This never changes routing or
+        # global dedupe, and must not suppress the embed itself.
+        payload["flags"] = 4096
+        embed["description"] = description.replace(
+            "**ARCHIVE GRAIL**", "**ARCHIVE DISCOVERY · QUIET**", 1
+        )
     return payload
 
 

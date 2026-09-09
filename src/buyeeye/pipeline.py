@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from .attention import assess_attention
 from .browser_session import has_valid_session
 from .comp_cache import CompRepository, CompService
 from .comp_sources import ObservedUSSoldSource, YahooEndedSource
@@ -52,7 +53,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "ultra-refinement-v7"
+DECISION_LOGIC_VERSION = "ultra-refinement-v8"
 
 
 @dataclass
@@ -156,6 +157,7 @@ def _compact_listing_trace(
         "category_valid",
         "item_type",
         "item_type_confident",
+        "value_inspection_candidate",
         "actionable_price",
         "price_in_discovery_band",
         "discovery_price_fraction",
@@ -169,6 +171,7 @@ def _compact_listing_trace(
         for key in stage_a_keys
         if stage_a_raw.get(key) is not None
         and not (key == "eligible_paths" and not stage_a_raw.get(key))
+        and not (key == "value_inspection_candidate" and not stage_a_raw.get(key))
     }
     if stage_a_raw.get("detected_family") not in {None, spec.family}:
         stage_a["detected_family"] = stage_a_raw["detected_family"]
@@ -249,6 +252,10 @@ def _compact_listing_trace(
         "rejection_reason": diagnostic.get("rejection_reason"),
         "alert_event": diagnostic.get("alert_event"),
         "alert_outcome": diagnostic.get("alert_outcome"),
+        "attention": {
+            key: value for key, value in (diagnostic.get("attention") or {}).items()
+            if key in {"role", "delivery"}
+        } or None,
     })
     return trace
 
@@ -1376,6 +1383,9 @@ async def scan_once(
                 "product_scope": {
                     "target_role": evaluation.profile.product_scope.target_role,
                     "offer_kind": evaluation.profile.product_scope.offer_kind,
+                    "product_completeness": (
+                        evaluation.profile.product_scope.product_completeness
+                    ),
                     "audience": evaluation.profile.product_scope.audience,
                     "offer_clarity": evaluation.profile.product_scope.offer_clarity,
                     "remaining_variant": evaluation.profile.product_scope.remaining_variant,
@@ -1484,6 +1494,7 @@ async def scan_once(
                 )
             continue
         route, reason = decision.route, decision.reason
+        attention = assess_attention(evaluation, route, settings)
         result.final_candidates += 1
         assessment = assessment_by_id[listing.source_listing_id]
         family_funnel(assessment.detected_family)["finals"] += 1
@@ -1499,6 +1510,7 @@ async def scan_once(
             "reason": reason,
             "rejection_reason": None,
             "alert_outcome": "pending",
+            "attention": attention.observation(),
         }
         result.opportunity_counts[opportunity_kind] = (
             result.opportunity_counts.get(opportunity_kind, 0) + 1
@@ -1526,6 +1538,7 @@ async def scan_once(
                     "risk": evaluation.auth_risk.level,
                     "route": route,
                     "thesis": thesis,
+                    "attention": attention.observation(),
                 }
             )
         if not send_alerts:

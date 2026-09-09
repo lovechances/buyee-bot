@@ -566,8 +566,10 @@ def build_query_universe(
                         "broad",
                     )
                 )
-        designer = brand.get("designer")
-        if designer:
+        designer = normalize_text(str(brand.get("designer") or ""))
+        # A self-named designer adds no context to the existing broad search.
+        # Preserve other real names, including repeated family-name tokens.
+        if designer and designer.casefold() != canonical.casefold():
             candidates.append(
                 QuerySpec(
                     normalize_text(f"{canonical} {designer}"),

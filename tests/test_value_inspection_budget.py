@@ -1,0 +1,197 @@
+from dataclasses import replace
+
+import pytest
+
+from buyeeye.discovery import MarketplaceSearchFilters, QuerySpec
+from buyeeye.evaluation import evaluate_listing
+from buyeeye.live_sources import LiveListing
+from buyeeye.stage_a import assess_stage_a, select_stage_a_candidates
+
+
+def _spec(*, market=False, family="margiela"):
+    return QuerySpec(
+        query="Maison Margiela",
+        family=family,
+        provenance="test",
+        priority=80,
+        query_layer="market_structure" if market else "broad",
+        strategy_id="margiela.test" if market else None,
+        strategy_type="market_buyout" if market else None,
+        search_filters=MarketplaceSearchFilters(
+            category_group="mens_fashion",
+            category_id="23176",
+            min_buyout_price_jpy=300,
+            max_buyout_price_jpy=25000,
+            buy_now_only=True,
+            item_type="auction",
+        )
+        if market
+        else None,
+    )
+
+
+def _assess(
+    title="Maison Margiela 05SS striped ringer t-shirt",
+    *,
+    price=5999,
+    bid=None,
+    remaining="6 day(s)",
+    market=False,
+    config=None,
+    family="margiela",
+):
+    listing = LiveListing(
+        source="buyee",
+        source_listing_id="test-candidate",
+        url="https://example.test/item",
+        title_original=title,
+        title_normalized=title.casefold(),
+        brand="Maison Margiela",
+        category="menswear",
+        current_price=bid if bid is not None else price,
+        buyout_price=price,
+        starting_price=bid if bid is not None else price,
+        time_remaining=remaining,
+        seller_name=None,
+        condition=None,
+        raw={},
+    )
+    settings = {"stage_a": config or {}}
+    return assess_stage_a(
+        listing,
+        evaluate_listing(listing, settings=settings),
+        _spec(market=market, family=family),
+        settings,
+    )
+
+
+def _ranked_candidates():
+    cheap = replace(_assess(), listing_id="cheap", inspection_score=90)
+    pricey_same_path = replace(
+        _assess(price=20000),
+        listing_id="pricey-closet",
+        inspection_score=110,
+        primary_path="semantic_closet_inspection",
+        eligible_paths=("semantic_closet_inspection",),
+    )
+    archive = replace(
+        pricey_same_path,
+        listing_id="archive",
+        inspection_score=150,
+        primary_path="semantic_archive",
+        eligible_paths=("semantic_archive",),
+    )
+    return cheap, pricey_same_path, archive
+
+
+def test_value_inspection_replaces_one_same_path_card_without_extra_fetches():
+    cheap, pricey, archive = _ranked_candidates()
+    settings = {"stage_a": {"max_candidates_per_query": 2}}
+    selected, capped = select_stage_a_candidates([cheap, pricey, archive], _spec(), settings)
+    assert [s.listing_id for s in selected] == ["archive", "cheap"]
+    assert [s.listing_id for s in capped] == ["pricey-closet"]
+    assert cheap.primary_path == "semantic_closet_inspection"
+
+
+def test_reservation_can_be_disabled_without_changing_eligibility():
+    cheap, pricey, archive = _ranked_candidates()
+    selected, capped = select_stage_a_candidates(
+        [cheap, pricey, archive],
+        _spec(),
+        {"stage_a": {"max_candidates_per_query": 2, "value_inspection_reserved_slots": 0}},
+    )
+    assert [s.listing_id for s in selected] == ["archive", "pricey-closet"]
+    assert cheap in capped and cheap.eligible
+
+
+def test_already_selected_cheap_candidate_leaves_normal_rank_selection_unchanged():
+    cheap, pricey, archive = _ranked_candidates()
+    cheap = replace(cheap, inspection_score=160)
+    settings = {"stage_a": {"max_candidates_per_query": 2}}
+    reserved = select_stage_a_candidates([cheap, pricey, archive], _spec(), settings)
+    normal = select_stage_a_candidates(
+        [cheap, pricey, archive],
+        _spec(),
+        {"stage_a": {"max_candidates_per_query": 2, "value_inspection_reserved_slots": 0}},
+    )
+    assert reserved == normal
+
+
+def test_disabled_path_cannot_be_resurrected_by_value_reservation():
+    cheap, pricey, archive = _ranked_candidates()
+    selected, capped = select_stage_a_candidates(
+        [cheap, pricey, archive],
+        _spec(),
+        {"stage_a": {"path_caps": {"semantic_closet_inspection": 0}}},
+    )
+    assert selected == [archive]
+    assert cheap in capped and pricey in capped
+
+
+def test_market_rate_cap_and_single_reservation_bound_are_preserved():
+    cheap = replace(_assess(market=True), listing_id="cheap", inspection_score=70)
+    expensive = [
+        replace(
+            _assess(price=20000, market=True), listing_id=f"expensive-{n}", inspection_score=100 + n
+        )
+        for n in range(5)
+    ]
+    selected, capped = select_stage_a_candidates(
+        [*expensive, cheap],
+        _spec(market=True),
+        {"stage_a": {"max_market_candidate_rate": 0.03, "value_inspection_reserved_slots": 99}},
+    )
+    assert selected == [cheap]
+    assert len(capped) == 5
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Maison Margiela 05SS basic plain t-shirt",
+        "Maison Margiela 05SS striped wallet",
+        "Maison Margiela 05SS silver ring",
+        "Maison Margiela unknown model",
+        "Maison Margiela replica printed t-shirt",
+        "Chrome Hearts silver graphic t-shirt",
+        "Rick Owens printed tee Maison Margiela style",
+    ],
+)
+def test_generic_incomplete_sensitive_or_neighbor_cards_do_not_reserve(title):
+    assert not _assess(title).value_inspection_candidate
+
+
+def test_early_current_bid_cannot_reserve_but_actual_buyout_can():
+    early = _assess(price=None, bid=1000)
+    buyout = _assess(price=4000, bid=1000)
+    mature = _assess(price=None, bid=1000, remaining="45 minute(s)")
+    assert not early.value_inspection_candidate
+    assert buyout.value_inspection_candidate
+    assert mature.value_inspection_candidate
+
+
+def test_value_inspection_price_configuration_is_only_a_priority_boundary():
+    default = _assess(price=10001)
+    configured = _assess(price=10001, config={"value_inspection_max_actionable_jpy": 11000})
+    assert default.eligible and configured.eligible
+    assert not default.value_inspection_candidate
+    assert configured.value_inspection_candidate
+    assert default.eligible_paths == configured.eligible_paths
+    assert default.inspection_score == configured.inspection_score
+
+
+def test_cheap_footwear_can_reserve_without_an_accessory_slot():
+    boots = _assess("Maison Margiela leather split toe boots", price=9000)
+    assert boots.item_type == "footwear"
+    assert boots.value_inspection_candidate
+
+
+def test_plain_business_shoes_cannot_take_the_reserved_clothing_slot():
+    plain = _assess("Saint Laurent leather dress shoes", price=6000, family="saint_laurent")
+    distinctive = _assess(
+        "Saint Laurent western harness chelsea boots", price=6000, family="saint_laurent"
+    )
+    assert plain.eligible and distinctive.eligible
+    assert plain.item_type == distinctive.item_type == "footwear"
+    assert not plain.value_inspection_candidate
+    assert distinctive.value_inspection_candidate

@@ -161,7 +161,8 @@ def test_packaging_container_and_partial_offer_have_distinct_scope() -> None:
     partial_evaluation = evaluate_listing(partial_listing)
 
     assert container.item_type and container.item_type.value == "eyewear_case"
-    assert container.product_scope.offer_kind == "container"
+    assert container.product_scope.offer_kind == "non_fashion"
+    assert container.product_scope.product_completeness == "protective_only"
     assert packaging.product_scope.offer_kind == "packaging_only"
     assert not packaging.product_scope.acquisition_attributable
     assert partial.product_scope.offer_clarity == "partial"
@@ -199,7 +200,8 @@ def test_eyewear_case_is_represented_as_container_not_sunglasses() -> None:
 
         assert evaluation.profile.item_type
         assert evaluation.profile.item_type.value == "eyewear_case"
-        assert evaluation.profile.product_scope.offer_kind == "container"
+        assert evaluation.profile.product_scope.offer_kind == "non_fashion"
+        assert evaluation.profile.product_scope.product_completeness == "protective_only"
         assert evaluation.directional.thesis is None
         assert _post_detail_decision(listing, evaluation).route is None
 

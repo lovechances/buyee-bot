@@ -1,0 +1,35 @@
+# Post-v7 sustained-runtime refinement
+
+## Evidence and denominators
+
+Baseline production commit: `55eae149626188ce381d3399711fa9cc0b8b97fb` (`ultra-refinement-v7`), Railway deployment `4d30d145-e564-48d5-bd98-b95d8ef81686`. Frozen ScanEvent window: **2026-09-09 05:48:21.021586–14:12:11.215980 UTC**, 8.3973 hours. Read-only SQLite, Railway metadata/logs and retained public listing observations; no manual source scans or forced alerts.
+
+The exact event funnel is 436 scans / 411 successful / 437 pages / 23,812 cards / 17,630 processable passes / 6,182 duplicates / **6,789 lifetime-first IDs** / 17,023 historical sightings / 3,273 material state changes. Processable is not lifetime-unique. Stage A: 6,191 eligible, 5,611 capped; Stage B: 580 attempts, 489 enriched, 91 failed; 473 post-detail rejects; 241 comp lookups; 16 finals, 12 sent, 4 dedupe-suppressed, zero failed sends. Comp reuse: 648 cache hits / 281 misses. No new model/API costs.
+
+Rates: 808.5 genuinely new IDs/hour, 69.1 detail attempts/hour, 58.2 successful details/hour, 1.91 finals/hour, 1.43 messages/hour. Duplicate rate25.96%; Stage B3.29% of processable cards; 96.73% of enriched decisions rejected. These are not FIRE/GOOD precision labels; no new user purchase is inferred.
+
+## Detailed diagnostic artifacts
+
+- [Full 42-family query-provenance funnel](post-v7-family-funnel.tsv): configured counts, exact service/pages/cards/first/revisits/duplicates/A/budget/B/comps/finals/alerts, conversions/shares/reasons/routes and qualified latest-state medians.
+- [Detected-brand-family funnel](post-v7-detected-family-funnel.tsv): actual recognition rather than the family that issued the query, with unresolved identities separate. This is necessary to distinguish discovery concentration from scoring concentration.
+- [Item-type cohorts](post-v7-item-cohort.tsv), [actionable price cohorts](post-v7-price_jpy-cohort.tsv), [landed USD cohorts](post-v7-landed_usd-cohort.tsv).
+- [Scope/attention findings and real examples](post-v7-scope-attention.md).
+- [Status incident and storage](post-v7-status-storage.md).
+
+Important limitations: item/price files are **retained distinct-ID cohorts**, not full historical card-event counts. At extraction, 15,077 IDs had 15,602 retained in-window trace/history records; 1,029 observed IDs lacked a retained in-window decision. Histories preserve meaningful inspections, not every cheap card. Latest identity/title/heat/risk can be newer than the frozen window; medians describe available latest state, not exact event-time values. Early current bids are never substituted for missing actionable prices; many landed values are unavailable because Stage A deliberately avoids storing full valuation. Exact sent IDs come from frozen ScanEvent rows (one final in each sent scan). Item subtypes use lightweight title grouping; unknown is retained honestly. Family medians use the same latest-state cohort, whereas family counts/conversions are exact frozen scan events. Missing subtype evidence is not a measured zero-recall result.
+
+## Conclusions and minimum changes
+
+1. Sustained service did not die: all42 families had successful service in each third. Preserve scheduling shares, cadence, backfill, depth, traffic, source health pacing and all four discovery philosophies. Remove only two self-duplicated designer queries and duplicated men's wording in Louboutin bags: 448→446 specs.
+2. Inspection allocation is still heat-heavy. In the initial retained-state cut, actionable≤¥10k cohorts supplied11 finals from140 inspections; >¥80k supplied1 from73. This is a diagnostic sample, not a randomized performance estimate. Reserve **at most one already-existing selected slot** for an already-eligible exact-brand, known garment/footwear, actionable≤¥10k candidate. Rank within that cohort using existing inspection score/novelty; replace at most one compatible ordinary selection. Global/path/market-rate caps and total selected count are unchanged. No new eligibility path, alert threshold, price appraisal or browser calls.
+3. Product completeness caused two proven bad v7 micro pings: Oakley host-compatible replacement lenses and Gucci's empty protective case. Generic component/protective-adjunct ontology blocks these before value/routing, while complete objects, bundles, wearable hardware and motifs remain supported. The wax kit and automotive examples were earlier versions, not new v7 failures.
+4. Collection identity is not attention urgency. A narrow, explicit delivery assessment keeps costly unverified named-archive cards in their existing route but suppresses push notifications when independent piece/value evidence is limited. The card remains visible/badged; it is not an inbox deletion or new suppression threshold. Actual opportunities/review and strong independent/iconic grails retain normal delivery. This cannot rescue a final rejection or change FMV, risk, maturity, route or dedupe.
+5. A mixed-script Tシャツ/type-category fix improves identity without adding a particular Prada piece to taxonomy. Micro acquisition/landed thresholds remain unchanged: evidence did not justify a general expansion. The ¥6,545/$70 Needles tee remains a genuine near-threshold calibration question, not a forced positive. No family saturation penalty is warranted by three different Rebuild garments.
+6. The latest public outage was justified by nine consecutive exhausted broad-search failures. Preserve incident thresholds/recovery; fix the misleading parser timestamp and retain bounded source-response/incident diagnostics to identify the next real failure. Historical response-body absence prevents a more precise source-root-cause claim.
+7. Existing volume capacity is inadequate for multi-day growth. No safe eligible cleanup substitutes for more space; history/session/cache evidence is preserved. No infrastructure mutation performed.
+
+## Delivery and persistence
+
+Discord `flags=4096` uses the documented [SUPPRESS_NOTIFICATIONS behavior](https://docs.discord.com/developers/resources/message): a visible/badged message without push, supported for [webhook execution](https://docs.discord.com/developers/resources/webhook). Quiet archive cards explicitly say QUIET. Delivery role/outcome is retained in bounded traces/history and per-final scan evidence; no attention score enters material dedupe identity. A quiet→normal classification change alone does not generate a duplicate ping. Existing meaningful price/maturity/evidence re-alerts remain.
+
+No changes to Railway configuration, start wrapper, `/data`, authenticated storage state, Chromium profile/session, browser count, purchasing/bidding, comp sources, or U.S./Japan evidence semantics. No AI calls or new services. Full tests/Ruff/compile/calibration and natural deployed validation are recorded in the completion section when available.

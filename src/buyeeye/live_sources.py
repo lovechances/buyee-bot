@@ -41,6 +41,62 @@ _PAGINATION_PAGE_PATTERN = re.compile(
 _PRIMARY_SEARCH_CARD_SELECTOR = ".g-main > ul.auctionSearchResult > li.itemCard"
 
 
+def _parser_failure_shape(url: str, status: int | None, shape: dict[str, Any]) -> dict[str, Any]:
+    """Keep response structure, never page content, credentials, or URL parameters."""
+    path = urlsplit(url).path
+    if path.startswith("/item/search/query/"):
+        path = "/item/search/query/:query"
+        if "/category/" in urlsplit(url).path:
+            path += "/category/:category"
+    elif path not in {"/", "/login", "/signup", "/jdirectitems/auction"}:
+        path = "/other"
+    counts = {}
+    for field in (
+        "primary_containers", "primary_lists", "primary_cards",
+        "primary_auction_links", "all_auction_links",
+    ):
+        value = shape.get(field)
+        counts[field] = max(0, value) if type(value) is int else None
+    ready = shape.get("ready_state")
+    return {
+        "url_path": path,
+        "http_status": status,
+        "ready_state": ready if ready in {"loading", "interactive", "complete"} else None,
+        **counts,
+    }
+
+
+async def _log_parser_failure_shape(page: Any, response: Any, reason: str) -> None:
+    """A diagnostic failure must never replace the scanner's original safe failure."""
+    try:
+        shape = await page.evaluate(
+            """selector => ({
+              ready_state: document.readyState,
+              primary_containers: document.querySelectorAll('.g-main').length,
+              primary_lists: document.querySelectorAll('.g-main > ul.auctionSearchResult').length,
+              primary_cards: document.querySelectorAll(selector).length,
+              primary_auction_links: document.querySelectorAll(
+                selector + ' a[href*="/item/jdirectitems/auction/"]'
+              ).length,
+              all_auction_links: document.querySelectorAll(
+                'a[href*="/item/jdirectitems/auction/"]'
+              ).length
+            })""",
+            _PRIMARY_SEARCH_CARD_SELECTOR,
+        )
+        evidence = _parser_failure_shape(
+            page.url, response.status if response is not None else None, shape
+        )
+        evidence["reason"] = reason
+        logging.getLogger("buyeeye.runtime").warning(
+            "parser_failure_shape %s", json.dumps(evidence, sort_keys=True)
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("buyeeye.runtime").warning(
+            "parser_failure_shape_unavailable error=%s", type(exc).__name__
+        )
+
+
 def _bound_page_number(data_bind: str | None) -> int | None:
     """Read Buyee's Knockout pagination target without guessing a URL parameter."""
     match = _PAGINATION_PAGE_PATTERN.search(str(data_bind or ""))
@@ -211,7 +267,9 @@ class BuyeeAuthenticatedSource(ListingSource):
                 await restore_session_cookies_async(browser, STATE_PATH)
                 page = await browser.new_page()
                 await page.goto("https://buyee.jp/", wait_until="domcontentloaded", timeout=45000)
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                navigation_response = await page.goto(
+                    url, wait_until="domcontentloaded", timeout=60000
+                )
                 await page.wait_for_timeout(8000)
                 primary_card_selector = json.dumps(_PRIMARY_SEARCH_CARD_SELECTOR)
                 listing_script = (
@@ -358,7 +416,9 @@ class BuyeeAuthenticatedSource(ListingSource):
                         "parser_empty_page query=%r recovery=same_context_reload", query
                     )
                     self.parser_reload_attempts += 1
-                    await page.reload(wait_until="domcontentloaded", timeout=60000)
+                    navigation_response = await page.reload(
+                        wait_until="domcontentloaded", timeout=60000
+                    )
                     await page.wait_for_timeout(5000)
                     recovered_rows = await page.evaluate(listing_script)
                     for rank, row in enumerate(recovered_rows, start=1):
@@ -380,11 +440,17 @@ class BuyeeAuthenticatedSource(ListingSource):
                                 "Buyee authenticated session is no longer active"
                             )
                         if state == "parser_anomaly":
+                            await _log_parser_failure_shape(
+                                page, navigation_response, "no_primary_cards_after_reload"
+                            )
                             raise ParserAnomalyError(
                                 "search page contained no recognizable listing cards"
                             )
                 parsed = self._items_from_browser_payload(all_rows, query)
                 if all_rows and not parsed:
+                    await _log_parser_failure_shape(
+                        page, navigation_response, "unusable_card_titles"
+                    )
                     raise ParserAnomalyError(
                         "search cards were present but contained no usable listing titles"
                     )

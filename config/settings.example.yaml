@@ -68,6 +68,8 @@ pricing:
   min_profit_multiple: 1.5
 
 alert:
+  # Named/high-cost archive pieces without a value thesis remain visible, quietly.
+  quiet_unverified_high_ticket_archive: true
   ending_threshold_minutes: 60
   auction_alert_max_remaining_hours: 12
   same_listing_cooldown_hours: 12
@@ -117,6 +119,10 @@ stage_a:
   max_candidates_per_query: 6
   max_market_candidates_per_query: 3
   max_market_candidate_rate: 0.03
+  # At most one existing inspection slot can yield to an already-eligible,
+  # cheap actionable garment/footwear card. No added detail-fetch budget.
+  value_inspection_reserved_slots: 1
+  value_inspection_max_actionable_jpy: 10000
   path_caps:
     unknown_interesting: 1
     silver_jewelry: 2

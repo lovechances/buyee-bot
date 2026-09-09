@@ -230,6 +230,7 @@ def _trace_fallback(trace: dict[str, Any]) -> dict[str, Any]:
         "decision",
         "route",
         "alert_event",
+        "alert_outcome",
     )
     compact = {
         key: _short_trace_value(trace[key])
@@ -237,6 +238,12 @@ def _trace_fallback(trace: dict[str, Any]) -> dict[str, Any]:
         if trace.get(key) is not None
     }
     stage_a = trace.get("stage_a")
+    attention = trace.get("attention")
+    if isinstance(attention, dict):
+        compact["attention"] = {
+            key: _short_trace_value(attention[key], 60)
+            for key in ("role", "delivery") if key in attention
+        }
     if isinstance(stage_a, dict):
         stage_a_keys = (
             "selected",
@@ -251,6 +258,7 @@ def _trace_fallback(trace: dict[str, Any]) -> dict[str, Any]:
             "category_valid",
             "item_type",
             "item_type_confident",
+            "value_inspection_candidate",
             "actionable_price",
             "price_in_discovery_band",
             "discovery_price_fraction",
@@ -1021,6 +1029,11 @@ def record_listing_traces(
                 ),
                 "maturity": _short_trace_value(compact.get("auction_maturity")),
             }
+            attention = compact.get("attention")
+            if isinstance(attention, dict):
+                event["attention_delivery"] = _short_trace_value(attention.get("delivery"), 30)
+                event["attention_role"] = _short_trace_value(attention.get("role"), 40)
+                event["alert_outcome"] = _short_trace_value(compact.get("alert_outcome"), 30)
             fingerprint = json.dumps(
                 {key: value for key, value in event.items() if key != "at"},
                 ensure_ascii=False,
