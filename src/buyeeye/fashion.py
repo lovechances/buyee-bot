@@ -622,6 +622,138 @@ def _automotive_non_fashion_offer(
     return automotive_match
 
 
+def _stationery_non_fashion_offer(
+    scope_title: str,
+    category_hierarchy: tuple[str, ...],
+    terms: list[str],
+) -> str | None:
+    """Identify stationery/tool offers without rejecting motif-based fashion."""
+    normalized_categories = {
+        normalize_text(value).casefold().strip(" /＞")
+        for value in category_hierarchy
+        if normalize_text(value)
+    }
+    stationery_categories = {
+        "office supplies",
+        "rubber stamps",
+        "stationery",
+        "stationery & office supplies",
+        "stamps",
+        "はんこ",
+        "印鑑",
+        "印鑑、スタンプ",
+        "文房具",
+    }
+    category_match = next(
+        (value for value in normalized_categories if value in stationery_categories),
+        None,
+    )
+    if category_match:
+        return f"category:{category_match}"
+
+    stationery_match = _longest_term_match(scope_title, terms)
+    if not stationery_match:
+        return None
+
+    fashion_product = _mixed_term_pattern(
+        (
+            "t-shirt",
+            "t shirt",
+            "tee",
+            "shirt",
+            "hoodie",
+            "jacket",
+            "coat",
+            "knit",
+            "pants",
+            "trousers",
+            "jeans",
+            "boots",
+            "shoes",
+            "bag",
+            "belt",
+            "wallet",
+            "sneaker",
+            "sneakers",
+            "tie",
+            "necktie",
+            "cap",
+            "hat",
+            "scarf",
+            "necklace",
+            "pendant",
+            "bracelet",
+            "ring",
+            "earring",
+            "earrings",
+            "charm",
+        ),
+        (
+            "tシャツ",
+            "シャツ",
+            "パーカー",
+            "ジャケット",
+            "コート",
+            "ニット",
+            "パンツ",
+            "デニム",
+            "ブーツ",
+            "シューズ",
+            "バッグ",
+            "ベルト",
+            "財布",
+            "スニーカー",
+            "ネクタイ",
+            "キャップ",
+            "帽子",
+            "スカーフ",
+            "ネックレス",
+            "ペンダント",
+            "ブレスレット",
+            "リング",
+            "ピアス",
+            "チャーム",
+        ),
+    )
+    depicted_reference = _mixed_term_pattern(
+        (
+            "graphic",
+            "print",
+            "printed",
+            "motif",
+            "inspired",
+            "pattern",
+            "embroidered",
+            "embroidery",
+            "charm",
+            "pendant",
+        ),
+        (
+            "グラフィック",
+            "プリント",
+            "柄",
+            "モチーフ",
+            "刺繍",
+            "チャーム",
+            "ペンダント",
+        ),
+    )
+    # Japanese matching is intentionally substring-based. Remove the matched
+    # stationery phrase before testing the fashion exception so リング inside
+    # シーリングスタンプ cannot make the object self-identify as jewelry.
+    fashion_context = re.sub(
+        _term_pattern(stationery_match),
+        " ",
+        scope_title,
+        flags=re.IGNORECASE,
+    )
+    if re.search(fashion_product, fashion_context, flags=re.IGNORECASE) and re.search(
+        depicted_reference, fashion_context, flags=re.IGNORECASE
+    ):
+        return None
+    return stationery_match
+
+
 def analyze_product_scope(
     text: str,
     *,
@@ -714,6 +846,11 @@ def analyze_product_scope(
         category_hierarchy,
         [str(term) for term in scope_terms.get("automotive_non_fashion", [])],
     )
+    stationery_match = _stationery_non_fashion_offer(
+        scope_title_text,
+        category_hierarchy,
+        [str(term) for term in scope_terms.get("stationery_non_fashion", [])],
+    )
     if packaging_match:
         offer_kind = "packaging_only"
         reasons.append(f"offer is packaging/accessory only ({packaging_match})")
@@ -723,6 +860,11 @@ def analyze_product_scope(
     elif automotive_match:
         offer_kind = "non_fashion"
         reasons.append(f"offered object is an automotive part ({automotive_match})")
+    elif stationery_match:
+        offer_kind = "non_fashion"
+        reasons.append(
+            f"offered object is stationery or a non-wearable tool ({stationery_match})"
+        )
     elif container_match:
         offer_kind = "container"
         reasons.append(f"offered product is a container ({container_match})")

@@ -11,6 +11,7 @@ product_scope_terms:
   container_products: ["sunglasses case", "eyewear case", "eyeglass case", "glasses case", "サングラスケース", "アイウェアケース", "メガネケース", "眼鏡ケース"]
   media_ephemera: ["blu-ray", "bluray", "dvd", "vhs", "cd", "photo book", "photobook", "lookbook", "catalogue", "catalog", "magazine", "book", "pamphlet", "ブルーレイ", "写真集", "ルックブック", "カタログ", "雑誌", "書籍", "冊子", "パンフレット"]
   automotive_non_fashion: ["steering wheel cover", "steering-wheel cover", "steering wheel", "steering-wheel", "automotive interior trim", "automotive trim", "vehicle interior trim", "vehicle trim", "car interior trim", "car trim", "dashboard trim", "door trim", "automotive parts", "automotive part", "vehicle parts", "vehicle part", "car parts", "car part", "automotive accessories", "automotive accessory", "vehicle accessories", "vehicle accessory", "car accessories", "car accessory", "gear shift knob", "shift knob", "ステアリングホイール", "ステアリングカバー", "車用ステアリング", "ステアリング", "車用ハンドル", "カーパーツ", "カー用品", "車用品", "自動車部品", "車両部品", "車用内装パーツ", "車内装パーツ", "内装パーツ", "内装トリム", "ドアトリム", "シフトノブ"]
+  stationery_non_fashion: ["wax seal kit", "wax sealing kit", "sealing wax kit", "wax seal set", "sealing wax set", "wax seal stamp", "sealing stamp set", "seal stamp set", "rubber stamp", "rubber stamp set", "stamp kit", "stamp set", "stationery set", "sealing stamp", "シーリングスタンプ セット", "シーリングスタンプセット", "シーリングスタンプ", "シーリングワックス", "ワックスシールキット", "ワックススタンプ キット", "封蝋用スタンプ", "封蝋キット", "封蝋セット", "判子セット", "はんこセット", "ハンコセット", "印鑑セット", "スタンプ キット", "スタンプセット", "文房具セット", "判子", "はんこ", "印鑑"]
 
 brands:
   number_nine:

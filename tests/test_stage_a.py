@@ -349,6 +349,31 @@ def test_severe_counterfeit_evidence_vetoes_even_archive_heat() -> None:
     assert assessment.reject_reason == "severe_auth_veto"
 
 
+def test_designer_stationery_is_rejected_before_detail_budget() -> None:
+    listing = _listing(
+        "designer-stationery",
+        "CELINE TEEN KNIGHT POEM シーリングスタンプ セット 判子 封蝋キット",
+        brand="Celine",
+        category="unknown",
+        current_price=5_900,
+        buyout_price=5_910,
+    )
+    settings = _settings()
+    evaluation = evaluate_listing(listing, settings=settings)
+
+    assessment = assess_stage_a(
+        listing,
+        evaluation,
+        _semantic_spec("celine"),
+        settings,
+    )
+
+    assert evaluation.profile.product_scope.offer_kind == "non_fashion"
+    assert assessment.hard_veto is True
+    assert assessment.eligible is False
+    assert assessment.reject_reason == "offer_scope_mismatch"
+
+
 def test_known_mcq_card_gets_bounded_low_price_inspection() -> None:
     listing = _listing(
         "p1231987775",

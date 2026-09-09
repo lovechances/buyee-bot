@@ -29,7 +29,7 @@ def test_calibration_replay_is_fixed_deterministic_and_source_attributed(replay)
     assert replay["summary"]["cohorts"]["positive"] >= 5
     assert replay["summary"]["cohorts"]["negative"] >= 6
     assert replay["summary"]["alignment"].get("misaligned", 0) == 0
-    assert replay["summary"]["known_prior_misroutes_now_suppressed"] == 8
+    assert replay["summary"]["known_prior_misroutes_now_suppressed"] == 9
     assert replay["summary"]["purchased_now_surfaced"] == 2
     assert all(case["prior_observation"].get("source") for case in replay["cases"])
     # The result remains directly serializable for a CLI/report without custom encoders.

@@ -996,6 +996,78 @@ def test_car_references_on_fashion_products_remain_products(
     assert profile.product_scope.acquisition_attributable
 
 
+@pytest.mark.parametrize(
+    "title",
+    (
+        "CELINE TEEN KNIGHT POEM sealing stamp set wax seal kit",
+        "CELINE TEEN KNIGHT POEM シーリングスタンプ セット 判子 封蝋キット",
+        "CELINE TEEN KNIGHT POEM rubber stamp set",
+        "CELINE TEEN KNIGHT POEM 印鑑セット",
+        "CELINE TEEN KNIGHT POEM motif シーリングスタンプ セット",
+        "CELINE TEEN KNIGHT POEM graphic シーリングスタンプ セット",
+    ),
+)
+def test_designer_stationery_kit_is_hard_non_fashion_scope(title: str) -> None:
+    listing = _listing(
+        title,
+        price=5_900,
+        buyout=5_910,
+        observed={
+            "category_hierarchy": ["Auction", "Fashion", "By Label", "CELINE", "Other"]
+        },
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.product_scope.offer_kind == "non_fashion"
+    assert evaluation.profile.product_scope.hard_non_target
+    assert not evaluation.profile.product_scope.acquisition_attributable
+    assert evaluation.economics.landed_cost_jpy is None
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).rejection_reason == (
+        "offer_scope_mismatch"
+    )
+
+
+@pytest.mark.parametrize(
+    "hierarchy",
+    (
+        ("Auction", "Stationery", "Stamps"),
+        ("オークション", "文房具", "印鑑、スタンプ"),
+    ),
+)
+def test_authoritative_stationery_category_rejects_archive_keyword_stuffing(
+    hierarchy: tuple[str, ...],
+) -> None:
+    profile = enrich_title(
+        "Celine Teen Knight Poem archive studded gold collectible",
+        category_hierarchy=hierarchy,
+    )
+
+    assert profile.product_scope.offer_kind == "non_fashion"
+    assert profile.product_scope.hard_non_target
+    assert not profile.product_scope.acquisition_attributable
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Celine wax seal motif pendant necklace",
+        "Undercover sealing stamp graphic T-shirt",
+        "Celine シーリングスタンプ モチーフ ペンダント",
+        "Celine 判子モチーフ刺繍ジャケット",
+        "Celine 印鑑柄 ネクタイ",
+        "Celine rubber stamp print cap",
+        "Celine 判子モチーフ スカーフ",
+    ),
+)
+def test_stationery_words_used_as_fashion_motifs_remain_products(title: str) -> None:
+    profile = enrich_title(title)
+
+    assert profile.product_scope.offer_kind == "product"
+    assert not profile.product_scope.hard_non_target
+    assert profile.product_scope.acquisition_attributable
+
+
 def test_collection_dvd_with_keyword_stuffed_garment_terms_is_media_ephemera() -> None:
     listing = _listing(
         "09AWナンバーナイン a closed feeling コレクション DVD number nine "

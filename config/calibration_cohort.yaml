@@ -306,6 +306,30 @@ cases:
       item_type_observed: Eyewear case
       description_original: "ケースのみ。サングラス本体なし。"
 
+  - key: celine_sealing_stamp_kit
+    cohort: negative
+    human_label: branded stationery / not wearable fashion
+    prior_observation:
+      source: production_observation
+      outcome: route:buyouts
+      note: >-
+        A Celine collection-branded wax-seal/stamp kit was incorrectly inferred
+        as jewelry during the first production burn-in.
+    acceptable_outcomes: [reject:offer_scope_mismatch]
+    listing:
+      title_original: "CELINE TEEN KNIGHT POEM シーリングスタンプ セット 判子 封蝋キット"
+      brand: Celine
+      category: Other
+      current_price: 5900
+      buyout_price: 5910
+      starting_price: 5364
+      time_remaining: "1 day(s)"
+      condition: Unused
+      brand_observed: Celine
+      item_type_observed: Other
+      category_hierarchy: [Auction, Fashion, By Label, CELINE, Other]
+      description_original: "シーリングスタンプと封蝋のセット"
+
   - key: number_nine_collection_dvd
     cohort: negative
     human_label: collection media / not a garment
