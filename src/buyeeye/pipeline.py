@@ -33,6 +33,7 @@ from .evaluation import (
     has_iconic_piece_context,
     has_named_collection_context,
     has_specific_archive_context,
+    has_structurally_generic_product,
 )
 from .fashion import enrich_title, is_generic_signal
 from .live_sources import BuyeeAuthenticatedSource, LiveListing, LiveMarketLoop
@@ -51,7 +52,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "ultra-semantic-value-v5"
+DECISION_LOGIC_VERSION = "ultra-refinement-v6"
 
 
 @dataclass
@@ -225,6 +226,7 @@ def _compact_listing_trace(
             "landed_cost_jpy": intelligence.get("landed_cost_jpy"),
             "directional_score": intelligence.get("directional_score"),
             "directional_confidence": intelligence.get("directional_confidence"),
+            "micro_asymmetry": intelligence.get("micro_asymmetry"),
             "us_valuation_state": intelligence.get("valuation_state"),
             "exact_valuation_confidence": intelligence.get(
                 "exact_valuation_confidence"
@@ -256,16 +258,12 @@ def _directional_why(evaluation: ListingEvaluation) -> str:
     profile = evaluation.profile
     parts: list[str] = []
     relationship = profile.relationship.value if profile.relationship else "uncertain"
-    if relationship == "core":
-        parts.append("core line")
-    elif relationship == "collaboration":
-        parts.append("substantive collaboration")
-    elif relationship == "diffusion":
-        parts.append("piece-specific diffusion signal")
     if profile.collection:
         parts.append(profile.collection.value)
     elif profile.era:
         parts.append(profile.era.value.replace("_", " ").title())
+    if profile.item_type:
+        parts.append(profile.item_type.value.replace("_", " "))
     if evaluation.directional.piece_signals:
         parts.append("/".join(evaluation.directional.piece_signals[:2]))
     if (
@@ -278,7 +276,62 @@ def _directional_why(evaluation: ListingEvaluation) -> str:
         )
     if any("absolute downside" in reason for reason in evaluation.directional.reasons):
         parts.append("low absolute downside")
-    return " · ".join(parts[:4]) or "strong directional value evidence"
+    if relationship == "collaboration" and len(parts) < 3:
+        parts.append("collaboration with independent piece evidence")
+    elif relationship == "diffusion" and len(parts) < 3:
+        parts.append("diffusion piece with independent evidence")
+    return " · ".join(parts[:4]) or "specific low-downside fashion evidence"
+
+
+def _listing_evidence_text(listing: LiveListing) -> str:
+    observed = ((listing.raw or {}).get("stage_b") or {}).get("observed", {})
+    return " ".join(
+        str(value)
+        for value in (
+            listing.title_original,
+            observed.get("description_original"),
+            observed.get("item_type_observed"),
+            observed.get("material_original"),
+            " ".join(observed.get("category_hierarchy", [])),
+        )
+        if value
+    )
+
+
+def _structurally_generic(listing: LiveListing, evaluation: ListingEvaluation) -> bool:
+    return has_structurally_generic_product(
+        evaluation.profile,
+        _listing_evidence_text(listing),
+    )
+
+
+def _auth_reviewworthy(
+    listing: LiveListing,
+    evaluation: ListingEvaluation,
+    *,
+    credible_economics: bool,
+) -> bool:
+    """Keep review for plausible uncertainty, not generic counterfeit-density noise."""
+    profile = evaluation.profile
+    if not profile.brand or profile.brand.value != "Chrome Hearts":
+        return True
+    raw = listing.raw or {}
+    photos = int(raw.get("detail_photo_count") or 0)
+    feedback = int(raw.get("seller_feedback_count") or 0)
+    has_piece_identity = bool(
+        has_iconic_piece_context(profile)
+        or has_grail_design_evidence(evaluation.directional.piece_signals)
+    )
+    # Sold-price evidence can establish market value; it cannot make a
+    # photo-less generic silver listing useful to authenticate.  Always demand
+    # inspectable piece identity and coverage, relaxing only seller-history
+    # depth when the economics themselves are credible.
+    minimum_photos = 2 if credible_economics else 4
+    return bool(
+        has_piece_identity
+        and photos >= minimum_photos
+        and (credible_economics or feedback >= 20)
+    )
 
 
 def _minutes_remaining(value: str | None) -> int | None:
@@ -428,7 +481,7 @@ def _dominant_post_detail_rejection(
     profile = evaluation.profile
     relationship = profile.relationship.value if profile.relationship else "uncertain"
     relationship_provenance = profile.relationship.provenance if profile.relationship else ""
-    generic = any(
+    generic = _structurally_generic(listing, evaluation) or any(
         is_generic_signal(signal, profile.relationship)
         for signal in profile.negative_signals
     )
@@ -442,7 +495,11 @@ def _dominant_post_detail_rejection(
         return "malformed_data"
     if profile.product_scope.target_role in {"style_reference", "contradicted"}:
         return "target_identity_mismatch"
-    if profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
+    if profile.product_scope.offer_kind in {
+        "packaging_only",
+        "media_ephemera",
+        "non_fashion",
+    }:
         return "offer_scope_mismatch"
     if profile.product_scope.offer_clarity != "clear":
         return "partial_offer_ambiguous"
@@ -509,6 +566,10 @@ def _post_detail_decision(
     irrelevant = any(
         signal.value.startswith("irrelevant:") for signal in profile.negative_signals
     )
+    credible_economics = bool(
+        economics.opportunity_score >= 70
+        and economics.comp_confidence in {"medium", "high"}
+    )
     if profile.product_scope.target_role == "style_reference":
         return PostDetailDecision(
             None,
@@ -521,7 +582,11 @@ def _post_detail_decision(
             "; ".join(profile.product_scope.reasons[:2]),
             "target_identity_mismatch",
         )
-    if profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
+    if profile.product_scope.offer_kind in {
+        "packaging_only",
+        "media_ephemera",
+        "non_fashion",
+    }:
         return PostDetailDecision(
             None,
             "the offer is non-garment merchandise, not the represented fashion product",
@@ -547,6 +612,12 @@ def _post_detail_decision(
             "detail category explicitly identifies non-menswear inventory",
             "category_mismatch",
         )
+    if _structurally_generic(listing, evaluation) and not credible_economics:
+        return PostDetailDecision(
+            None,
+            "ordinary product archetype lacks independent design or market evidence",
+            "generic_after_detail",
+        )
     if low_priority_collaboration and evaluation.directional.thesis != "asymmetric_value":
         return PostDetailDecision(
             None,
@@ -563,10 +634,6 @@ def _post_detail_decision(
             evaluation.auction_maturity.auction_type == "open_auction"
             and evaluation.auction_maturity.level == "low"
         ),
-    )
-    credible_economics = bool(
-        economics.opportunity_score >= 70
-        and economics.comp_confidence in {"medium", "high"}
     )
     directional_value = evaluation.directional.thesis == "asymmetric_value"
     actionable_buyout_thesis = bool(
@@ -585,11 +652,22 @@ def _post_detail_decision(
                     "exceptional early archive watch with material identity/auth risk",
                 )
             return PostDetailDecision(
-                "grails", "early archive discovery; current bid is provisional"
+                "grails",
+                f"{_directional_why(evaluation)}; early auction price is provisional",
             )
         return PostDetailDecision(None, "auction price is still provisional", "immature_auction")
     if risk == "high":
         if true_grail or credible_economics or directional_value:
+            if not _auth_reviewworthy(
+                listing,
+                evaluation,
+                credible_economics=credible_economics,
+            ):
+                return PostDetailDecision(
+                    None,
+                    "auth-sensitive listing lacks enough item-specific evidence for useful review",
+                    "unreviewable_auth_noise",
+                )
             return PostDetailDecision(
                 "review",
                 "; ".join(evaluation.auth_risk.reasons[:2]),
@@ -604,6 +682,16 @@ def _post_detail_decision(
         )
     )
     if meaningful_auth_concern and (directional_value or credible_economics):
+        if not _auth_reviewworthy(
+            listing,
+            evaluation,
+            credible_economics=credible_economics,
+        ):
+            return PostDetailDecision(
+                None,
+                "auth-sensitive listing lacks enough item-specific evidence for useful review",
+                "unreviewable_auth_noise",
+            )
         return PostDetailDecision(
             "review", "compelling opportunity with material authentication uncertainty"
         )
@@ -640,14 +728,7 @@ def _post_detail_decision(
             "ending", "qualifying opportunity ending within the configured threshold"
         )
     if true_grail:
-        reason = (
-            "strong named archive identity and piece-specific evidence"
-            if has_named_collection_context(profile) or has_iconic_piece_context(profile)
-            else "exceptional piece-specific archive evidence"
-        )
-        return PostDetailDecision(
-            "grails", reason
-        )
+        return PostDetailDecision("grails", _directional_why(evaluation))
     if _is_unverified_high_ticket(
         evaluation,
         threshold_usd=unverified_grail_high_ticket_usd,
@@ -1066,7 +1147,11 @@ async def scan_once(
                 reason = "missing_title"
             elif scope.target_role in {"style_reference", "contradicted"}:
                 reason = "target_identity_mismatch"
-            elif scope.offer_kind in {"packaging_only", "media_ephemera"}:
+            elif scope.offer_kind in {
+                "packaging_only",
+                "media_ephemera",
+                "non_fashion",
+            }:
                 reason = "offer_scope_mismatch"
             elif scope.offer_clarity != "clear":
                 reason = "partial_offer_ambiguous"
@@ -1273,6 +1358,7 @@ async def scan_once(
                 ),
                 "directional_score": evaluation.directional.score,
                 "directional_confidence": evaluation.directional.confidence,
+                "micro_asymmetry": evaluation.directional.micro_asymmetry,
                 "valuation_state": evaluation.directional.us_valuation_state,
                 "exact_valuation_confidence": evaluation.valuation.confidence,
                 "identity_confidence": evaluation.identity.confidence,
@@ -1381,6 +1467,7 @@ async def scan_once(
                         "valuation": evaluation.valuation.confidence,
                         "directional": evaluation.directional.confidence,
                         "directional_score": evaluation.directional.score,
+                        "micro_asymmetry": evaluation.directional.micro_asymmetry,
                         "heat": evaluation.desirability.score,
                         "item_type": (
                             evaluation.profile.item_type.value
@@ -1427,6 +1514,7 @@ async def scan_once(
                     "valuation": evaluation.valuation.confidence,
                     "directional": evaluation.directional.confidence,
                     "directional_score": evaluation.directional.score,
+                    "micro_asymmetry": evaluation.directional.micro_asymmetry,
                     "heat": evaluation.desirability.score,
                     "item_type": (
                         evaluation.profile.item_type.value

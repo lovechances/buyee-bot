@@ -180,7 +180,7 @@ def search_page_budget(spec: QuerySpec, scanner_settings: dict[str, Any]) -> int
     """Return a bounded depth allocation without multiplying every hot scan.
 
     The global page limit is a hard ceiling.  Core broad searches and the slow
-    exploration/price-band strategies can sample a second page; rapidly
+    exploration/price-band strategies can sample bounded deeper pages; rapidly
     changing buyout and closing searches stay on page one unless explicitly
     configured otherwise.  Lower-priority aliases remain shallow so adding
     depth does not multiply all broad-source traffic.
@@ -300,12 +300,17 @@ def build_market_structure_queries(
         query = normalize_text(
             str(family_config.get("query") or taxonomy_brands[family].get("canonical") or "")
         )
+        family_strategy_key = str(family_config.get("strategy_key") or family).strip()
         family_priority = int(family_config.get("priority_adjustment", 0))
         for category_config in family_config.get("categories", []):
             group = str(category_config.get("group") or "").strip()
             profile = str(category_config.get("profile") or "").strip()
             if group not in categories:
                 raise ValueError(f"Unknown market-structure category group: {group}")
+            category_query = normalize_text(str(category_config.get("query") or query))
+            strategy_key = str(category_config.get("strategy_key") or family_strategy_key).strip()
+            if not category_query or not strategy_key:
+                raise ValueError("Market-structure query and strategy key cannot be blank")
             category_id = str(categories[group].get("id") or "")
             ultra_min, ultra_max = _market_band(profiles, profile, "ultra_cheap")
             _, bargain_max = _market_band(profiles, profile, "bargain")
@@ -319,15 +324,18 @@ def build_market_structure_queries(
                 *,
                 priority_adjustment: int = 0,
                 cooldown_adjustment: int = 0,
-                query_text: str = query,
+                query_text: str = category_query,
                 family_key: str = family,
+                strategy_key_value: str = strategy_key,
                 category_group: str = group,
                 base_priority_adjustment: int = family_priority,
             ) -> None:
                 specs.append(
                     QuerySpec(
                         query=query_text,
-                        provenance=(f"market_structure.{family_key}.{category_group}.{suffix}"),
+                        provenance=(
+                            f"market_structure.{strategy_key_value}.{category_group}.{suffix}"
+                        ),
                         family=family_key,
                         priority=int(priorities[strategy_type])
                         + base_priority_adjustment
@@ -338,7 +346,7 @@ def build_market_structure_queries(
                         ),
                         discovery_mode="market_slice",
                         query_layer="market_structure",
-                        strategy_id=f"{family_key}.{category_group}.{suffix}",
+                        strategy_id=f"{strategy_key_value}.{category_group}.{suffix}",
                         strategy_type=strategy_type,
                         search_filters=filters,
                     )
@@ -362,6 +370,29 @@ def build_market_structure_queries(
                         discovery_intent="cheap_actionable_buyout",
                     ),
                 )
+                # Newly-posted sorting is ideal for races, but it permanently
+                # hides older fixed-price inventory that a human reaches by
+                # sorting a price-bounded category. A slower bounded backfill
+                # samples that persistent cheap inventory without increasing
+                # the market-structure share or treating its ceiling as FMV.
+                if category_config.get("buyout_backfill", True):
+                    add_spec(
+                        "buyout.backfill",
+                        "market_explore",
+                        MarketplaceSearchFilters(
+                            category_id=category_id,
+                            category_group=group,
+                            min_buyout_price_jpy=ultra_min,
+                            max_buyout_price_jpy=bargain_max,
+                            buy_now_only=True,
+                            item_type="auction",
+                            sort_by="bidorbuy",
+                            sort_order="a",
+                            price_bucket="actionable_backfill",
+                            discovery_intent="persistent_buyout_backfill",
+                        ),
+                        priority_adjustment=4,
+                    )
                 if category_config.get("negative_space"):
                     add_spec(
                         "buyout.ultra_cheap",
@@ -467,6 +498,7 @@ def build_query_universe(
         cooldown = int(family.get("cooldown_minutes", 180))
         priority = int(family.get("priority", 70))
         aliases = [normalize_text(str(value)) for value in family.get("aliases", []) if value]
+        broad_alias_limit = max(1, min(8, int(family.get("broad_alias_limit", 4))))
         medium_terms = [
             normalize_text(str(value)) for value in family.get("medium_terms", []) if value
         ]
@@ -475,7 +507,7 @@ def build_query_universe(
             for value in [*family.get("surgical_terms", []), *family.get("terms", [])]
             if value
         ]
-        for alias in aliases[:4]:
+        for alias in aliases[:broad_alias_limit]:
             candidates.append(
                 QuerySpec(
                     alias,

@@ -17,6 +17,8 @@ brands:
   - Final Home
   - Dior Homme
   - Saint Laurent
+  - Celine
+  - Christian Louboutin
   - Raf Simons
   - Helmut Lang
   - Maison Martin Margiela
@@ -46,9 +48,18 @@ alias_map:
   "ナンバーナイン": "Number (N)ine"
   "Dior Homme Hedi": "Dior Homme"
   "Saint Laurent Hedi": "Saint Laurent"
+  "YVES SAINT LAURENT": "Saint Laurent"
+  "イヴ・サンローラン": "Saint Laurent"
+  "イヴサンローラン": "Saint Laurent"
+  "イブサンローラン": "Saint Laurent"
   "Maison Margiela": "Maison Martin Margiela"
   "Maison Martin Margiela": "Maison Martin Margiela"
   "Le Grand Bleu": "L.G.B."
   "LGB": "L.G.B."
   "Rebuild": "Rebuild by Needles"
   "McQueen": "Alexander McQueen"
+  "CELINE HOMME": "Celine"
+  "CÉLINE": "Celine"
+  "セリーヌ": "Celine"
+  "Louboutin": "Christian Louboutin"
+  "ルブタン": "Christian Louboutin"

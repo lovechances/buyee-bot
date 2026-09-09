@@ -66,15 +66,56 @@ search_families:
       - "distressed"
   - brand: "Saint Laurent"
     priority: 82
+    broad_alias_limit: 7
     aliases:
       - "Saint Laurent Paris"
       - "サンローランパリ"
       - "YSL エディ"
+      - "Yves Saint Laurent"
+      - "イヴ・サンローラン"
+      - "イヴサンローラン"
+      - "イブサンローラン"
     medium_terms:
       - "Hedi"
     surgical_terms:
       - "Wyatt"
       - "Babycat"
+  - brand: "Celine"
+    priority: 82
+    cooldown_minutes: 180
+    aliases:
+      - "CELINE HOMME"
+      - "CELINE"
+      - "セリーヌ メンズ"
+      - "セリーヌ オム"
+    medium_terms:
+      - "Hedi Slimane"
+      - "エディスリマン"
+      - "メンズ"
+      - "boots"
+    surgical_terms:
+      - "Jacno"
+      - "Camargue"
+      - "The Dancing Kid"
+      - "Teen Knight Poem"
+      - "Cosmic Cruiser"
+  - brand: "Christian Louboutin"
+    priority: 74
+    cooldown_minutes: 240
+    aliases:
+      - "Christian Louboutin メンズ"
+      - "Louboutin メンズ"
+      - "クリスチャンルブタン メンズ"
+      - "ルブタン メンズ"
+    medium_terms:
+      - "boots"
+      - "スニーカー"
+      - "メンズ バッグ"
+    surgical_terms:
+      - "Rollerboy"
+      - "Louis Orlato"
+      - "Dandelion"
+      - "Greggo"
   - brand: "Maison Martin Margiela"
     priority: 88
     aliases:

@@ -7,7 +7,12 @@ import pytest
 
 from buyeeye.cli import main
 from buyeeye.db import Listing, get_session, init_db
-from buyeeye.diagnostics import diagnose_listing, marketplace_listing_id
+from buyeeye.diagnostics import (
+    benchmark_listings,
+    diagnose_listing,
+    marketplace_listing_id,
+    marketplace_listing_identity,
+)
 from buyeeye.runtime_state import (
     mark_listing_seen,
     record_decision_classifications,
@@ -96,6 +101,72 @@ def test_marketplace_listing_id_parses_only_supported_auction_forms():
 
     with pytest.raises(ValueError):
         marketplace_listing_id("https://example.com/item/unrelated/not-a-listing")
+
+
+def test_marketplace_identity_accepts_paypay_url_and_bare_id() -> None:
+    url = (
+        "https://buyee.jp/paypayfleamarket/item/z609539002"
+        "?conversionType=jdirectitems_auction_DirectSearch"
+    )
+
+    assert marketplace_listing_identity(url) == ("buyee_paypay", "z609539002")
+    assert marketplace_listing_identity("z609539002") == (
+        "buyee_paypay",
+        "z609539002",
+    )
+    assert marketplace_listing_identity("z609539002", source="jdirectitems") == (
+        "buyee",
+        "z609539002",
+    )
+
+
+def test_benchmark_listings_batches_read_only_diagnostics_and_miss_categories(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "benchmark.db"
+    mark_listing_seen(
+        "buyee",
+        "b1157261953",
+        "signature-a",
+        "Number (N)ine",
+        db_path,
+        family="number_nine",
+        strategy_type="semantic_broad",
+    )
+    record_decision_classifications(
+        {("buyee", "b1157261953"): "stage_a:insufficient_card_evidence"},
+        db_path,
+        decision_logic_version="test-v1",
+    )
+    benchmark_path = tmp_path / "benchmark.txt"
+    benchmark_path.write_text(
+        "b1157261953\tinteresting tee\n"
+        "x999999999\n"
+        "https://buyee.jp/paypayfleamarket/item/z609539002\n",
+        encoding="utf-8",
+    )
+    before = db_path.read_bytes()
+
+    report = benchmark_listings(db_path, benchmark_path)
+
+    assert report["read_only"] is True
+    assert report["browser_used"] is False
+    assert report["discord_used"] is False
+    assert report["total"] == 3
+    assert report["seen"] == 1
+    assert report["outcomes"] == {
+        "discovery_miss": 1,
+        "source_coverage_miss": 1,
+        "stage_a_reject:insufficient_card_evidence": 1,
+    }
+    assert report["results"][0]["annotation"] == "interesting tee"
+    assert db_path.read_bytes() == before
+
+    monkeypatch.delenv("RAILWAY_VOLUME_MOUNT_PATH", raising=False)
+    monkeypatch.setenv("BUYEYE_DB_PATH", str(db_path))
+    assert main(["benchmark-listings", str(benchmark_path)]) == 0
+    cli_report = json.loads(capsys.readouterr().out)
+    assert cli_report["outcomes"] == report["outcomes"]
 
 
 def test_diagnose_listing_unseen_is_non_mutating_and_cli_returns_one(

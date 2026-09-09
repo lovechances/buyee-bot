@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,9 +16,44 @@ from .pipeline import _post_detail_decision
 from .settings import load_settings
 
 
-def marketplace_listing_id(value: str) -> str:
-    """Extract a stable JDirectItems ID from a URL or accept a bare ID."""
+def marketplace_listing_identity(
+    value: str,
+    *,
+    source: str | None = None,
+) -> tuple[str, str]:
+    """Return a stable source/ID pair from a supported URL or bare ID.
+
+    PayPay Flea Market's current IDs use a ``z`` plus nine digits.  That bare
+    form is accepted for benchmark convenience; a full URL (or explicit
+    ``source`` column) remains the unambiguous form if marketplace ID formats
+    ever overlap.
+    """
     text = str(value or "").strip()
+    requested_source = str(source or "").strip().casefold().replace("-", "_")
+    source_aliases = {
+        "": "",
+        "buyee": "buyee",
+        "jdirectitems": "buyee",
+        "yahoo": "buyee",
+        "yahoo_auction": "buyee",
+        "paypay": "buyee_paypay",
+        "paypay_fleamarket": "buyee_paypay",
+        "buyee_paypay": "buyee_paypay",
+    }
+    if requested_source not in source_aliases:
+        raise ValueError(f"Unsupported marketplace source: {source}")
+    explicit_source = source_aliases[requested_source]
+
+    paypay_match = re.search(
+        r"/paypayfleamarket/item/([A-Za-z0-9]+)(?:[/?#]|$)",
+        text,
+        re.IGNORECASE,
+    )
+    if paypay_match:
+        if explicit_source and explicit_source != "buyee_paypay":
+            raise ValueError("Listing URL conflicts with the requested marketplace source")
+        return "buyee_paypay", paypay_match.group(1)
+
     # BuyEye's authenticated source emits canonical Buyee JDirectItems URLs.
     # Match that full path before Yahoo's shorter auction form so intermediate
     # path components (notably ``jdirectitems``) can never become the ID.
@@ -26,10 +63,24 @@ def marketplace_listing_id(value: str) -> str:
     ):
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return match.group(1)
+            if explicit_source and explicit_source != "buyee":
+                raise ValueError("Listing URL conflicts with the requested marketplace source")
+            return "buyee", match.group(1)
     if re.fullmatch(r"[A-Za-z0-9]+", text):
-        return text
-    raise ValueError("Expected a Buyee/JDirectItems listing URL or marketplace ID")
+        inferred_source = (
+            "buyee_paypay"
+            if re.fullmatch(r"z\d{9}", text, re.IGNORECASE)
+            else "buyee"
+        )
+        return explicit_source or inferred_source, text
+    raise ValueError(
+        "Expected a Buyee/JDirectItems or PayPay Flea Market listing URL/ID"
+    )
+
+
+def marketplace_listing_id(value: str) -> str:
+    """Compatibility helper returning only the parsed marketplace ID."""
+    return marketplace_listing_identity(value)[1]
 
 
 def _dict_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -218,11 +269,11 @@ def diagnose_listing(
     db_path: str | Path,
     url_or_id: str,
     *,
-    source: str = "buyee",
+    source: str | None = None,
 ) -> dict[str, Any]:
     """Join persistent state for one listing without browser, Discord, or DB writes."""
     path = Path(db_path)
-    listing_id = marketplace_listing_id(url_or_id)
+    source, listing_id = marketplace_listing_identity(url_or_id, source=source)
     if not path.exists():
         return {
             "source": source,
@@ -395,4 +446,135 @@ def diagnose_listing(
                 "historical comp candidates cannot be reconstructed from aggregate scan events",
             ]
         ),
+    }
+
+
+def _benchmark_miss_category(report: dict[str, Any]) -> str:
+    """Assign one mutually exclusive, evidence-based benchmark outcome."""
+    if not report.get("seen"):
+        return (
+            "source_coverage_miss"
+            if report.get("source") == "buyee_paypay"
+            else "discovery_miss"
+        )
+    if report.get("alert_state"):
+        return "alerted"
+
+    trace = report.get("latest_trace") or {}
+    stage_a = trace.get("stage_a") or {}
+    classification = str((report.get("decision") or {}).get("classification") or "")
+    detail = report.get("detail") or {}
+    if stage_a.get("reject_reason") == "candidate_budget" or classification == (
+        "stage_a:candidate_budget"
+    ):
+        return "candidate_budget"
+    if classification.startswith("stage_a:"):
+        return "stage_a_reject:" + classification.partition(":")[2]
+    if detail.get("available") and trace.get("detail_status") == "failed":
+        return "stage_b_failure"
+    if classification == "detail_failed":
+        return "stage_b_failure"
+    if classification.startswith("reject:"):
+        return "post_detail_reject:" + classification.partition(":")[2]
+    if classification.startswith("final:"):
+        return "final_without_alert"
+    replay = report.get("current_replay") or {}
+    if replay.get("rejection_reason"):
+        return "current_replay_reject:" + str(replay["rejection_reason"])
+    if report.get("first_inspected") is None:
+        return "stage_a_history_unavailable"
+    return "unclassified_seen"
+
+
+def _benchmark_inputs(path: str | Path) -> list[dict[str, str | None]]:
+    input_path = Path(path)
+    if not input_path.is_file():
+        raise ValueError(f"benchmark input not found: {input_path}")
+    if input_path.suffix.casefold() == ".csv":
+        with input_path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            rows: list[dict[str, str | None]] = []
+            for row in reader:
+                value = next(
+                    (
+                        str(row.get(name) or "").strip()
+                        for name in ("url_or_id", "url", "marketplace_id", "id")
+                        if str(row.get(name) or "").strip()
+                    ),
+                    "",
+                )
+                if value:
+                    rows.append(
+                        {
+                            "value": value,
+                            "source": str(row.get("source") or "").strip() or None,
+                            "annotation": str(row.get("annotation") or "").strip() or None,
+                        }
+                    )
+            return rows
+
+    rows = []
+    for raw_line in input_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        value, _, annotation = line.partition("\t")
+        rows.append(
+            {
+                "value": value.strip(),
+                "source": None,
+                "annotation": annotation.strip() or None,
+            }
+        )
+    return rows
+
+
+def benchmark_listings(
+    db_path: str | Path,
+    input_path: str | Path,
+) -> dict[str, Any]:
+    """Batch the read-only listing diagnostic and aggregate miss categories."""
+    inputs = _benchmark_inputs(input_path)
+    results: list[dict[str, Any]] = []
+    categories: Counter[str] = Counter()
+    for index, item in enumerate(inputs, start=1):
+        value = str(item["value"] or "")
+        try:
+            report = diagnose_listing(
+                db_path,
+                value,
+                source=item.get("source"),
+            )
+            category = _benchmark_miss_category(report)
+            categories[category] += 1
+            results.append(
+                {
+                    "index": index,
+                    "input": value,
+                    "annotation": item.get("annotation"),
+                    "outcome": category,
+                    **report,
+                }
+            )
+        except ValueError as exc:
+            category = "invalid_input"
+            categories[category] += 1
+            results.append(
+                {
+                    "index": index,
+                    "input": value,
+                    "annotation": item.get("annotation"),
+                    "outcome": category,
+                    "error": str(exc),
+                }
+            )
+    return {
+        "database": str(Path(db_path)),
+        "read_only": True,
+        "browser_used": False,
+        "discord_used": False,
+        "total": len(results),
+        "seen": sum(bool(result.get("seen")) for result in results),
+        "outcomes": dict(sorted(categories.items())),
+        "results": results,
     }

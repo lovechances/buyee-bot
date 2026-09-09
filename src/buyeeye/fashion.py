@@ -49,7 +49,7 @@ class ProductScope:
     def hard_non_target(self) -> bool:
         return bool(
             self.target_role in {"style_reference", "contradicted"}
-            or self.offer_kind in {"packaging_only", "media_ephemera"}
+            or self.offer_kind in {"packaging_only", "media_ephemera", "non_fashion"}
             or self.audience in {"womens", "kids"}
         )
 
@@ -482,6 +482,146 @@ def _media_ephemera_offer(
     return None
 
 
+def _automotive_non_fashion_offer(
+    scope_title: str,
+    category_hierarchy: tuple[str, ...],
+    terms: list[str],
+) -> str | None:
+    """Identify offered automotive parts without rejecting car-themed garments."""
+    normalized_categories = [
+        normalize_text(value).casefold().strip(" /＞")
+        for value in category_hierarchy
+        if normalize_text(value)
+    ]
+    exact_automotive_categories = {
+        "automotive",
+        "automotive parts",
+        "auto parts",
+        "automobiles",
+        "automobiles & motorcycles",
+        "automobiles and motorcycles",
+        "automobiles, motorcycles",
+        "car parts",
+        "cars & motorcycles",
+        "cars and motorcycles",
+        "cars, motorcycles",
+        "motorcycles",
+        "vehicle parts",
+        "vehicles",
+        "自動車",
+        "自動車、オートバイ",
+        "自動車・オートバイ",
+        "カー用品",
+        "車用品",
+    }
+    for category in normalized_categories:
+        if category in exact_automotive_categories or re.fullmatch(
+            r"(?i)(?:automotive|auto|car|vehicle)\s+"
+            r"(?:parts?|accessories|interior(?:\s+(?:parts?|trim))?)"
+            r"(?:\s*(?:&|and|/)\s*(?:parts?|accessories))?",
+            category,
+        ):
+            return f"category:{category}"
+        if re.fullmatch(
+            r"(?:自動車|車両|車|カー)(?:用)?"
+            r"(?:部品|用品|パーツ|アクセサリー|内装(?:品|パーツ)?)",
+            category,
+        ):
+            return f"category:{category}"
+
+    automotive_match = _longest_term_match(scope_title, terms)
+    if not automotive_match:
+        return None
+
+    fashion_product = _mixed_term_pattern(
+        (
+            "t-shirt",
+            "t shirt",
+            "tshirt",
+            "tee",
+            "shirt",
+            "hoodie",
+            "sweatshirt",
+            "jacket",
+            "coat",
+            "knit",
+            "sweater",
+            "cardigan",
+            "pants",
+            "trousers",
+            "jeans",
+            "shorts",
+            "boots",
+            "boot",
+            "shoes",
+            "shoe",
+            "sneakers",
+            "sneaker",
+            "bag",
+            "belt",
+            "wallet",
+            "necktie",
+            "tie",
+            "cap",
+            "hat",
+            "sunglasses case",
+            "eyewear case",
+        ),
+        (
+            "tシャツ",
+            "シャツ",
+            "パーカー",
+            "ジャケット",
+            "コート",
+            "ニット",
+            "カーディガン",
+            "パンツ",
+            "デニム",
+            "ブーツ",
+            "シューズ",
+            "スニーカー",
+            "バッグ",
+            "ベルト",
+            "財布",
+            "ネクタイ",
+            "キャップ",
+            "帽子",
+        ),
+    )
+    depicted_reference = _mixed_term_pattern(
+        (
+            "graphic",
+            "graphics",
+            "print",
+            "printed",
+            "motif",
+            "art",
+            "artwork",
+            "photo",
+            "photograph",
+            "image",
+            "illustration",
+            "inspired",
+            "pattern",
+        ),
+        (
+            "グラフィック",
+            "プリント",
+            "柄",
+            "モチーフ",
+            "アート",
+            "写真",
+            "イラスト",
+            "オマージュ",
+        ),
+    )
+    if re.search(fashion_product, scope_title, flags=re.IGNORECASE) and re.search(
+        depicted_reference, scope_title, flags=re.IGNORECASE
+    ):
+        return None
+    return automotive_match
+
+
 def analyze_product_scope(
     text: str,
     *,
@@ -569,12 +709,20 @@ def analyze_product_scope(
         category_hierarchy,
         [str(term) for term in scope_terms.get("media_ephemera", [])],
     )
+    automotive_match = _automotive_non_fashion_offer(
+        scope_title_text,
+        category_hierarchy,
+        [str(term) for term in scope_terms.get("automotive_non_fashion", [])],
+    )
     if packaging_match:
         offer_kind = "packaging_only"
         reasons.append(f"offer is packaging/accessory only ({packaging_match})")
     elif media_match:
         offer_kind = "media_ephemera"
         reasons.append(f"offered object is media/ephemera ({media_match})")
+    elif automotive_match:
+        offer_kind = "non_fashion"
+        reasons.append(f"offered object is an automotive part ({automotive_match})")
     elif container_match:
         offer_kind = "container"
         reasons.append(f"offered product is a container ({container_match})")

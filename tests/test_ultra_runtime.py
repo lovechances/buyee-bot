@@ -15,6 +15,7 @@ from buyeeye.discovery import (
 )
 from buyeeye.runtime_state import (
     QueryRuntimeState,
+    ScanEvent,
     SeenListing,
     _query_key,
     choose_query,
@@ -165,12 +166,14 @@ def test_daemon_retry_does_not_treat_an_unfinished_reservation_as_completed(
     assert completed.revisit_reason == "fresh"
 
 
-def test_new_strategy_gets_two_samples_without_catching_up_to_lifetime_runs(
+def test_new_strategy_bootstrap_is_interleaved_with_established_work(
     tmp_path,
 ):
     db_path = tmp_path / "state.db"
+    now = datetime.now(UTC)
     established = _semantic_spec("Established", priority=100)
-    newly_added = _semantic_spec("Newly Added", priority=10)
+    newly_added = _semantic_spec("Newly Added A", priority=20)
+    another_new = _semantic_spec("Newly Added B", priority=10)
     with get_session(db_path) as session:
         session.add(
             QueryRuntimeState(
@@ -187,7 +190,8 @@ def test_new_strategy_gets_two_samples_without_catching_up_to_lifetime_runs(
         )
         session.commit()
 
-    first_sample = choose_query([established, newly_added], db_path)
+    specs = [established, newly_added, another_new]
+    first_sample = choose_query(specs, db_path, now=now)
 
     with get_session(db_path) as session:
         session.add(
@@ -200,14 +204,210 @@ def test_new_strategy_gets_two_samples_without_catching_up_to_lifetime_runs(
                 query_layer=newly_added.query_layer,
                 strategy_type=newly_added.strategy_type,
                 priority=newly_added.priority,
-                runs=2,
+                runs=1,
+                next_eligible_at=now + timedelta(hours=4),
+            )
+        )
+        session.add(
+            ScanEvent(
+                recorded_at=now,
+                query=newly_added.query,
+                family=newly_added.family,
+                query_layer=newly_added.query_layer,
+                strategy_type=newly_added.strategy_type,
             )
         )
         session.commit()
-    after_two_samples = choose_query([established, newly_added], db_path)
+
+    interleaved = choose_query(
+        specs,
+        db_path,
+        now=now + timedelta(minutes=1),
+    )
+
+    with get_session(db_path) as session:
+        session.add(
+            ScanEvent(
+                recorded_at=now + timedelta(minutes=1),
+                query=established.query,
+                family=established.family,
+                query_layer=established.query_layer,
+                strategy_type=established.strategy_type,
+            )
+        )
+        session.commit()
+    next_sample = choose_query(
+        specs,
+        db_path,
+        now=now + timedelta(minutes=2),
+    )
 
     assert first_sample == newly_added
-    assert after_two_samples == established
+    assert interleaved == established
+    assert next_sample == another_new
+
+
+def test_failed_scan_does_not_count_as_recent_family_coverage(tmp_path) -> None:
+    db_path = tmp_path / "state.db"
+    now = datetime.now(UTC)
+    dominant = _semantic_spec("Dominant", priority=100)
+    failed_family = _semantic_spec("Failed Family", priority=10)
+    with get_session(db_path) as session:
+        for spec in (dominant, failed_family):
+            session.add(
+                QueryRuntimeState(
+                    key=_query_key(spec),
+                    query=spec.query,
+                    family=spec.family,
+                    provenance=spec.provenance,
+                    discovery_mode=spec.discovery_mode,
+                    query_layer=spec.query_layer,
+                    strategy_type=spec.strategy_type,
+                    priority=spec.priority,
+                    runs=2,
+                )
+            )
+        session.add(
+            ScanEvent(
+                recorded_at=now,
+                query=dominant.query,
+                family=dominant.family,
+                query_layer="broad",
+                strategy_type="semantic_broad",
+            )
+        )
+        session.add(
+            ScanEvent(
+                recorded_at=now,
+                query=failed_family.query,
+                family=failed_family.family,
+                query_layer="broad",
+                strategy_type="semantic_broad",
+                failed=True,
+            )
+        )
+        session.commit()
+
+    assert choose_query([dominant, failed_family], db_path, now=now) == failed_family
+
+
+def test_scheduler_reserves_bounded_recent_family_exploration(tmp_path) -> None:
+    db_path = tmp_path / "state.db"
+    dominant = _semantic_spec("Dominant", priority=100)
+    neglected = _semantic_spec("Neglected", priority=10)
+    now = datetime.now(UTC)
+    with get_session(db_path) as session:
+        for spec in (dominant, neglected):
+            session.add(
+                QueryRuntimeState(
+                    key=_query_key(spec),
+                    query=spec.query,
+                    family=spec.family,
+                    provenance=spec.provenance,
+                    discovery_mode=spec.discovery_mode,
+                    query_layer=spec.query_layer,
+                    strategy_type=spec.strategy_type,
+                    priority=spec.priority,
+                    runs=2,
+                )
+            )
+        for offset in range(5):
+            session.add(
+                ScanEvent(
+                    recorded_at=now - timedelta(minutes=offset),
+                    query=dominant.query,
+                    family=dominant.family,
+                    query_layer="broad",
+                    strategy_type="semantic_broad",
+                )
+            )
+        session.commit()
+
+    assert choose_query([dominant, neglected], db_path, now=now) == neglected
+
+    with get_session(db_path) as session:
+        session.add(
+            ScanEvent(
+                recorded_at=now,
+                query=neglected.query,
+                family=neglected.family,
+                query_layer="broad",
+                strategy_type="semantic_broad",
+            )
+        )
+        session.commit()
+
+    # Exploration is a floor, not equal weighting forever: configured priority
+    # resumes control after both eligible families are represented.
+    assert choose_query([dominant, neglected], db_path, now=now) == dominant
+
+
+def test_scheduler_services_critically_overdue_alias_before_priority_starves_it(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    now = datetime.now(UTC)
+    dominant = QuerySpec(
+        "Saint Laurent Paris",
+        "test.alias",
+        "saint_laurent",
+        95,
+        cooldown_minutes=60,
+        query_layer="broad",
+    )
+    overdue = QuerySpec(
+        "Yves Saint Laurent",
+        "test.alias",
+        "saint_laurent",
+        65,
+        cooldown_minutes=60,
+        query_layer="broad",
+    )
+    also_overdue = QuerySpec(
+        "イヴサンローラン",
+        "test.alias",
+        "saint_laurent",
+        64,
+        cooldown_minutes=60,
+        query_layer="broad",
+    )
+    with get_session(db_path) as session:
+        for spec, last_run in (
+            (dominant, now - timedelta(hours=2)),
+            (overdue, now - timedelta(hours=8)),
+            (also_overdue, now - timedelta(hours=7)),
+        ):
+            session.add(
+                QueryRuntimeState(
+                    key=_query_key(spec),
+                    query=spec.query,
+                    family=spec.family,
+                    provenance=spec.provenance,
+                    discovery_mode=spec.discovery_mode,
+                    query_layer=spec.query_layer,
+                    strategy_type=spec.strategy_type,
+                    priority=spec.priority,
+                    runs=10,
+                    last_run_at=last_run,
+                )
+            )
+        session.commit()
+
+    specs = [dominant, overdue, also_overdue]
+    assert choose_query(specs, db_path, now=now) == overdue
+
+    with get_session(db_path) as session:
+        row = session.get(QueryRuntimeState, _query_key(overdue))
+        assert row is not None
+        row.runs += 1
+        row.last_run_at = now
+        row.next_eligible_at = now + timedelta(hours=1)
+        session.add(row)
+        session.commit()
+
+    # Forced max-lateness service is alternating; one old backlog cannot freeze
+    # the productive query forever while another overdue alias still exists.
+    assert choose_query(specs, db_path, now=now + timedelta(minutes=1)) == dominant
 
 
 def test_detail_failure_is_not_treated_as_fully_evaluated_for_a_day(tmp_path):
@@ -358,7 +558,12 @@ def test_query_universe_allocates_exactly_one_deep_broad_anchor_per_family():
     broad_anchors = [
         spec for spec in universe if spec.query_layer == "broad" and spec.deep_search
     ]
-    deep_specs = [spec for spec in universe if search_page_budget(spec, scanner) == 2]
+    market_exploration = [
+        spec for spec in universe if spec.strategy_type == "market_explore"
+    ]
+    market_price_bands = [
+        spec for spec in universe if spec.strategy_type == "market_price_band"
+    ]
 
     assert len(broad_anchors) == len(taxonomy["brands"])
     assert {spec.family for spec in broad_anchors} == set(taxonomy["brands"])
@@ -371,9 +576,11 @@ def test_query_universe_allocates_exactly_one_deep_broad_anchor_per_family():
         == 1
         for family in taxonomy["brands"]
     )
-    assert len(deep_specs) == 68
-    assert sum(spec.strategy_type == "market_explore" for spec in deep_specs) == 23
-    assert sum(spec.strategy_type == "market_price_band" for spec in deep_specs) == 5
+    assert all(search_page_budget(spec, scanner) == 2 for spec in broad_anchors)
+    assert market_exploration
+    assert all(search_page_budget(spec, scanner) == 2 for spec in market_exploration)
+    assert market_price_bands
+    assert all(search_page_budget(spec, scanner) == 2 for spec in market_price_bands)
     assert all(
         search_page_budget(spec, scanner) == 1
         for spec in universe

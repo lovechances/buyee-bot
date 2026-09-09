@@ -72,6 +72,12 @@ class StatusIncidentState(SQLModel, table=True):
     auth_required_announced: bool = False
     auth_failure_streak: int = 0
     release_keys_json: str = "[]"
+    # Nullable additive incident timing keeps short self-healing source stalls
+    # internal while allowing a genuinely prolonged outage to survive restarts.
+    source_failure_started_at: datetime | None = None
+    last_outage_announced_at: datetime | None = None
+    last_recovery_announced_at: datetime | None = None
+    recovery_success_streak: int | None = 0
 
 
 def init_db(path: str | Path = DB_PATH) -> None:

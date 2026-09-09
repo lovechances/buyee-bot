@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlmodel import select
 
 from buyeeye.db import Listing, get_session, save_listings
@@ -78,8 +80,10 @@ def test_target_configuration_has_no_duplicate_or_alias_families() -> None:
     active = brands["brands"]
     aliases = brands["alias_map"]
 
-    assert len(active) == len(set(active)) == 41
+    assert len(active) == len(set(active)) == 43
     assert "Alexander McQueen" in active
+    assert "Celine" in active
+    assert "Christian Louboutin" in active
     assert "Vintage band tees" in active
     assert active.count("Needles") == 1
     assert "Number Nine" not in active
@@ -88,6 +92,8 @@ def test_target_configuration_has_no_duplicate_or_alias_families() -> None:
     assert aliases["Le Grand Bleu"] == "L.G.B."
     assert active.count("Maison Martin Margiela") == 1
     assert aliases["Maison Margiela"] == "Maison Martin Margiela"
+    assert aliases["CÉLINE"] == "Celine"
+    assert aliases["Louboutin"] == "Christian Louboutin"
 
     universe = _universe()
     assert {spec.family for spec in universe if spec.query == "Number Nine"} == {
@@ -99,6 +105,30 @@ def test_target_configuration_has_no_duplicate_or_alias_families() -> None:
         if spec.query in {"Maison Martin Margiela", "マルタンマルジェラ"}
     } == {"margiela"}
     assert {spec.family for spec in universe if spec.query == "Rebuild"} == {"needles"}
+
+
+def test_celine_and_louboutin_are_full_menswear_families() -> None:
+    universe = _universe()
+
+    celine = [spec for spec in universe if spec.family == "celine"]
+    louboutin = [spec for spec in universe if spec.family == "christian_louboutin"]
+    assert any(spec.query_layer == "broad" and spec.deep_search for spec in celine)
+    assert any(spec.query_layer == "medium" for spec in celine)
+    assert any(spec.query_layer == "surgical" for spec in celine)
+    assert {
+        spec.search_filters.category_group
+        for spec in celine
+        if spec.query_layer == "market_structure" and spec.search_filters
+    } == {"mens_fashion", "mens_shoes"}
+    assert any(spec.query_layer == "broad" and spec.deep_search for spec in louboutin)
+    assert any(spec.query_layer == "medium" for spec in louboutin)
+    assert any(spec.query_layer == "surgical" for spec in louboutin)
+    assert {
+        spec.search_filters.category_group
+        for spec in louboutin
+        if spec.query_layer == "market_structure" and spec.search_filters
+    } == {"mens_fashion_goods", "mens_shoes"}
+    assert not any("women" in spec.query.casefold() for spec in louboutin)
 
 
 def test_configuration_cleanup_does_not_delete_historical_listings(tmp_path) -> None:
@@ -152,8 +182,8 @@ def test_transient_failures_and_routine_health_send_nothing(monkeypatch, tmp_pat
     )
     db_path = tmp_path / "transient.db"
 
-    assert record_source_failure(1, db_path).outcome == "not_sustained"
-    assert record_source_failure(2, db_path).outcome == "not_sustained"
+    assert record_source_failure(1, db_path).outcome == "transient_degraded"
+    assert record_source_failure(2, db_path).outcome == "transient_degraded"
     assert record_scanning_success(db_path).outcome == "healthy_no_incident"
     assert messages == []
 
@@ -165,12 +195,39 @@ def test_sustained_outage_and_recovery_each_send_once(monkeypatch, tmp_path) -> 
         lambda message, level="info": (messages.append(message) or True, 204, 0.01),
     )
     db_path = tmp_path / "outage.db"
+    started = datetime(2026, 9, 8, 12, tzinfo=UTC)
 
-    assert record_source_failure(3, db_path).emitted is True
-    assert record_source_failure(4, db_path).outcome == "incident_already_open"
+    assert record_source_failure(1, db_path, now=started).outcome == "transient_degraded"
+    assert (
+        record_source_failure(6, db_path, now=started + timedelta(minutes=10)).outcome
+        == "not_prolonged"
+    )
+    assert record_source_failure(6, db_path, now=started + timedelta(minutes=16)).emitted is True
+    assert (
+        record_source_failure(7, db_path, now=started + timedelta(minutes=20)).outcome
+        == "incident_already_open"
+    )
+    assert record_scanning_success(db_path).outcome == "recovery_unconfirmed"
     assert record_scanning_success(db_path).emitted is True
     assert record_scanning_success(db_path).outcome == "healthy_no_incident"
-    assert record_source_failure(3, db_path).emitted is True
+    assert (
+        record_source_failure(1, db_path, now=started + timedelta(minutes=30)).outcome
+        == "transient_degraded"
+    )
+    assert (
+        record_source_failure(6, db_path, now=started + timedelta(minutes=46)).outcome
+        == "notification_rate_limited"
+    )
+    assert record_scanning_success(db_path).outcome == "healthy_no_incident"
+    assert (
+        record_source_failure(1, db_path, now=started + timedelta(minutes=400)).outcome
+        == "transient_degraded"
+    )
+    assert record_source_failure(
+        6,
+        db_path,
+        now=started + timedelta(minutes=416),
+    ).emitted is True
     assert messages == [OUTAGE_MESSAGE, RECOVERY_MESSAGE, OUTAGE_MESSAGE]
 
 

@@ -77,6 +77,7 @@ class DirectionalOpportunityResult:
     japan_market_median_jpy: int | None
     piece_signals: tuple[str, ...]
     reasons: list[str] = field(default_factory=list)
+    micro_asymmetry: bool = False
 
 
 @dataclass
@@ -184,6 +185,7 @@ _DIRECTIONAL_DESIGN_TERMS = (
     "back logo",
     "back print",
     "bondage",
+    "chelsea",
     "deconstructed",
     "destroy",
     "distressed",
@@ -191,27 +193,48 @@ _DIRECTIONAL_DESIGN_TERMS = (
     "embroidery",
     "gradient",
     "graphic",
+    "hybrid",
     "jacquard",
+    "lace-up",
+    "layered",
+    "leopard",
+    "mesh",
     "one button",
     "1b",
+    "open collar",
     "paneled",
     "panelled",
     "patchwork",
     "painted",
     "patterned",
+    "platform",
+    "pointed toe",
     "processed",
+    "python",
     "reconstruction",
+    "reconstructed",
+    "rhinestone",
     "tailored",
     "runway",
     "shotgun",
     "single stitch",
     "skull",
+    "spikes",
+    "striped",
+    "studded",
+    "tie-dye",
+    "tie dye",
+    "velour",
     "アップリケ",
     "デストロイ",
     "エイズ",
     "ジャカード",
     "ジャガード",
     "グラデーション",
+    "レイヤード",
+    "レオパード",
+    "メッシュ",
+    "オープンカラー",
     "パネル",
     "パッチワーク",
     "ペンキ",
@@ -222,6 +245,12 @@ _DIRECTIONAL_DESIGN_TERMS = (
     "再構築",
     "刺繍",
     "加工",
+    "スタッズ",
+    "サイドゴア",
+    "ストライプ",
+    "ベルベット",
+    "ベロア",
+    "パイソン",
     "ドクロ",
     "切替",
     "変形",
@@ -236,6 +265,15 @@ _DIRECTIONAL_DESIGN_TERMS = (
 _DIRECTIONAL_CONTEXT_ONLY_SIGNALS = {
     "archive",
     "sport",
+    "hedi",
+    "hedi slimane",
+    "miyashita",
+    "miyashita era",
+    "original miyashita",
+    "エディ",
+    "エディ期",
+    "宮下",
+    "宮下期",
     "nirvana",
     "smashing pumpkins",
     "marilyn manson",
@@ -254,6 +292,30 @@ _WEAK_GRAIL_DESIGN_SIGNALS = {
     "runway",
     "single stitch",
     "tailored",
+}
+
+# These observations can add context to a real piece, but one of them alone is
+# too easy to obtain from seller boilerplate, ordinary product construction,
+# or condition wording.  In particular, ``distressed`` frequently describes
+# wear rather than an intentional design treatment.  They therefore cannot by
+# themselves turn a collaboration/basic into a directional-value thesis.
+_WEAK_STANDALONE_DESIGN_SIGNALS = {
+    *_WEAK_GRAIL_DESIGN_SIGNALS,
+    "back logo",
+    "back print",
+    "distressed",
+    "embroidered",
+    "embroidery",
+    "open collar",
+    "striped",
+    "chelsea",
+    "サイドゴア",
+}
+
+_STRONG_DESIGN_SIGNAL_OVERRIDES = {
+    # Taxonomy/design language, not a generic condition adjective.
+    "destroy",
+    "デストロイ",
 }
 _NON_DISTINCT_COMP_SIGNALS = {
     *_DIRECTIONAL_CONTEXT_ONLY_SIGNALS,
@@ -310,12 +372,148 @@ _EXPLICIT_NON_MENSWEAR_TERMS = (
 _POOR_CONDITION_TERMS = (
     "bad condition",
     "poor condition",
+    "stained",
+    "holes",
     "heavily damaged",
     "junk",
     "ジャンク",
+    "ダメージあり",
+    "汚れあり",
+    "穴あり",
     "全体的に状態が悪い",
     "状態が悪い",
 )
+
+_GENERIC_ACCESSORY_TERMS = (
+    "necktie",
+    "neck tie",
+    "tie",
+    "card holder",
+    "cardholder",
+    "card case",
+    "key holder",
+    "keyholder",
+    "key strap",
+    "phone case",
+    "ネクタイ",
+    "カードケース",
+    "キーホルダー",
+    "キーケース",
+    "スマホケース",
+)
+
+_GENERIC_FORMAL_TERMS = (
+    "blazer",
+    "suit jacket",
+    "tailored jacket",
+    "dress shirt",
+    "business shirt",
+    "polo shirt",
+    "dress shoes",
+    "derby shoes",
+    "oxford shoes",
+    "テーラードジャケット",
+    "スーツジャケット",
+    "ドレスシャツ",
+    "ビジネスシャツ",
+    "ポロシャツ",
+    "革靴",
+)
+
+_DISTINCTIVE_GENERIC_ESCAPES = {
+    "asymmetric",
+    "asymmetrical",
+    "bondage",
+    "deconstructed",
+    "destroy",
+    "distressed",
+    "gradient",
+    "hybrid",
+    "layered",
+    "leopard",
+    "mesh",
+    "open collar",
+    "paneled",
+    "panelled",
+    "patchwork",
+    "painted",
+    "platform",
+    "pointed toe",
+    "python",
+    "reconstruction",
+    "rhinestone",
+    "skull",
+    "spikes",
+    "striped",
+    "studded",
+    "グラデーション",
+    "レイヤード",
+    "レオパード",
+    "メッシュ",
+    "オープンカラー",
+    "パッチワーク",
+    "ボンテージ",
+    "スカル",
+    "再構築",
+    "スタッズ",
+    "パイソン",
+    "切替",
+    "変形",
+}
+
+_DESIGN_CONCEPT_ALIASES = {
+    "all_over": {"all-over", "all over", "総柄"},
+    "applique": {"applique", "appliqué", "アップリケ"},
+    "asymmetry": {"asymmetric", "asymmetrical", "変形"},
+    "bondage": {"bondage", "ボンテージ"},
+    "deconstruction": {
+        "deconstructed",
+        "reconstruction",
+        "reconstructed",
+        "再構築",
+    },
+    "distressing": {"destroy", "distressed", "デストロイ"},
+    "embroidery": {"embroidered", "embroidery", "刺繍"},
+    "gradient": {"gradient", "グラデーション"},
+    "graphic": {"graphic", "back logo", "back print"},
+    "hardware": {"rhinestone", "spikes", "studded", "スタッズ"},
+    "jacquard": {"jacquard", "ジャカード", "ジャガード"},
+    "lace_up": {"lace-up"},
+    "layering": {"layered", "レイヤード"},
+    "leopard": {"leopard", "レオパード"},
+    "mesh": {"mesh", "メッシュ"},
+    "one_button": {"one button", "1b"},
+    "open_collar": {"open collar", "オープンカラー"},
+    "paint": {"painted", "ペンキ"},
+    "paneling": {"paneled", "panelled", "パネル", "切替"},
+    "patchwork": {"patchwork", "パッチワーク"},
+    "pattern": {"patterned"},
+    "platform": {"platform"},
+    "pointed_toe": {"pointed toe"},
+    "processing": {"processed", "加工"},
+    "python": {"python", "パイソン"},
+    "runway": {"runway"},
+    "shotgun": {"shotgun", "散弾銃"},
+    "single_stitch": {"single stitch", "シングルステッチ"},
+    "skull": {"skull", "スカル", "ドクロ"},
+    "stripe": {"striped", "ストライプ"},
+    "tailoring": {"tailored"},
+    "tie_dye": {"tie-dye", "tie dye"},
+    "velour": {"velour", "ベルベット", "ベロア"},
+    "footwear_silhouette": {"chelsea", "サイドゴア"},
+}
+
+_DESIGN_SIGNAL_ITEM_TYPES = {
+    "1b": {"jacket"},
+    "one button": {"jacket"},
+    "open collar": {"shirt"},
+    "オープンカラー": {"shirt"},
+    "platform": {"footwear"},
+    "pointed toe": {"footwear"},
+    "chelsea": {"footwear"},
+    "サイドゴア": {"footwear"},
+    "tailored": {"jacket", "shirt", "trousers"},
+}
 
 
 def _phrase_present(text: str, phrase: str) -> bool:
@@ -341,7 +539,19 @@ def _piece_signals(profile: FashionProfile, evidence_text: str) -> tuple[str, ..
         for signal in profile.positive_signals
         if signal.value.casefold() not in _DIRECTIONAL_CONTEXT_ONLY_SIGNALS
     )
-    return tuple(sorted(signals))
+    item_type = profile.item_type.value if profile.item_type else None
+    return tuple(
+        sorted(
+            signal
+            for signal in signals
+            if item_type is None
+            or item_type
+            in _DESIGN_SIGNAL_ITEM_TYPES.get(
+                normalize_text(signal).casefold(),
+                {item_type},
+            )
+        )
+    )
 
 
 def _has_vintage_band_production_evidence(evidence_text: str) -> bool:
@@ -396,8 +606,13 @@ def _has_favorable_condition_evidence(condition: str | None, evidence_text: str)
     return any(_phrase_present(combined, term) for term in _CONDITION_EVIDENCE_TERMS)
 
 
-def _has_poor_condition_evidence(condition: str | None) -> bool:
-    normalized = normalize_text(condition or "").casefold()
+def _has_poor_condition_evidence(
+    condition: str | None,
+    evidence_text: str = "",
+) -> bool:
+    normalized = normalize_text(
+        " ".join(value for value in (condition, evidence_text) if value)
+    ).casefold()
     return any(_phrase_present(normalized, term) for term in _POOR_CONDITION_TERMS)
 
 
@@ -428,6 +643,35 @@ def has_specific_design_evidence(piece_signals: Iterable[str]) -> bool:
     return any(normalize_text(signal).casefold() in design_terms for signal in piece_signals)
 
 
+def _design_concepts(piece_signals: Iterable[str]) -> set[str]:
+    """Collapse aliases so repeated/bilingual wording is one observation."""
+    concepts: set[str] = set()
+    for signal in piece_signals:
+        normalized = normalize_text(signal).casefold()
+        concepts.add(
+            next(
+                (
+                    concept
+                    for concept, aliases in _DESIGN_CONCEPT_ALIASES.items()
+                    if normalized in aliases
+                ),
+                normalized,
+            )
+        )
+    return concepts
+
+
+def _has_standalone_design_evidence(piece_signals: Iterable[str]) -> bool:
+    """Return design evidence strong enough to stand without a brand/collab name."""
+    normalized_signals = {
+        normalize_text(signal).casefold() for signal in piece_signals
+    }
+    if normalized_signals & _STRONG_DESIGN_SIGNAL_OVERRIDES:
+        return True
+    weak_concepts = _design_concepts(_WEAK_STANDALONE_DESIGN_SIGNALS)
+    return bool(_design_concepts(piece_signals) - weak_concepts)
+
+
 def has_grail_design_evidence(piece_signals: Iterable[str]) -> bool:
     """Require more than seller boilerplate or generic tailoring language."""
     design_terms = {normalize_text(term).casefold() for term in _DIRECTIONAL_DESIGN_TERMS}
@@ -436,6 +680,69 @@ def has_grail_design_evidence(piece_signals: Iterable[str]) -> bool:
         and normalized not in _WEAK_GRAIL_DESIGN_SIGNALS
         for signal in piece_signals
     )
+
+
+def _has_notable_material(profile: FashionProfile) -> bool:
+    """Treat material as distinction only when it is meaningful for the object.
+
+    Leather is expected on wallets, belts, bags, and most footwear; calling it
+    notable there allowed ordinary luxury accessories to borrow a fashion
+    thesis from their base material. Silver and genuinely unusual garment
+    materials remain useful evidence.
+    """
+    if not profile.material:
+        return False
+    if profile.material.value in {"mohair", "cashmere", "silver"}:
+        return True
+    return bool(
+        profile.material.value == "leather"
+        and profile.item_type
+        and profile.item_type.value
+        not in {"accessory", "bag", "belt", "eyewear_case", "footwear", "wallet"}
+    )
+
+
+def has_structurally_generic_product(
+    profile: FashionProfile,
+    evidence_text: str,
+) -> bool:
+    """Identify ordinary product archetypes without banning whole categories.
+
+    A named/iconic piece or multiple independent construction/design signals
+    can escape this predicate. Exact sold economics is intentionally handled
+    later by routing, so this function never manufactures or judges FMV.
+    """
+    item_type = profile.item_type.value if profile.item_type else None
+    normalized = normalize_text(evidence_text).casefold()
+    generic_accessory = bool(
+        item_type in {"accessory", "wallet"}
+        and (
+            item_type == "wallet"
+            or any(_phrase_present(normalized, term) for term in _GENERIC_ACCESSORY_TERMS)
+        )
+    )
+    generic_formal = bool(
+        item_type in {"footwear", "jacket", "shirt"}
+        and any(_phrase_present(normalized, term) for term in _GENERIC_FORMAL_TERMS)
+    )
+    if not (generic_accessory or generic_formal):
+        return False
+    if has_iconic_piece_context(profile):
+        return False
+    design_signals = {
+        normalize_text(signal).casefold()
+        for signal in _piece_signals(profile, evidence_text)
+    }
+    distinctive = design_signals & _DISTINCTIVE_GENERIC_ESCAPES
+    concepts = _design_concepts(distinctive)
+    standalone_design = _has_standalone_design_evidence(distinctive)
+    if has_named_collection_context(profile) and standalone_design:
+        return False
+    if standalone_design:
+        return False
+    # Two independent observations are a conservative proxy for a product
+    # whose design, rather than logo/brand/category, merits human attention.
+    return len(concepts) < 2
 
 
 def _distinct_piece_signals(
@@ -591,7 +898,16 @@ def assess_directional_opportunity(
     exceptional_low_priority_collaboration_minimum_score = int(
         config.get("exceptional_low_priority_collaboration_minimum_score", 48)
     )
+    exceptional_iconic_minimum_score = int(
+        config.get("exceptional_iconic_minimum_score", 45)
+    )
+    low_priority_weak_signal_max_price = int(
+        config.get("low_priority_collaboration_weak_signal_max_price_jpy", 1_000)
+    )
     favorable_condition_bonus = int(config.get("favorable_condition_bonus", 6))
+    micro_asymmetry_max_price = int(
+        config.get("micro_asymmetry_max_actionable_price_jpy", 10_000)
+    )
     relationship = profile.relationship.value if profile.relationship else "uncertain"
     relationship_provenance = profile.relationship.provenance if profile.relationship else ""
     design_signals = _piece_signals(profile, evidence_text)
@@ -599,14 +915,19 @@ def assess_directional_opportunity(
     # final value scoring so changing an unrelated query ceiling cannot change
     # the opportunity thesis for an unchanged listing.
     discovery_fraction = None
-    generic = any(
+    explicit_generic = any(
         is_generic_signal(signal, profile.relationship)
         for signal in profile.negative_signals
     )
+    structural_generic = has_structurally_generic_product(profile, evidence_text)
+    generic = explicit_generic or structural_generic
     irrelevant = any(
         signal.value.startswith("irrelevant:") for signal in profile.negative_signals
     )
-    poor_condition = _has_poor_condition_evidence(getattr(listing, "condition", None))
+    poor_condition = _has_poor_condition_evidence(
+        getattr(listing, "condition", None),
+        evidence_text,
+    )
 
     score = {"high": 30, "medium": 18, "low": 8}[identity.confidence]
     reasons = [f"{identity.confidence}-confidence fashion identity"]
@@ -624,7 +945,8 @@ def assess_directional_opportunity(
     if profile.season:
         score += 5
         reasons.append("explicit season evidence")
-    if profile.material and profile.material.value in {"silver", "leather", "mohair", "cashmere"}:
+    notable_material = _has_notable_material(profile)
+    if notable_material and profile.material:
         score += 8
         reasons.append(f"notable {profile.material.value} material")
     if design_signals:
@@ -699,7 +1021,11 @@ def assess_directional_opportunity(
         reasons.append("credible U.S. sold evidence")
     if generic:
         score -= 25
-        reasons.append("generic/basic detail evidence")
+        reasons.append(
+            "structurally generic product evidence"
+            if structural_generic and not explicit_generic
+            else "generic/basic detail evidence"
+        )
     if irrelevant:
         score = 0
         reasons.append("non-fashion object evidence")
@@ -716,26 +1042,71 @@ def assess_directional_opportunity(
     elif auth.level == "do_not_touch":
         score = 0
 
-    archive_context = has_specific_archive_context(profile)
-    notable_material = bool(
-        profile.material
-        and profile.material.value in {"silver", "leather", "mohair", "cashmere"}
+    independent_design = has_specific_design_evidence(design_signals)
+    design_concepts = _design_concepts(design_signals)
+    standalone_design = _has_standalone_design_evidence(design_signals)
+    iconic_piece = has_iconic_piece_context(profile)
+    named_collection = has_named_collection_context(profile)
+    category_specific_weak_design = bool(
+        profile.item_type
+        and (
+            (
+                profile.item_type.value == "t_shirt"
+                and "graphic" in design_concepts
+            )
+            or (
+                profile.item_type.value == "footwear"
+                and "footwear_silhouette" in design_concepts
+            )
+            or (
+                profile.item_type.value == "trousers"
+                and "pattern" in design_concepts
+            )
+        )
     )
-    strong_collaboration = bool(
-        profile.relationship
-        and profile.relationship.value == "collaboration"
-        and not relationship_provenance.endswith(".collaboration_low_priority")
+    purposeful_piece_evidence = bool(
+        iconic_piece
+        or standalone_design
+        or len(design_concepts) >= 2
+        or category_specific_weak_design
     )
+    collaboration_piece_evidence = bool(
+        iconic_piece
+        or (has_named_collection_context(profile) and independent_design)
+        or (standalone_design and len(design_concepts) >= 2)
+    )
+    if relationship_provenance.endswith(".collaboration_low_priority"):
+        exceptionally_cheap_garment = bool(
+            acquisition_price_jpy is not None
+            and 0 < int(acquisition_price_jpy) <= low_priority_weak_signal_max_price
+            and profile.category
+            and profile.category.value == "menswear"
+            and design_concepts
+        )
+        collaboration_piece_evidence = bool(
+            iconic_piece
+            or (standalone_design and len(design_concepts) >= 2)
+            or exceptionally_cheap_garment
+        )
     substantive = bool(
-        archive_context or design_signals or notable_material or strong_collaboration
+        named_collection
+        or iconic_piece
+        or purposeful_piece_evidence
+        or notable_material
+    )
+    if relationship == "collaboration":
+        substantive = collaboration_piece_evidence
+    strong_piece_quality_evidence = bool(
+        iconic_piece
+        or notable_material
+        or standalone_design
+        or len(design_concepts) >= 2
     )
     quality_floor = bool(
         substantive
         and (
             not generic
-            or archive_context
-            or notable_material
-            or len(design_signals) >= 2
+            or strong_piece_quality_evidence
         )
     )
     is_vintage_band_tee = bool(
@@ -779,9 +1150,9 @@ def assess_directional_opportunity(
         and substantive
         and quality_floor
         and (
-            has_specific_design_evidence(design_signals)
+            purposeful_piece_evidence
             or notable_material
-            or strong_collaboration
+            or (relationship == "collaboration" and collaboration_piece_evidence)
         )
         and not poor_condition
     )
@@ -795,6 +1166,8 @@ def assess_directional_opportunity(
         exceptional_relationship_minimum = (
             exceptional_low_priority_collaboration_minimum_score
         )
+    elif iconic_piece:
+        exceptional_relationship_minimum = exceptional_iconic_minimum_score
     else:
         exceptional_relationship_minimum = exceptional_actionable_minimum_score
     score_is_sufficient = bool(
@@ -827,7 +1200,7 @@ def assess_directional_opportunity(
                 score >= int(config.get("low_priority_collaboration_minimum_score", 88))
                 or (
                     exceptional_acquisition_ok
-                    and has_specific_design_evidence(design_signals)
+                    and collaboration_piece_evidence
                     and score >= exceptional_low_priority_collaboration_minimum_score
                 )
             )
@@ -847,6 +1220,20 @@ def assess_directional_opportunity(
         and profile.product_scope.acquisition_attributable
         and score_is_sufficient
         and (japan_market_ok or absolute_downside_ok or exceptional_acquisition_ok)
+    )
+    is_micro_asymmetry = bool(
+        qualifies
+        and valuation.confidence == "unavailable"
+        and actionable_price is not None
+        and 0 < int(actionable_price) <= micro_asymmetry_max_price
+        and landed_usd is not None
+        and landed_usd <= max_landed
+        and not poor_condition
+        and (
+            purposeful_piece_evidence
+            or notable_material
+            or (relationship == "collaboration" and collaboration_piece_evidence)
+        )
     )
     thesis = "asymmetric_value" if qualifies else None
     if economics.landed_cost_jpy is None:
@@ -873,6 +1260,7 @@ def assess_directional_opportunity(
         japan_median,
         design_signals,
         reasons,
+        micro_asymmetry=is_micro_asymmetry,
     )
 
 
@@ -895,7 +1283,7 @@ def score_desirability(profile: FashionProfile, title: str, condition: str | Non
     if profile.item_type:
         score += 7
         reasons.append(f"identified item type: {profile.item_type.value}")
-    if profile.material and profile.material.value in {"silver", "leather", "mohair", "cashmere"}:
+    if _has_notable_material(profile) and profile.material:
         score += 10
         reasons.append(f"notable material: {profile.material.value}")
     if profile.collaboration:
@@ -923,10 +1311,14 @@ def score_desirability(profile: FashionProfile, title: str, condition: str | Non
     if profile.product_scope.target_role in {"style_reference", "contradicted"}:
         score = 0
         warnings.append("target name is not manufacturer evidence")
-    if profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
+    if profile.product_scope.offer_kind in {
+        "packaging_only",
+        "media_ephemera",
+        "non_fashion",
+    }:
         score = 0
         warnings.append("offer is not the represented fashion product")
-    if _has_poor_condition_evidence(condition):
+    if _has_poor_condition_evidence(condition, title):
         score -= 15
         warnings.append("poor-condition wording")
     if profile.brand and not (profile.era or profile.collection or distinct_signals):

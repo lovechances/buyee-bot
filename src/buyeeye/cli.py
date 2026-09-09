@@ -94,7 +94,9 @@ def _build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--full", action="store_true")
     diagnose = subparsers.add_parser("diagnose-listing")
     diagnose.add_argument("url_or_id")
-    diagnose.add_argument("--source", default="buyee")
+    diagnose.add_argument("--source")
+    benchmark = subparsers.add_parser("benchmark-listings")
+    benchmark.add_argument("input_path")
 
     intel = subparsers.add_parser("intelligence")
     intel_sub = intel.add_subparsers(dest="intelligence_command")
@@ -131,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings()
     db_path = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
-    if args.command not in {"backtest", "diagnose-listing"}:
+    if args.command not in {"backtest", "diagnose-listing", "benchmark-listings"}:
         init_db(db_path)
 
     if args.command == "status":
@@ -149,7 +151,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Last successful scan: {runtime.last_successful_scan or 'never'}")
         print(f"Current/last query: {runtime.current_query or '-'} / {runtime.last_query or '-'}")
         print(f"Consecutive source failures: {runtime.consecutive_source_failures}")
-        print(f"Browser restarts: {runtime.browser_restart_count}")
+        print(
+            "Source/browser retry attempts (cumulative): "
+            f"{runtime.browser_restart_count}"
+        )
         print(
             "Processed listing passes (legacy counter): "
             f"{runtime.unique_listings_scanned}"
@@ -214,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         scanner = settings.get("scanner", {})
         layer_shares = scanner.get("query_layer_shares", {})
         strategy_shares = scanner.get("market_strategy_shares", {})
+        status_settings = settings.get("status", {})
         query_gap = int(scanner.get("query_gap_seconds", 20))
         jitter = int(scanner.get("jitter_seconds", 30))
         max_attempts = int(scanner.get("max_source_attempts", 3))
@@ -292,9 +298,28 @@ def main(argv: list[str] | None = None) -> int:
                         failed=True,
                     )
                     if isinstance(last_error, AuthExpiredError):
-                        record_auth_failure(db_path)
+                        record_auth_failure(
+                            db_path,
+                            confirmation_threshold=int(
+                                status_settings.get("auth_confirmation_threshold", 2)
+                            ),
+                        )
                     else:
-                        record_source_failure(failures, db_path)
+                        record_source_failure(
+                            failures,
+                            db_path,
+                            outage_threshold=int(
+                                status_settings.get("outage_consecutive_failures", 6)
+                            ),
+                            outage_min_duration_minutes=float(
+                                status_settings.get("outage_min_duration_minutes", 15)
+                            ),
+                            notification_cooldown_minutes=float(
+                                status_settings.get(
+                                    "notification_cooldown_minutes", 360
+                                )
+                            ),
+                        )
                     pause = (
                         900 if isinstance(last_error, AuthExpiredError) else min(300, 30 * failures)
                     )
@@ -380,8 +405,15 @@ def main(argv: list[str] | None = None) -> int:
                     getattr(result, "logic_reconsidered", 0),
                     getattr(result, "post_detail_decisions", []),
                 )
-                if result.scanned > 0:
-                    record_scanning_success(db_path)
+                # A completed acquisition is operational success even when a
+                # narrowly filtered marketplace slice legitimately has zero
+                # cards. Parser anomalies raise before reaching this point.
+                record_scanning_success(
+                    db_path,
+                    recovery_confirmation_scans=int(
+                        status_settings.get("recovery_confirmation_scans", 2)
+                    ),
+                )
                 pause = query_gap + random.randint(0, max(0, jitter))
                 for _ in range(pause):
                     if stopping:
@@ -524,6 +556,17 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
         return 0 if report.get("seen") else 1
+
+    if args.command == "benchmark-listings":
+        from .diagnostics import benchmark_listings
+
+        try:
+            report = benchmark_listings(db_path, args.input_path)
+        except ValueError as exc:
+            print(f"benchmark-listings: {exc}")
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return 0 if "invalid_input" not in report["outcomes"] else 1
 
     if args.command == "feedback":
         print(f"Feedback recorded for listing {args.listing_id}: {args.label}")

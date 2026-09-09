@@ -141,8 +141,17 @@ def test_http_search_parser_excludes_non_result_modules_from_fixture():
 
     listings = BuyeeAuthenticatedSource._parse_listing_html(html, "Maison Margiela")
 
-    assert [listing.source_listing_id for listing in listings] == ["d123456789"]
+    assert [listing.source_listing_id for listing in listings] == [
+        "d123456789",
+        "m222222222",
+    ]
     assert listings[0].buyout_price == 8000
+    assert listings[1].title_original == "Maison Margiela reconstructed denim jacket"
+    # URL provenance alone is not a safe module boundary: authenticated
+    # history/recommendation cards can carry DirectSearch or no tag at all.
+    assert {"h123456789", "n123456789", "x123456789"}.isdisjoint(
+        {listing.source_listing_id for listing in listings}
+    )
 
 
 def test_market_universe_keeps_same_keyword_slices_with_distinct_provenance():
@@ -191,6 +200,49 @@ def test_market_universe_keeps_same_keyword_slices_with_distinct_provenance():
         "king_baby",
         "vintage_band_tees",
     }
+
+
+def test_saint_laurent_legacy_aliases_and_market_slices_are_additive():
+    searches = load_yaml(ROOT / "config" / "searches.yaml")
+    taxonomy = load_yaml(ROOT / "config" / "fashion_taxonomy.yaml")
+    market = load_yaml(ROOT / "config" / "market_structure.yaml")
+
+    universe = build_query_universe(searches, taxonomy, market)
+    saint_laurent = [spec for spec in universe if spec.family == "saint_laurent"]
+    broad_queries = {spec.query for spec in saint_laurent if spec.query_layer == "broad"}
+
+    assert {
+        "Saint Laurent Paris",
+        "YSL エディ",
+        "Yves Saint Laurent",
+        "サンローラン",
+        "サンローランパリ",
+        "イヴ・サンローラン",
+        "イヴサンローラン",
+        "イブサンローラン",
+    } <= broad_queries
+
+    old_label_jacket = enrich_title("YVES SAINT LAURENT◆ジャケット/S/ウール")
+    old_label_boots = enrich_title("イヴ・サンローラン サイドゴアブーツ 25.5cm")
+    assert old_label_jacket.brand and old_label_jacket.brand.value == "Saint Laurent"
+    assert old_label_boots.brand and old_label_boots.brand.value == "Saint Laurent"
+    assert old_label_boots.item_type and old_label_boots.item_type.value == "footwear"
+
+    market_specs = [spec for spec in saint_laurent if spec.query_layer == "market_structure"]
+    modern = [spec for spec in market_specs if spec.query == "Saint Laurent Paris"]
+    legacy = [spec for spec in market_specs if spec.query == "Yves Saint Laurent"]
+
+    assert {spec.search_filters.category_group for spec in modern if spec.search_filters} == {
+        "mens_fashion",
+        "mens_shoes",
+    }
+    assert {spec.search_filters.category_group for spec in legacy if spec.search_filters} == {
+        "mens_fashion",
+        "mens_shoes",
+    }
+    assert all(spec.strategy_id.startswith("saint_laurent.") for spec in modern)
+    assert all(spec.strategy_id.startswith("saint_laurent_legacy.") for spec in legacy)
+    assert len({spec.runtime_identity for spec in market_specs}) == len(market_specs)
 
 
 def test_discovery_price_ceiling_never_becomes_fmv_or_changes_economics():

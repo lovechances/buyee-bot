@@ -1389,10 +1389,10 @@ def test_time_migration_archive_opportunity_routes_with_seller_warning():
     assert evaluation.japan_comps.median_jpy == 25_000
     assert evaluation.directional.thesis is None
     assert evaluation.auction_maturity.level == "low"
-    assert _route_evaluation(listing, evaluation) == (
-        "grails",
-        "early archive discovery; current bid is provisional",
-    )
+    route = _route_evaluation(listing, evaluation)
+    assert route and route[0] == "grails"
+    assert "Time Migration" in route[1]
+    assert "provisional" in route[1]
 
 
 def test_cheap_desirable_margiela_can_route_without_us_fmv():
@@ -1458,7 +1458,7 @@ def test_enriched_core_buyout_keeps_identity_and_directional_value_separate_from
     assert evaluation.identity.confidence == "high"
     assert evaluation.valuation.confidence == "unavailable"
     assert evaluation.economics.opportunity_score == 0
-    assert evaluation.directional.confidence == "high"
+    assert evaluation.directional.confidence == "low"
     assert evaluation.directional.thesis is None
     assert evaluation.directional.discovery_price_fraction is None
     assert _route_evaluation(listing, evaluation) is None
@@ -2034,10 +2034,10 @@ def test_archive_grail_can_route_without_resale_proof():
 
     assert evaluation.economics.resale_median_jpy is None
     assert evaluation.desirability.score >= 82
-    assert _route_evaluation(listing, evaluation) == (
-        "grails",
-        "early archive discovery; current bid is provisional",
-    )
+    route = _route_evaluation(listing, evaluation)
+    assert route and route[0] == "grails"
+    assert "A Closed Feeling" in route[1]
+    assert "provisional" in route[1]
 
 
 def test_named_archive_piece_can_survive_without_exact_us_value_or_cheap_price():
@@ -2069,10 +2069,10 @@ def test_named_archive_piece_can_survive_without_exact_us_value_or_cheap_price()
     assert evaluation.valuation.confidence == "unavailable"
     assert evaluation.directional.thesis is None
     assert evaluation.desirability.score < 82
-    assert _route_evaluation(listing, evaluation) == (
-        "grails",
-        "strong named archive identity and piece-specific evidence",
-    )
+    route = _route_evaluation(listing, evaluation)
+    assert route and route[0] == "grails"
+    assert "Time Migration" in route[1]
+    assert "shirt" in route[1]
 
 
 def test_bondage_construction_can_support_named_archive_discovery():
@@ -2314,7 +2314,7 @@ def test_controlled_query_universe_has_provenance_without_cartesian_explosion():
     universe = build_query_universe(searches, taxonomy)
     query_text = {spec.query.casefold() for spec in universe}
 
-    assert len(universe) < 300
+    assert len(universe) < len(taxonomy["brands"]) * 10
     assert len(query_text) == len(universe)
     assert all(
         spec.provenance
@@ -2779,7 +2779,9 @@ def test_early_archive_watch_omits_provisional_flip_economics(monkeypatch):
     embed = captured["embeds"][0]
     rendered = " ".join(field["value"] for field in embed["fields"])
 
-    assert route == ("grails", "early archive discovery; current bid is provisional")
+    assert route and route[0] == "grails"
+    assert "A Closed Feeling" in route[1]
+    assert "provisional" in route[1]
     assert evaluation.economics.multiple is None
     assert "ARCHIVE WATCH" in embed["description"]
     assert "EARLY AUCTION" in rendered

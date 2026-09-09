@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -36,6 +37,8 @@ _PAGINATION_PAGE_PATTERN = re.compile(
     r'''["']?page["']?\s*:\s*["']?(\d+)["']?''',
     flags=re.IGNORECASE,
 )
+
+_PRIMARY_SEARCH_CARD_SELECTOR = ".g-main > ul.auctionSearchResult > li.itemCard"
 
 
 def _bound_page_number(data_bind: str | None) -> int | None:
@@ -210,12 +213,13 @@ class BuyeeAuthenticatedSource(ListingSource):
                 await page.goto("https://buyee.jp/", wait_until="domcontentloaded", timeout=45000)
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(8000)
-                listing_script = """
+                primary_card_selector = json.dumps(_PRIMARY_SEARCH_CARD_SELECTOR)
+                listing_script = (
+                    """
                     () => {
-                      const resultLinks = Array.from(document.querySelectorAll(
-                        'a[href*="/item/jdirectitems/auction/"]'
+                      const cards = Array.from(document.querySelectorAll(
+                        __PRIMARY_SEARCH_CARD_SELECTOR__
                       ));
-                      const cards = [...new Set(resultLinks.map(a => a.closest('li')).filter(Boolean))];
                       return cards.map(card => {
                         const links = Array.from(card.querySelectorAll(
                           'a[href*="/item/jdirectitems/auction/"]'
@@ -244,11 +248,16 @@ class BuyeeAuthenticatedSource(ListingSource):
                       }).filter(x => x.href).slice(0, 500);
                     }
                     """
-                card_signature_script = """
-                    () => [...new Set(Array.from(document.querySelectorAll(
-                      'a[href*="/item/jdirectitems/auction/"]'
-                    )).map(a => a.href))].slice(0, 30).join('|')
+                ).replace("__PRIMARY_SEARCH_CARD_SELECTOR__", primary_card_selector)
+                card_signature_script = (
                     """
+                    () => [...new Set(Array.from(document.querySelectorAll(
+                      __PRIMARY_SEARCH_CARD_SELECTOR__
+                    )).flatMap(card => Array.from(card.querySelectorAll(
+                      'a[href*="/item/jdirectitems/auction/"]'
+                    )).map(a => a.href)))].slice(0, 30).join('|')
+                    """
+                ).replace("__PRIMARY_SEARCH_CARD_SELECTOR__", primary_card_selector)
                 all_rows: list[dict[str, Any]] = []
                 current_page = 1
                 seen_page_signatures: set[str] = set()
@@ -306,20 +315,25 @@ class BuyeeAuthenticatedSource(ListingSource):
                     before_signature = await page.evaluate(card_signature_script)
                     try:
                         await next_link.click(timeout=15000)
-                        await page.wait_for_function(
+                        page_advance_script = (
                             """
                             ({ expected, before }) => {
                               const current = document.querySelector(
                                 'nav.search_page_navi .page_navi .current'
                               )?.textContent?.trim();
                               const signature = [...new Set(Array.from(document.querySelectorAll(
+                                __PRIMARY_SEARCH_CARD_SELECTOR__
+                              )).flatMap(card => Array.from(card.querySelectorAll(
                                 'a[href*="/item/jdirectitems/auction/"]'
-                              )).map(a => a.href))].slice(0, 30).join('|');
+                              )).map(a => a.href)))].slice(0, 30).join('|');
                               return current === String(expected)
                                 && Boolean(signature)
                                 && signature !== before;
                             }
-                            """,
+                            """
+                        ).replace("__PRIMARY_SEARCH_CARD_SELECTOR__", primary_card_selector)
+                        await page.wait_for_function(
+                            page_advance_script,
                             arg={"expected": next_page, "before": before_signature},
                             timeout=30000,
                         )
@@ -547,12 +561,7 @@ class BuyeeAuthenticatedSource(ListingSource):
     def _parse_listing_html(html: str, query: str | None = None) -> list[LiveListing]:
         soup = BeautifulSoup(html, "lxml")
         rows: list[dict[str, Any]] = []
-        seen_cards: set[int] = set()
-        for anchor in soup.select("a[href*='/item/jdirectitems/auction/']"):
-            card = anchor.find_parent("li")
-            if card is None or id(card) in seen_cards:
-                continue
-            seen_cards.add(id(card))
+        for card in soup.select(_PRIMARY_SEARCH_CARD_SELECTOR):
             links = card.select("a[href*='/item/jdirectitems/auction/']")
             title_link = card.select_one(
                 ".itemCard__itemName a[href*='/item/jdirectitems/auction/']"

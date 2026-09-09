@@ -157,6 +157,7 @@ def test_browser_pagination_never_clicks_beyond_page_budget(
 
         async def wait_for_function(self, expression, *, arg=None, timeout=None):
             assert "expected" in expression
+            assert ".g-main > ul.auctionSearchResult > li.itemCard" in expression
             assert arg == {
                 "expected": self.current_page,
                 "before": f"signature-page-{self.current_page - 1}",
@@ -164,7 +165,8 @@ def test_browser_pagination_never_clicks_beyond_page_budget(
             assert timeout == 30_000
 
         async def evaluate(self, script):
-            if "const resultLinks" in script:
+            assert ".g-main > ul.auctionSearchResult > li.itemCard" in script
+            if "const cards = Array.from" in script:
                 listing_id = f"p{self.current_page}00000001"
                 return [
                     {

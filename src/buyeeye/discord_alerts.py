@@ -125,6 +125,8 @@ def alert_thesis(route: str, evaluation: Any) -> str:
         and evaluation.economics.comp_confidence in {"medium", "high"}
     ):
         return "verified_arbitrage"
+    if getattr(evaluation.directional, "micro_asymmetry", False):
+        return "micro_asymmetry"
     if evaluation.directional.thesis == "asymmetric_value":
         return "asymmetric_value"
     return "archive_grail"
@@ -298,9 +300,19 @@ def _concise_why(reason: str, *, early_auction: bool) -> str:
         clauses = [
             clause
             for clause in clauses
-            if clause.casefold() not in {"current bid is provisional", "auction is immature"}
+            if "provisional" not in clause.casefold()
+            and clause.casefold() != "auction is immature"
         ]
     return _short("; ".join(clause for clause in clauses if clause) or "Human review recommended", 180)
+
+
+def _size_label(listing: Any, evaluation: Any) -> str | None:
+    profile_size = _nested(evaluation, "profile", "size", "value")
+    if profile_size:
+        return _short(profile_size, 28)
+    observed = _nested(listing, "raw", "stage_b", "observed") or {}
+    size = _read(observed, "size_original")
+    return _short(size, 28) if size else None
 
 
 def build_listing_alert_payload(
@@ -390,6 +402,9 @@ def build_listing_alert_payload(
         identity_confidence = _identity_confidence(evaluation)
         if identity_confidence:
             signal_parts.append(f"Identity {identity_confidence}")
+        size = _size_label(listing, evaluation)
+        if size:
+            signal_parts.append(f"Size {size}")
         relationship = _relationship_label(evaluation)
         if relationship:
             signal_parts.append(f"Relationship {relationship}")

@@ -193,6 +193,7 @@ def _case_result(case: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
             "directional_score": evaluation.directional.score,
             "directional_confidence": evaluation.directional.confidence,
             "directional_thesis": evaluation.directional.thesis,
+            "micro_asymmetry": evaluation.directional.micro_asymmetry,
             "exact_valuation_confidence": evaluation.valuation.confidence,
             "us_valuation_state": evaluation.directional.us_valuation_state,
             "japan_market_confidence": (

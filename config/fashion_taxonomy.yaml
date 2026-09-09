@@ -10,6 +10,7 @@ product_scope_terms:
   packaging_only: ["box only", "empty box", "dust bag only", "case only", "本体なし", "箱のみ", "空箱", "保存袋のみ", "ケースのみ", "付属品のみ"]
   container_products: ["sunglasses case", "eyewear case", "eyeglass case", "glasses case", "サングラスケース", "アイウェアケース", "メガネケース", "眼鏡ケース"]
   media_ephemera: ["blu-ray", "bluray", "dvd", "vhs", "cd", "photo book", "photobook", "lookbook", "catalogue", "catalog", "magazine", "book", "pamphlet", "ブルーレイ", "写真集", "ルックブック", "カタログ", "雑誌", "書籍", "冊子", "パンフレット"]
+  automotive_non_fashion: ["steering wheel cover", "steering-wheel cover", "steering wheel", "steering-wheel", "automotive interior trim", "automotive trim", "vehicle interior trim", "vehicle trim", "car interior trim", "car trim", "dashboard trim", "door trim", "automotive parts", "automotive part", "vehicle parts", "vehicle part", "car parts", "car part", "automotive accessories", "automotive accessory", "vehicle accessories", "vehicle accessory", "car accessories", "car accessory", "gear shift knob", "shift knob", "ステアリングホイール", "ステアリングカバー", "車用ステアリング", "ステアリング", "車用ハンドル", "カーパーツ", "カー用品", "車用品", "自動車部品", "車両部品", "車用内装パーツ", "車内装パーツ", "内装パーツ", "内装トリム", "ドアトリム", "シフトノブ"]
 
 brands:
   number_nine:
@@ -72,7 +73,7 @@ brands:
     generic_signals: ["dior logo", "basic tee"]
   saint_laurent:
     canonical: "Saint Laurent"
-    aliases: ["saint laurent", "saint laurent paris", "ysl", "サンローラン", "サンローランパリ"]
+    aliases: ["saint laurent", "saint laurent paris", "ysl", "サンローラン", "サンローランパリ", "yves saint laurent", "イヴ・サンローラン", "イヴサンローラン", "イブサンローラン"]
     designer: "Hedi Slimane"
     eras:
       hedi_slimane: ["hedi", "エディ", "2013", "2014", "2015", "2016"]
@@ -82,6 +83,34 @@ brands:
       - {terms: ["blood luster", "babycat", "surf sound"], item_types: ["t_shirt", "shirt", "jacket", "footwear"]}
     strong_signals: ["blood luster", "babycat", "surf sound", "teddy", "wyatt", "runway"]
     generic_signals: ["logo tee", "basic tee"]
+  celine:
+    canonical: "Celine"
+    aliases: ["celine homme", "celine", "céline", "セリーヌ"]
+    designer: "Hedi Slimane"
+    eras:
+      hedi_slimane: ["hedi slimane", "エディ・スリマン", "エディスリマン", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]
+    menswear_categories: ["jacket", "coat", "shirt", "t_shirt", "knitwear", "denim", "trousers", "footwear", "bag", "belt", "wallet", "accessory"]
+    collections:
+      - name: "The Dancing Kid"
+        terms: ["the dancing kid", "dancing kid", "21ss", "ss21"]
+      - name: "Teen Knight Poem"
+        terms: ["teen knight poem", "21aw", "aw21", "fw21"]
+      - name: "Cosmic Cruiser"
+        terms: ["cosmic cruiser", "22ss", "ss22"]
+    iconic_signals:
+      - {terms: ["jacno", "camargue"], item_types: ["footwear"]}
+    strong_signals: ["jacno", "camargue", "western", "studded", "leopard", "python", "flared", "embroidered"]
+    generic_signals: ["logo tee", "basic tee"]
+  christian_louboutin:
+    canonical: "Christian Louboutin"
+    aliases: ["christian louboutin", "louboutin", "クリスチャンルブタン", "ルブタン"]
+    designer: "Christian Louboutin"
+    menswear_categories: ["footwear", "bag", "belt", "wallet", "accessory"]
+    iconic_signals:
+      - {terms: ["rollerboy", "louis orlato", "dandelion", "greggo", "rantus", "rantulow"], item_types: ["footwear"]}
+    strong_signals: ["red sole", "rollerboy", "louis orlato", "dandelion", "greggo", "rantus", "rantulow", "spikes", "studded"]
+    generic_signals: ["logo card holder", "logo keyring"]
+    auth_sensitive: true
   rick_owens:
     canonical: "Rick Owens"
     aliases: ["rick owens", "drkshdw", "リックオウエンス", "ダークシャドウ"]
@@ -287,13 +316,13 @@ item_types:
   hoodie: ["hoodie", "hooded sweatshirt", "sweatshirt", "sweat shirt", "hooded", "パーカー", "フーディ", "スウェット", "トレーナー"]
   t_shirt: ["t-shirt", "t shirt", "tshirt", "tee", "long sleeve tee", "tシャツ", "カットソー", "ロンT"]
   shirt: ["shirt", "button-up", "button up", "button-down", "button down", "open collar", "シャツ", "開襟"]
-  denim: ["denim", "jeans", "jean", "デニム", "ジーンズ", "Gパン"]
+  denim: ["denim", "jeans", "デニム", "ジーンズ", "Gパン"]
   trousers: ["sweatpants", "sweat pants", "sweats", "pants", "trousers", "trouser", "slacks", "cargo pants", "shorts", "スウェットパンツ", "パンツ", "スラックス", "カーゴ", "ショーツ", "ボトムス"]
-  footwear: ["engineer boots", "boots", "boot", "sneaker", "shoes", "loafer", "derby", "sandals", "エンジニアブーツ", "ブーツ", "スニーカー", "シューズ", "ローファー", "サンダル"]
+  footwear: ["engineer boots", "chelsea boots", "side-gore boots", "boots", "boot", "sneakers", "sneaker", "shoes", "loafer", "derby", "sandals", "エンジニアブーツ", "サイドゴアブーツ", "ブーツ", "スニーカー", "シューズ", "ローファー", "サンダル"]
   bag: ["shoulder bag", "crossbody bag", "tote bag", "backpack", "duffle bag", "briefcase", "bag", "ショルダーバッグ", "トートバッグ", "バックパック", "ブリーフケース", "バッグ", "鞄", "リュック"]
   belt: ["belt", "ベルト"]
   wallet: ["wallet", "card holder", "card case", "coin case", "財布", "カードケース", "コインケース"]
-  accessory: ["keyholder", "scarf", "hat", "cap", "tie", "gloves", "sunglasses", "キーホルダ", "スカーフ", "帽子", "キャップ", "ネクタイ", "手袋", "サングラス"]
+  accessory: ["keyholder", "scarf", "hat", "cap", "necktie", "tie", "gloves", "sunglasses", "キーホルダ", "スカーフ", "帽子", "キャップ", "ネクタイ", "手袋", "サングラス"]
 
 materials:
   silver: ["sterling silver", "silver", "sterling", "sv925", "s925", "925", "シルバー", "銀製"]

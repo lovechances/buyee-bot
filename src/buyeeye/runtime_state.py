@@ -331,6 +331,10 @@ def choose_query(
             shares[layer] = float(value)
     runs_by_layer: dict[str, int] = {}
     runs_by_strategy: dict[str, int] = {}
+    runs_by_family: dict[str, int] = {}
+    active_runs_by_layer: dict[str, int] = {}
+    active_runs_by_strategy: dict[str, int] = {}
+    lateness_cycles_by_identity: dict[str, float] = {}
     exploration_samples_by_identity: dict[str, int] = {}
     with get_session(db_path) as session:
         recent = session.exec(
@@ -346,18 +350,33 @@ def choose_query(
                 runs_by_strategy[event.strategy_type] = (
                     runs_by_strategy.get(event.strategy_type, 0) + 1
                 )
+            # A failed parser/source attempt consumed capacity for quota
+            # accounting, but it did not actually cover that family.
+            if event.family and not event.failed:
+                runs_by_family[event.family] = runs_by_family.get(event.family, 0) + 1
         for spec in specs:
             row = session.get(QueryRuntimeState, _query_key(spec))
+            if row:
+                active_runs_by_layer[spec.query_layer] = (
+                    active_runs_by_layer.get(spec.query_layer, 0) + row.runs
+                )
+                if spec.strategy_type:
+                    active_runs_by_strategy[spec.strategy_type] = (
+                        active_runs_by_strategy.get(spec.strategy_type, 0) + row.runs
+                    )
+            runs = row.runs if row else 0
+            # Retain sample state for temporarily ineligible specs so the
+            # scheduler can see that the last run consumed a bootstrap slot.
+            exploration_samples_by_identity[spec.runtime_identity] = min(2, runs)
             if row and row.next_eligible_at:
                 eligible = row.next_eligible_at
                 if eligible.tzinfo is None:
                     eligible = eligible.replace(tzinfo=UTC)
                 if eligible > current:
                     continue
-            runs = row.runs if row else 0
-            exploration_samples_by_identity[spec.runtime_identity] = min(2, runs)
             exploration = 8 / (1 + runs)
             staleness = 0.0
+            lateness_cycles = 0.0
             if row and row.last_run_at:
                 last_run = row.last_run_at
                 if last_run.tzinfo is None:
@@ -367,6 +386,8 @@ def choose_query(
                     (current - last_run).total_seconds() / 60 - spec.cooldown_minutes,
                 )
                 staleness = min(4.0, overdue_minutes / max(1, spec.cooldown_minutes))
+                lateness_cycles = overdue_minutes / max(1, spec.cooldown_minutes)
+            lateness_cycles_by_identity[spec.runtime_identity] = lateness_cycles
             ranked.setdefault(spec.query_layer, []).append(
                 (spec.priority + _adaptive_priority(row) + exploration + staleness, spec)
             )
@@ -387,6 +408,7 @@ def choose_query(
         ),
     )
     candidates = ranked[selected_layer]
+    selected_type: str | None = None
     if selected_layer == "market_structure":
         by_strategy: dict[str, list[tuple[float, QuerySpec]]] = {}
         for candidate in candidates:
@@ -427,13 +449,97 @@ def choose_query(
         for item in candidates
     )
     if minimum_samples < 2:
-        candidates = [
+        under_sampled = [
             item
             for item in candidates
             if exploration_samples_by_identity.get(item[1].runtime_identity, 0)
             == minimum_samples
         ]
-    return max(candidates, key=lambda item: item[0])[1]
+        established = [
+            item
+            for item in candidates
+            if exploration_samples_by_identity.get(item[1].runtime_identity, 0) >= 2
+        ]
+
+        def event_matches_spec(event: ScanEvent, spec: QuerySpec) -> bool:
+            if event.family != spec.family or event.query != spec.query:
+                return False
+            if event.strategy_id and spec.strategy_id:
+                return event.strategy_id == spec.strategy_id
+            return True
+
+        recent_bucket = [
+            event
+            for event in recent
+            if event.query_layer == selected_layer
+            and (selected_type is None or event.strategy_type == selected_type)
+        ]
+        last_was_exploration = bool(
+            recent_bucket
+            and any(
+                event_matches_spec(recent_bucket[0], spec)
+                and exploration_samples_by_identity.get(spec.runtime_identity, 0) < 2
+                and spec.query_layer == selected_layer
+                and (selected_type is None or spec.strategy_type == selected_type)
+                for spec in specs
+            )
+        )
+        # New strategies get a bounded alternating bootstrap rather than
+        # freezing every established query in the bucket for a day or more.
+        candidates = (
+            established
+            if established and last_was_exploration
+            else under_sampled
+        )
+    # Layer/type quotas prevent one discovery philosophy from taking over, but
+    # they do not by themselves stop a high-priority family with many aliases
+    # from monopolizing each bucket. Reserve a bounded rolling exploration
+    # floor for eligible families absent from the recent allocation window.
+    # This changes query choice only; it never changes listing scores/routes.
+    uncovered = [
+        item for item in candidates if runs_by_family.get(item[1].family, 0) == 0
+    ]
+    if uncovered:
+        candidates = uncovered
+    # Priority should decide normal cadence, not permit permanent starvation.
+    # Once an already-sampled query has waited three full cooldowns beyond its
+    # eligible time, service the most overdue slice within the selected quota
+    # bucket. This is bounded aging, not equal weighting or a yield reset.
+    critically_overdue = [
+        item
+        for item in candidates
+        if exploration_samples_by_identity.get(item[1].runtime_identity, 0) >= 2
+        and lateness_cycles_by_identity.get(item[1].runtime_identity, 0.0) >= 3.0
+    ]
+    bucket_run_clock = (
+        active_runs_by_strategy.get(selected_type, 0)
+        if selected_type
+        else active_runs_by_layer.get(selected_layer, 0)
+    )
+    force_overdue_service = bool(
+        critically_overdue and bucket_run_clock % 2 == 0
+    )
+    if force_overdue_service:
+        candidates = critically_overdue
+    highest_family_runs = max(
+        (runs_by_family.get(item[1].family, 0) for item in candidates),
+        default=0,
+    )
+
+    def family_balanced_score(item: tuple[float, QuerySpec]) -> float:
+        family_runs = runs_by_family.get(item[1].family, 0)
+        coverage_debt = min(8.0, max(0, highest_family_runs - family_runs) * 2.0)
+        return item[0] + coverage_debt
+
+    return max(
+        candidates,
+        key=lambda item: (
+            lateness_cycles_by_identity.get(item[1].runtime_identity, 0.0)
+            if force_overdue_service
+            else family_balanced_score(item),
+            family_balanced_score(item),
+        ),
+    )[1]
 
 
 def record_query_result(

@@ -61,10 +61,12 @@ class StageAAssessment:
 
 
 PATH_ORDER = {
-    "silver_jewelry": 5,
-    "market_buyout_inspection": 4,
-    "ending_auction": 3,
-    "semantic_archive": 2,
+    "silver_jewelry": 7,
+    "market_buyout_inspection": 6,
+    "ending_auction": 5,
+    "semantic_archive": 4,
+    "semantic_closet_inspection": 3,
+    "identity_recovery": 2,
     "unknown_interesting": 1,
 }
 
@@ -178,6 +180,16 @@ def assess_stage_a(
     silver_minimum_heat = int(config.get("silver_minimum_heat", 30))
     unknown_absolute_max = int(config.get("unknown_absolute_buyout_max_jpy", 10_000))
     unknown_max_fraction = float(config.get("unknown_max_band_fraction", 0.40))
+    semantic_minimum_heat = int(config.get("semantic_inspection_minimum_heat", 12))
+    semantic_buyout_max = int(
+        config.get("semantic_inspection_max_buyout_jpy", 30_000)
+    )
+    semantic_bid_max = int(
+        config.get("semantic_inspection_max_current_bid_jpy", 25_000)
+    )
+    identity_recovery_max = int(
+        config.get("identity_recovery_max_actionable_jpy", 40_000)
+    )
 
     profile = evaluation.profile
     heat = evaluation.desirability.score
@@ -187,6 +199,14 @@ def assess_stage_a(
     item_confident = bool(profile.item_type and profile.item_type.confidence >= 0.80)
     category_valid = category_is_valid(listing, evaluation, spec)
     actionable = evaluation.auction_maturity.price_actionable
+    actionable_kind = evaluation.auction_maturity.actionable_price_kind
+    actionable_price = (
+        getattr(listing, "buyout_price", None)
+        if actionable_kind == "buyout"
+        else getattr(listing, "current_price", None)
+        if actionable_kind == "current_bid"
+        else None
+    )
     in_band, band_fraction, contextual_price = _discovery_price_context(listing, spec)
     is_market = spec.query_layer == "market_structure"
     buyout_fits_context, buyout_fraction = _actionable_buyout_context(listing, spec)
@@ -227,6 +247,7 @@ def assess_stage_a(
         or evaluation.directional.piece_signals
     )
     market_card_relevance = item_confident or heat >= market_minimum_heat
+    semantic_inspection = spec.query_layer in {"broad", "medium"}
 
     paths: list[str] = []
     reasons: list[str] = []
@@ -284,6 +305,47 @@ def assess_stage_a(
         paths.append("ending_auction")
         reasons.append("target-brand mature auction inside its discovery band")
 
+    semantic_price_ok = bool(
+        actionable_price is not None
+        and (
+            actionable_kind == "buyout" and actionable_price <= semantic_buyout_max
+            or actionable_kind == "current_bid" and actionable_price <= semantic_bid_max
+        )
+    )
+    if (
+        semantic_inspection
+        and confirmed
+        and target_match
+        and category_valid
+        and item_confident
+        and actionable
+        and semantic_price_ok
+        and heat >= semantic_minimum_heat
+        and heat < archive_threshold
+        and not profile.auth_sensitive
+        and not generic_or_junk
+        and not hard_veto
+        and not homage_or_reference
+    ):
+        paths.append("semantic_closet_inspection")
+        reasons.append("bounded actionable semantic closet inspection")
+
+    if (
+        spec.query_layer == "broad"
+        and confirmed
+        and target_match
+        and actionable
+        and actionable_price is not None
+        and actionable_price <= identity_recovery_max
+        and (not item_confident or not category_valid)
+        and not profile.auth_sensitive
+        and not generic_or_junk
+        and not hard_veto
+        and not homage_or_reference
+    ):
+        paths.append("identity_recovery")
+        reasons.append("bounded full-title/category recovery for an incomplete brand card")
+
     buyout = getattr(listing, "buyout_price", None)
     unusually_low = bool(
         buyout is not None
@@ -324,6 +386,12 @@ def assess_stage_a(
     priority += 4 if is_market else 0
     priority += min(8, 2 * len(evaluation.directional.piece_signals))
     priority += relationship_adjustment
+    dedupe = (getattr(listing, "raw", None) or {}).get("dedupe", {})
+    if dedupe.get("lifetime_first_seen"):
+        priority += 16
+        reasons.append("lifetime-first listing gets bounded inspection priority")
+    elif dedupe.get("revisit_reason") == "candidate_rotation":
+        priority -= 4
     if in_band and band_fraction is not None:
         priority += max(0.0, 10.0 * (1.0 - min(1.0, band_fraction)))
     if generic_or_junk:
@@ -336,7 +404,11 @@ def assess_stage_a(
         reject_reason = "severe_auth_veto"
     elif profile.product_scope.target_role in {"style_reference", "contradicted"}:
         reject_reason = "target_identity_mismatch"
-    elif profile.product_scope.offer_kind in {"packaging_only", "media_ephemera"}:
+    elif profile.product_scope.offer_kind in {
+        "packaging_only",
+        "media_ephemera",
+        "non_fashion",
+    }:
         reject_reason = "offer_scope_mismatch"
     elif profile.product_scope.audience in {"womens", "kids"}:
         reject_reason = "category_mismatch"
@@ -407,6 +479,8 @@ def select_stage_a_candidates(
     path_caps = {
         "unknown_interesting": 1,
         "silver_jewelry": 2,
+        "semantic_closet_inspection": 1,
+        "identity_recovery": 1,
         **configured_path_caps,
     }
     ranked = sorted(

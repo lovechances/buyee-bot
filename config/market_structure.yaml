@@ -82,6 +82,23 @@ market_families:
     priority_adjustment: 3
     categories:
       - {group: mens_fashion, profile: standard, intents: [buyout, ending]}
+      - {group: mens_shoes, profile: standard, intents: [buyout, ending]}
+      - {group: mens_fashion, profile: standard, intents: [buyout, ending], query: "Yves Saint Laurent", strategy_key: saint_laurent_legacy}
+      - {group: mens_shoes, profile: standard, intents: [buyout, ending], query: "Yves Saint Laurent", strategy_key: saint_laurent_legacy}
+
+  - family: celine
+    query: "CELINE HOMME"
+    priority_adjustment: 3
+    categories:
+      - {group: mens_fashion, profile: luxury, intents: [buyout, ending, price_band]}
+      - {group: mens_shoes, profile: luxury, intents: [buyout, ending]}
+
+  - family: christian_louboutin
+    query: "Christian Louboutin メンズ"
+    priority_adjustment: 1
+    categories:
+      - {group: mens_shoes, profile: premium, intents: [buyout, ending, price_band]}
+      - {group: mens_fashion_goods, profile: standard, intents: [buyout]}
 
   - family: vetements
     query: "Vetements"
@@ -130,6 +147,7 @@ market_families:
     priority_adjustment: 1
     categories:
       - {group: mens_fashion, profile: luxury, intents: [buyout, ending]}
+      - {group: mens_shoes, profile: luxury, intents: [buyout, ending]}
 
   - family: prada
     query: "Prada"

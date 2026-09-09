@@ -893,6 +893,109 @@ def test_included_packaging_and_box_logo_do_not_hide_the_actual_product() -> Non
     assert box_logo.product_scope.acquisition_attributable
 
 
+def test_jean_paul_gaultier_name_does_not_supply_denim_evidence() -> None:
+    brand_only = enrich_title("Jean Paul Gaultier Homme archive piece")
+    jacket = enrich_title("Jean Paul Gaultier Homme jean jacket")
+    jeans = enrich_title("Jean Paul Gaultier Homme jeans")
+    denim = enrich_title("Jean Paul Gaultier Homme denim")
+
+    assert brand_only.brand and brand_only.brand.value == "Jean Paul Gaultier"
+    assert brand_only.item_type is None
+    assert jacket.item_type and jacket.item_type.value == "jacket"
+    assert jeans.item_type and jeans.item_type.value == "denim"
+    assert denim.item_type and denim.item_type.value == "denim"
+
+
+def test_necktie_is_recognized_as_an_accessory() -> None:
+    english = enrich_title("Jean Paul Gaultier patterned necktie")
+    japanese = enrich_title("ジャンポールゴルチエ ネクタイ")
+
+    assert english.item_type and english.item_type.value == "accessory"
+    assert japanese.item_type and japanese.item_type.value == "accessory"
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Prada leather steering wheel belt trim accessory",
+        "Prada car interior trim accessory",
+        "Prada vehicle parts leather trim",
+        "Prada 車用ステアリング レザー ベルト",
+        "Prada 純正ステアリング レザー",
+        "Prada カーパーツ 内装トリム",
+        "Prada シフトノブ レザー",
+    ),
+)
+def test_automotive_offer_phrases_are_hard_non_fashion_scope(title: str) -> None:
+    listing = _listing(title, price=3_500, buyout=3_500)
+    evaluation = evaluate_listing(listing)
+    scope = evaluation.profile.product_scope
+
+    assert scope.offer_kind == "non_fashion"
+    assert scope.hard_non_target
+    assert not scope.acquisition_attributable
+    assert evaluation.economics.landed_cost_jpy is None
+    assert evaluation.directional.thesis is None
+
+
+@pytest.mark.parametrize(
+    "hierarchy",
+    (
+        ("Auction", "Automotive", "Interior Parts"),
+        ("Auction", "Auto Parts & Accessories", "Other"),
+        ("Auction", "Automobiles, Motorcycles", "Car Parts", "Interior"),
+        ("オークション", "自動車、オートバイ", "パーツ", "内装品"),
+    ),
+)
+def test_authoritative_automotive_category_rejects_keyword_stuffed_fashion_title(
+    hierarchy: tuple[str, ...],
+) -> None:
+    profile = enrich_title(
+        "Prada leather belt trim accessory",
+        category_hierarchy=hierarchy,
+    )
+
+    assert profile.product_scope.offer_kind == "non_fashion"
+    assert profile.product_scope.hard_non_target
+    assert not profile.product_scope.acquisition_attributable
+
+
+@pytest.mark.parametrize(
+    ("title", "hierarchy"),
+    (
+        (
+            "Undercover vintage car graphic t-shirt",
+            ("Auction", "Fashion", "Men", "T-shirts"),
+        ),
+        (
+            "Number (N)ine steering wheel print t-shirt",
+            ("Auction", "Fashion", "Men", "T-shirts"),
+        ),
+        (
+            "UNDERCOVER 車用ステアリング グラフィック Tシャツ",
+            ("オークション", "ファッション", "メンズ", "Tシャツ"),
+        ),
+        (
+            "Prada automotive trim inspired graphic jacket",
+            ("Auction", "Fashion", "Men", "Jackets"),
+        ),
+        (
+            "Prada contrast leather trim car coat",
+            ("Auction", "Fashion", "Men", "Coats"),
+        ),
+    ),
+)
+def test_car_references_on_fashion_products_remain_products(
+    title: str,
+    hierarchy: tuple[str, ...],
+) -> None:
+    profile = enrich_title(title, category_hierarchy=hierarchy)
+
+    assert profile.product_scope.offer_kind == "product"
+    assert not profile.product_scope.hard_non_target
+    assert profile.product_scope.acquisition_attributable
+
+
 def test_collection_dvd_with_keyword_stuffed_garment_terms_is_media_ephemera() -> None:
     listing = _listing(
         "09AWナンバーナイン a closed feeling コレクション DVD number nine "
@@ -1074,3 +1177,299 @@ def test_stage_b_failure_cannot_route_high_heat_listing_as_grail_or_ending() -> 
         "grails",
         "ending",
     }
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Dior Homme patterned silk necktie",
+        "Miu Miu leather bifold wallet",
+        "Saint Laurent tailored blazer",
+        "Christian Louboutin leather derby shoes",
+    ),
+)
+def test_ordinary_accessory_and_formal_archetypes_need_independent_evidence(
+    title: str,
+) -> None:
+    listing = _listing(title, price=4_000, buyout=4_000)
+    evaluation = evaluate_listing(listing)
+    decision = _post_detail_decision(listing, evaluation)
+
+    assert evaluation.directional.thesis is None
+    assert decision.route is None
+    assert decision.rejection_reason == "generic_after_detail"
+
+
+def test_unusual_formalwear_escapes_genericness_and_can_be_micro_asymmetry() -> None:
+    listing = _listing(
+        "Yves Saint Laurent open collar striped shirt",
+        price=4_000,
+        buyout=4_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert evaluation.directional.micro_asymmetry is True
+    assert _post_detail_decision(listing, evaluation).route == "buyouts"
+
+
+def test_cheap_specific_tee_is_micro_asymmetry_without_invented_fmv() -> None:
+    listing = _listing(
+        "Number (N)ine 03SS layered striped graphic t-shirt",
+        price=1_200,
+        buyout=1_200,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.valuation.confidence == "unavailable"
+    assert evaluation.economics.resale_median_jpy is None
+    assert evaluation.directional.thesis == "asymmetric_value"
+    assert evaluation.directional.micro_asymmetry is True
+    assert _post_detail_decision(listing, evaluation).route == "buyouts"
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Celine Jacno boots",
+        "Celine Camargue boots",
+        "Christian Louboutin Louis Orlato sneakers",
+    ),
+)
+def test_item_constrained_iconic_footwear_can_support_micro_asymmetry(
+    title: str,
+) -> None:
+    listing = _listing(title, price=2_500, buyout=2_500)
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.item_type
+    assert evaluation.profile.item_type.value == "footwear"
+    assert evaluation.directional.micro_asymmetry is True
+
+
+def test_cheap_legacy_ysl_chelsea_boot_has_directional_footwear_context() -> None:
+    listing = _listing(
+        "Yves Saint Laurent leather Chelsea boots",
+        price=5_600,
+        buyout=5_600,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.item_type
+    assert evaluation.profile.item_type.value == "footwear"
+    assert evaluation.directional.micro_asymmetry is True
+    assert _post_detail_decision(listing, evaluation).route == "buyouts"
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Puma x Alexander McQueen leather sneakers",
+        "Rick Owens x Champion logo cap",
+        "Puma x Alexander McQueen distressed sneaker",
+        "Rick Owens x Champion graphic cap",
+        "GU x UNDERCOVER distressed shirt",
+    ),
+)
+def test_collaboration_name_alone_cannot_establish_substantive_value(title: str) -> None:
+    listing = _listing(title, price=4_000, buyout=4_000)
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.relationship
+    assert evaluation.profile.relationship.value == "collaboration"
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).route is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Saint Laurent Hedi silk necktie",
+        "Dior Homme Hedi dress shirt",
+        "Dior Homme Hedi tailored blazer",
+        "Celine Hedi Slimane leather wallet",
+    ),
+)
+def test_bare_designer_era_does_not_rescue_generic_product(title: str) -> None:
+    listing = _listing(title, price=4_000, buyout=4_000)
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).rejection_reason == (
+        "generic_after_detail"
+    )
+
+
+def test_weird_tie_can_escape_without_blanket_category_ban() -> None:
+    listing = _listing(
+        "Dior Homme studded embroidered skull silk necktie",
+        price=4_000,
+        buyout=4_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.item_type
+    assert evaluation.profile.item_type.value == "accessory"
+    assert evaluation.directional.micro_asymmetry is True
+    assert _post_detail_decision(listing, evaluation).route == "buyouts"
+
+
+def test_bilingual_duplicate_motif_does_not_fake_two_design_signals() -> None:
+    listing = _listing(
+        "Dior Homme striped ストライプ silk necktie",
+        price=4_000,
+        buyout=4_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).rejection_reason == (
+        "generic_after_detail"
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Rick Owens x Champion embroidered embroidery cap",
+        "Rick Owens x Champion applique appliqué cap",
+        "Rick Owens x Champion one button 1B jacket",
+        "Rick Owens x Champion processed 加工 shirt",
+    ),
+)
+def test_collaboration_synonyms_cannot_fake_independent_design_signals(
+    title: str,
+) -> None:
+    listing = _listing(title, price=4_000, buyout=4_000)
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).route is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Number (N)ine pointed toe platform t-shirt",
+        "Number (N)ine tailored t-shirt",
+    ),
+)
+def test_item_incompatible_design_words_cannot_create_micro_asymmetry(
+    title: str,
+) -> None:
+    listing = _listing(title, price=2_000, buyout=2_000)
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.profile.item_type
+    assert evaluation.profile.item_type.value == "t_shirt"
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).route is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        "Number (N)ine ジャンク graphic t-shirt",
+        "Number (N)ine holes stained graphic t-shirt",
+        "Number (N)ine heavily damaged graphic t-shirt",
+    ),
+)
+def test_explicit_poor_condition_evidence_blocks_micro_asymmetry(title: str) -> None:
+    listing = _listing(title, price=2_000, buyout=2_000)
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.directional.micro_asymmetry is False
+    assert _post_detail_decision(listing, evaluation).route is None
+
+
+def test_destroy_is_design_language_but_ambiguous_distressed_alone_is_not() -> None:
+    destroy = _listing(
+        "Number (N)ine destroy t-shirt",
+        price=2_000,
+        buyout=2_000,
+    )
+    distressed = _listing(
+        "Number (N)ine distressed t-shirt",
+        price=2_000,
+        buyout=2_000,
+    )
+
+    assert evaluate_listing(destroy).directional.micro_asymmetry is True
+    assert _post_detail_decision(
+        destroy,
+        evaluate_listing(destroy),
+    ).route == "buyouts"
+    assert evaluate_listing(distressed).directional.thesis is None
+
+
+def test_generic_archetype_with_verified_economics_can_still_route() -> None:
+    listing = _listing("Dior Homme patterned silk necktie", price=4_000, buyout=4_000)
+    sold = [
+        Comp(
+            "ebay_sold",
+            listing.title_original,
+            price,
+            1.0,
+            30,
+            source_listing_id=f"tie-{index}",
+        )
+        for index, price in enumerate((45_000, 48_000, 50_000, 52_000, 55_000))
+    ]
+    evaluation = evaluate_listing(listing, sold)
+
+    assert evaluation.economics.opportunity_score >= 70
+    assert evaluation.directional.thesis is None
+    assert _post_detail_decision(listing, evaluation).route == "buyouts"
+
+
+def test_generic_implausibly_cheap_chrome_is_not_review_spam() -> None:
+    listing = _listing(
+        "Chrome Hearts 925 silver braided bracelet",
+        price=4_000,
+        buyout=4_000,
+    )
+    evaluation = evaluate_listing(listing)
+    decision = _post_detail_decision(listing, evaluation)
+
+    assert evaluation.auth_risk.level == "high"
+    assert decision.route is None
+    assert decision.rejection_reason in {"seller_risk", "unreviewable_auth_noise"}
+
+
+def test_specific_chrome_with_review_evidence_remains_reviewworthy() -> None:
+    listing = _listing(
+        "Chrome Hearts keeper floral cross 925 silver ring",
+        price=4_000,
+        buyout=4_000,
+    )
+    evaluation = evaluate_listing(listing)
+
+    assert evaluation.auth_risk.level == "high"
+    assert _post_detail_decision(listing, evaluation).route == "review"
+
+
+def test_chrome_sold_comps_do_not_make_photo_less_generic_silver_reviewworthy() -> None:
+    listing = _listing(
+        "Chrome Hearts 925 silver braided bracelet",
+        price=4_000,
+        buyout=4_000,
+    )
+    listing.raw["detail_photo_count"] = 0
+    sold = [
+        Comp(
+            "ebay_sold",
+            listing.title_original,
+            price,
+            1.0,
+            30,
+            source_listing_id=f"chrome-{index}",
+        )
+        for index, price in enumerate((45_000, 48_000, 50_000, 52_000, 55_000))
+    ]
+
+    evaluation = evaluate_listing(listing, sold)
+    decision = _post_detail_decision(listing, evaluation)
+
+    assert evaluation.economics.opportunity_score >= 70
+    assert decision.route is None
+    assert decision.rejection_reason == "unreviewable_auth_noise"

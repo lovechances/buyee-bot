@@ -883,3 +883,97 @@ def test_margiela_replica_line_is_not_counterfeit_but_bare_replica_remains_vetoe
         signal.value == "counterfeit:replica"
         for signal in mixed.profile.negative_signals
     )
+
+
+def test_low_heat_semantic_card_can_earn_one_bounded_closet_inspection() -> None:
+    listing = _listing(
+        "semantic-vetements",
+        "VETEMENTS layered French flag pullover hoodie XL",
+        current_price=25_000,
+        buyout_price=None,
+        time_remaining="10 hour(s)",
+    )
+    settings = _settings()
+    evaluation = evaluate_listing(listing, settings=settings)
+    assessment = assess_stage_a(
+        listing,
+        evaluation,
+        _semantic_spec("vetements"),
+        settings,
+    )
+
+    assert evaluation.desirability.score < 40
+    assert assessment.primary_path == "semantic_closet_inspection"
+    assert assessment.eligible is True
+
+
+def test_semantic_closet_path_does_not_reintroduce_early_bid_economics() -> None:
+    listing = _listing(
+        "early-semantic-vetements",
+        "VETEMENTS layered French flag pullover hoodie XL",
+        current_price=1_000,
+        buyout_price=None,
+        time_remaining="5 day(s)",
+    )
+    settings = _settings()
+    assessment = assess_stage_a(
+        listing,
+        evaluate_listing(listing, settings=settings),
+        _semantic_spec("vetements"),
+        settings,
+    )
+
+    assert assessment.actionable_price is False
+    assert assessment.eligible is False
+
+
+def test_broad_brand_card_with_truncated_item_identity_gets_bounded_recovery() -> None:
+    listing = _listing(
+        "truncated-rick",
+        "RICK OWENS DRKSHDW CARGO DRAWS",
+        current_price=33_660,
+        buyout_price=33_660,
+        category="unknown",
+    )
+    settings = _settings()
+    assessment = assess_stage_a(
+        listing,
+        evaluate_listing(listing, settings=settings),
+        _semantic_spec("rick_owens"),
+        settings,
+    )
+
+    assert assessment.item_type_confident is False
+    assert assessment.primary_path == "identity_recovery"
+    assert assessment.eligible is True
+
+
+def test_lifetime_first_listing_outranks_rotating_candidate_for_scarce_slot() -> None:
+    settings = _settings(
+        max_candidates_per_query=1,
+        path_caps={"semantic_closet_inspection": 1},
+    )
+    spec = _semantic_spec("vetements")
+    rotating = _listing(
+        "rotating",
+        "VETEMENTS layered graphic hoodie",
+        current_price=12_000,
+        buyout_price=12_000,
+    )
+    rotating.raw = {"dedupe": {"revisit_reason": "candidate_rotation"}}
+    unseen = _listing(
+        "unseen",
+        "VETEMENTS layered graphic hoodie",
+        current_price=12_000,
+        buyout_price=12_000,
+    )
+    unseen.raw = {"dedupe": {"lifetime_first_seen": True}}
+    assessments = [
+        assess_stage_a(item, evaluate_listing(item, settings=settings), spec, settings)
+        for item in (rotating, unseen)
+    ]
+
+    selected, capped = select_stage_a_candidates(assessments, spec, settings)
+
+    assert [item.listing_id for item in selected] == ["unseen"]
+    assert [item.listing_id for item in capped] == ["rotating"]

@@ -14,6 +14,8 @@ scanner:
     market_structure: 1
   deep_broad_pages: 2
   search_pages_by_strategy:
+    # Production page-two cohorts add meaningful inventory; page three has no
+    # demonstrated final/alert yield, so slow backfills remain bounded here.
     market_explore: 2
     market_price_band: 2
   listing_dedupe_hours: 6
@@ -34,6 +36,15 @@ scanner:
   max_source_attempts: 3
   decision_logic_reconsideration_max_age_hours: 24
   decision_logic_reconsideration_max_per_hour: 2
+
+# Operational Discord notices. Individual parser/source retries remain health
+# telemetry; only a continuous, user-visible outage opens an incident.
+status:
+  outage_consecutive_failures: 6
+  outage_min_duration_minutes: 15
+  notification_cooldown_minutes: 360
+  recovery_confirmation_scans: 2
+  auth_confirmation_threshold: 2
 
 marketplaces:
   buyee:
@@ -99,12 +110,18 @@ stage_a:
   silver_minimum_heat: 30
   unknown_absolute_buyout_max_jpy: 10000
   unknown_max_band_fraction: 0.40
+  semantic_inspection_minimum_heat: 12
+  semantic_inspection_max_buyout_jpy: 30000
+  semantic_inspection_max_current_bid_jpy: 25000
+  identity_recovery_max_actionable_jpy: 40000
   max_candidates_per_query: 6
   max_market_candidates_per_query: 3
   max_market_candidate_rate: 0.03
   path_caps:
     unknown_interesting: 1
     silver_jewelry: 2
+    semantic_closet_inspection: 1
+    identity_recovery: 1
   relationship_rank_adjustments:
     core: 12
     collaboration: -4
@@ -120,6 +137,11 @@ directional_opportunity:
   exceptional_actionable_minimum_score: 62
   exceptional_diffusion_minimum_score: 58
   exceptional_low_priority_collaboration_minimum_score: 48
+  exceptional_iconic_minimum_score: 45
+  # A mass-market collaboration can use one weak design observation only at a
+  # truly negligible garment price; accessories/footwear still need specific evidence.
+  low_priority_collaboration_weak_signal_max_price_jpy: 1000
+  micro_asymmetry_max_actionable_price_jpy: 10000
   exceptional_landed_usd: 30
   max_landed_usd: 65
   favorable_condition_bonus: 6

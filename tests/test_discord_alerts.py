@@ -40,12 +40,14 @@ def _evaluation(
     multiple: float | None = None,
     directional_confidence: str = "high",
     relationship: str = "core",
+    micro_asymmetry: bool = False,
     comps: list[Comp] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         profile=SimpleNamespace(
             brand=SimpleNamespace(value="Maison Margiela", confidence=0.98),
             item_type=SimpleNamespace(value="t-shirt", confidence=0.9),
+            size=SimpleNamespace(value="M", confidence=0.9),
             relationship=SimpleNamespace(value=relationship),
         ),
         identity=SimpleNamespace(confidence="high"),
@@ -60,6 +62,7 @@ def _evaluation(
             thesis="asymmetric_value",
             landed_usd=43.0 if actionable else None,
             confidence=directional_confidence,
+            micro_asymmetry=micro_asymmetry,
         ),
         auction_maturity=SimpleNamespace(
             auction_type=auction_type,
@@ -141,6 +144,21 @@ def test_unverified_directional_card_never_invents_fmv() -> None:
     assert "U.S. sold" not in rendered
     assert "FMV" not in rendered
     assert "×" not in rendered
+
+
+def test_micro_asymmetry_and_advisory_size_are_compactly_explained() -> None:
+    payload = build_listing_alert_payload(
+        _listing(buyout_price=2_000),
+        "buyouts",
+        "older graphic tee · low absolute downside",
+        31,
+        _evaluation(micro_asymmetry=True),
+    )
+    rendered = _rendered(payload)
+
+    assert "MICRO ASYMMETRY" in rendered
+    assert "Size M" in rendered
+    assert "U.S. resale unverified" in rendered
 
 
 def test_early_auction_marks_bid_provisional_and_hides_even_available_economics() -> None:

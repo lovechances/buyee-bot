@@ -135,6 +135,15 @@ Stage A/B, evaluation, route, alert, and revisit evidence:
 python -m buyeeye diagnose-listing 'https://buyee.jp/item/jdirectitems/auction/ID'
 ```
 
+Compare a whole manual hunt without opening a browser, sending Discord messages, or
+mutating production state. The input may be newline-delimited URLs/IDs (an optional
+tab-separated note follows each value) or CSV with `url_or_id` plus optional `source`
+and `annotation` columns. JDirectItems and PayPay Flea Market identities are accepted:
+
+```bash
+python -m buyeeye benchmark-listings benchmark.txt
+```
+
 The recomputed section is explicitly hypothetical when historical comp inputs are
 unavailable; the stored decision trace remains authoritative for the recorded pass.
 Never-inspected Stage A traces are retained for 14 days to support the manual benchmark
