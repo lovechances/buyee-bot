@@ -72,6 +72,28 @@ def _record_source_attempt_failure(db_path: str | os.PathLike[str], exc: Excepti
     update_health(db_path, **values)
 
 
+def _health_readiness(
+    report: dict[str, Any], runtime: Any, *, now: datetime | None = None,
+    stale_minutes: float = 30,
+) -> tuple[str, float | None]:
+    """Useful recent progress, not merely a file or a living Python process."""
+    current = now or datetime.now(UTC)
+    last = runtime.last_successful_scan
+    age = None if last is None else max(0.0, (current - last.replace(tzinfo=last.tzinfo or UTC)).total_seconds() / 60)
+    if not report["database_ready"] or not report["session_ready"]:
+        return "degraded", age
+    started = getattr(runtime, "started_at", None)
+    if age is None:
+        if started and (current - started.replace(tzinfo=started.tzinfo or UTC)).total_seconds() > max(1, stale_minutes) * 60:
+            return "degraded", None
+        return "starting", None
+    if age > max(1, stale_minutes) or runtime.consecutive_source_failures:
+        return "degraded", age
+    if started and last.replace(tzinfo=last.tzinfo or UTC) < started.replace(tzinfo=started.tzinfo or UTC):
+        return "starting", age
+    return "ready", age
+
+
 def _acquire_runtime_lock() -> Any | None:
     lock_path = runtime_data_dir() / "buyeeye.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +118,9 @@ def _build_parser() -> argparse.ArgumentParser:
     scan_once_parser.add_argument("query", nargs="?")
     scan_alert = subparsers.add_parser("scan-alert-once")
     scan_alert.add_argument("query", nargs="?")
-    subparsers.add_parser("health")
+    health = subparsers.add_parser("health")
+    health.add_argument("--hours", type=int, choices=range(1, 73), default=1, metavar="1..72")
+    subparsers.add_parser("storage-summary")
     subparsers.add_parser("setup-session")
     subparsers.add_parser("send-test-alert")
     status_event = subparsers.add_parser("status-event")
@@ -122,6 +146,12 @@ def _build_parser() -> argparse.ArgumentParser:
     feedback = subparsers.add_parser("feedback")
     feedback.add_argument("listing_id")
     feedback.add_argument("label")
+    feedback.add_argument("--source")
+    feedback.add_argument("--purchased", action="store_true")
+    pin = subparsers.add_parser("pin-listing")
+    pin.add_argument("url_or_id")
+    pin.add_argument("--source")
+    pin.add_argument("--reason", required=True)
 
     return parser
 
@@ -145,8 +175,18 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings()
     db_path = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
-    if args.command not in {"backtest", "diagnose-listing", "benchmark-listings"}:
+    if args.command not in {"backtest", "diagnose-listing", "benchmark-listings", "storage-summary"}:
         init_db(db_path)
+
+    if args.command == "storage-summary":
+        from .maintenance import storage_summary
+
+        try:
+            print(json.dumps(storage_summary(db_path), indent=2, default=str))
+        except (OSError, ValueError) as exc:
+            print(f"storage-summary: {type(exc).__name__}")
+            return 2
+        return 0
 
     if args.command == "status":
         print("BuyEye status: ready")
@@ -156,11 +196,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "health":
         report = health_report(db_path)
         runtime = get_health(db_path)
-        metrics = hourly_metrics(db_path)
-        print(f"BuyEye health: {'ready' if report['database_ready'] else 'degraded'}")
+        metrics = hourly_metrics(db_path, hours=args.hours)
+        readiness, progress_age = _health_readiness(
+            report, runtime,
+            stale_minutes=float(settings.get("status", {}).get("health_stale_minutes", 30)),
+        )
+        print(f"BuyEye health: {readiness}")
         print(f"Database: {report['database']}")
-        print(f"Buyee session: {'ready' if report['session_ready'] else 'manual login required'}")
+        print(f"Buyee portable session: {'present' if report['session_ready'] else 'unavailable'} (not a live authentication test)")
         print(f"Last successful scan: {runtime.last_successful_scan or 'never'}")
+        print(f"Successful acquisition age: {f'{progress_age:.1f} minutes' if progress_age is not None else 'no recorded success'}")
         print(f"Current/last query: {runtime.current_query or '-'} / {runtime.last_query or '-'}")
         print(f"Consecutive source failures: {runtime.consecutive_source_failures}")
         print(
@@ -177,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"Alerts emitted: {runtime.alerts_emitted}")
         print(
-            "Last hour: "
+            f"Last {args.hours} hour(s): "
             f"queries={metrics['queries']} pages={metrics['search_pages']} cards={metrics['cards']} "
             f"processable={metrics['unique']} duplicates={metrics['duplicates']} "
             f"stage_a_telemetry_scans={metrics['stage_a_telemetry_scans']} "
@@ -211,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
             f"decision_samples={metrics['post_detail_decisions']} "
             f"families={metrics['detected_family_funnel']}"
         )
-        return 0 if report["database_ready"] else 1
+        return 0 if readiness == "ready" else 1
 
     if args.command == "status-event":
         result = announce_major_update(args.event, db_path)
@@ -219,11 +264,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.emitted or result.outcome == "deduped" else 1
 
     if args.command == "run":
+        from .maintenance import run_maintenance_slice, seed_protections
+
         lock_handle = _acquire_runtime_lock()
         if lock_handle is None:
             print("BuyEye daemon is already running; refusing a duplicate scanner.")
             return 2
         logger = _runtime_logger()
+        pin_manifest = CONFIG_DIR / "retention_pins.yaml"
+        if pin_manifest.exists():
+            seed_protections(load_yaml(pin_manifest).get("records", []), db_path)
         search_config = load_yaml(CONFIG_DIR / "searches.yaml")
         taxonomy = load_yaml(CONFIG_DIR / "fashion_taxonomy.yaml")
         market_config = load_yaml(CONFIG_DIR / "market_structure.yaml")
@@ -253,6 +303,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             while not stopping:
+                try:
+                    run_maintenance_slice(db_path, settings, notify=True)
+                except Exception as exc:  # noqa: BLE001 - optional maintenance cannot kill acquisition
+                    logger.warning("storage_maintenance_deferred error=%s", type(exc).__name__)
                 spec = choose_query(
                     queries,
                     db_path,
@@ -578,7 +632,30 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if "invalid_input" not in report["outcomes"] else 1
 
     if args.command == "feedback":
-        print(f"Feedback recorded for listing {args.listing_id}: {args.label}")
+        from .diagnostics import marketplace_listing_identity
+        from .maintenance import protect_listing
+
+        try:
+            source, listing_id = marketplace_listing_identity(args.listing_id, source=args.source)
+            protect_listing(source, listing_id, db_path, feedback_label=args.label,
+                            purchased=args.purchased, provenance="explicit_user_cli")
+        except ValueError as exc:
+            print(f"feedback: {exc}")
+            return 2
+        print(f"Human feedback persisted for {source}:{listing_id}; no authenticity certification or eligibility override.")
+        return 0
+
+    if args.command == "pin-listing":
+        from .diagnostics import marketplace_listing_identity
+        from .maintenance import protect_listing
+
+        try:
+            source, listing_id = marketplace_listing_identity(args.url_or_id, source=args.source)
+            protect_listing(source, listing_id, db_path, reason=args.reason)
+        except ValueError as exc:
+            print(f"pin-listing: {exc}")
+            return 2
+        print(f"Evidence pinned for {source}:{listing_id}; live eligibility unchanged.")
         return 0
 
     if args.command == "intelligence":

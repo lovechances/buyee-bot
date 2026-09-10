@@ -54,10 +54,21 @@ def test_attention_toggle_does_not_change_route_or_valuation():
     assert evaluation.comps.median_jpy is None
 
 
-@pytest.mark.parametrize("route", ["buyouts", "ending", "silver", "review"])
+@pytest.mark.parametrize("route", ["buyouts", "silver", "review"])
 def test_primary_actionable_and_review_routes_never_quieted(route):
     evaluation = evaluate_listing(listing("CELINE The Dancing Kid 総柄 パーカー"))
     assert assess_attention(evaluation, route).delivery == "normal"
+
+
+def test_ending_timing_does_not_upgrade_quiet_expensive_archive():
+    item = listing("Undercover 05SS But Beautiful 2 patchwork jacket", 278_000)
+    item.buyout_price = None
+    item.time_remaining = "45 minute(s)"
+    evaluation = evaluate_listing(item)
+    decision = _post_detail_decision(item, evaluation)
+    assert decision.route == "ending"
+    assert "BUT BEAUTIFUL" in decision.reason
+    assert assess_attention(evaluation, decision.route).delivery == "quiet"
 
 
 def test_cheap_specific_tee_can_alert_without_fmv_or_archive_name():

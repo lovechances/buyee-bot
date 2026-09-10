@@ -39,6 +39,7 @@ def _assess(
     market=False,
     config=None,
     family="margiela",
+    dedupe=None,
 ):
     listing = LiveListing(
         source="buyee",
@@ -54,7 +55,7 @@ def _assess(
         time_remaining=remaining,
         seller_name=None,
         condition=None,
-        raw={},
+        raw={"dedupe": dedupe or {}},
     )
     settings = {"stage_a": config or {}}
     return assess_stage_a(
@@ -195,3 +196,144 @@ def test_plain_business_shoes_cannot_take_the_reserved_clothing_slot():
     assert plain.item_type == distinctive.item_type == "footwear"
     assert not plain.value_inspection_candidate
     assert distinctive.value_inspection_candidate
+
+
+def _coverage_cards():
+    base = _assess(market=True)
+    return [
+        replace(base, listing_id="known-a", inspection_score=98, inspection_attempted=True),
+        replace(base, listing_id="known-failed", inspection_score=96, inspection_attempted=True),
+        replace(base, listing_id="new-higher", inspection_score=92, inspection_attempted=False),
+        replace(base, listing_id="new-lower", inspection_score=86, inspection_attempted=False),
+    ]
+
+
+def _coverage_settings(**updates):
+    return {"stage_a": {"max_candidates_per_query": 2, "max_market_candidate_rate": 1, **updates}}
+
+
+def test_existing_value_slot_rotates_to_highest_ranked_uninspected_card():
+    cards = _coverage_cards()
+    selected, capped = select_stage_a_candidates(cards, _spec(market=True), _coverage_settings())
+    assert [item.listing_id for item in selected] == ["known-a", "new-higher"]
+    assert {item.listing_id for item in capped} == {"known-failed", "new-lower"}
+    assert len(selected) == 2  # No increased fetch budget or benchmark-ID special case.
+
+
+def test_rotation_does_not_reward_repeated_low_rank_before_higher_uninspected_cards():
+    cards = _coverage_cards()
+    first, _ = select_stage_a_candidates(cards, _spec(market=True), _coverage_settings())
+    attempted = {item.listing_id for item in first}
+    next_cards = [
+        replace(item, inspection_attempted=True) if item.listing_id in attempted else item
+        for item in cards
+    ]
+    second, _ = select_stage_a_candidates(next_cards, _spec(market=True), _coverage_settings())
+    assert [item.listing_id for item in second] == ["known-a", "new-lower"]
+
+
+def test_failed_inspection_can_still_win_the_ordinary_slot():
+    cards = _coverage_cards()
+    cards[1] = replace(cards[1], inspection_score=110)
+    selected, _ = select_stage_a_candidates(cards, _spec(market=True), _coverage_settings())
+    assert [item.listing_id for item in selected] == ["known-failed", "new-higher"]
+    # Attempted is not successful, ineligible, or an authentication verdict.
+    assert selected[0].eligible
+
+
+def test_coverage_priority_does_nothing_when_an_uninspected_value_card_already_wins():
+    cards = _coverage_cards()
+    cards[0] = replace(cards[0], inspection_attempted=False)
+    selected, _ = select_stage_a_candidates(cards, _spec(market=True), _coverage_settings())
+    assert [item.listing_id for item in selected] == ["known-a", "known-failed"]
+
+
+def test_unknown_history_is_not_a_proven_repeat_and_does_not_force_replacement():
+    cards = [replace(item, inspection_attempted=None) if item.inspection_attempted else item
+             for item in _coverage_cards()]
+    selected, _ = select_stage_a_candidates(cards, _spec(market=True), _coverage_settings())
+    assert [item.listing_id for item in selected] == ["known-a", "known-failed"]
+
+
+@pytest.mark.parametrize("disable", [
+    {"value_inspection_reserved_slots": 0},
+    {"path_caps": {"market_buyout_inspection": 0}},
+])
+def test_coverage_priority_obeys_disabled_reserve_and_paths(disable):
+    selected, _ = select_stage_a_candidates(
+        _coverage_cards(), _spec(market=True), _coverage_settings(**disable)
+    )
+    assert not any(item.listing_id.startswith("new-") for item in selected)
+
+
+def test_coverage_priority_preserves_market_rate_and_ignores_ineligible_cards():
+    cards = _coverage_cards()
+    cards[2] = replace(cards[2], eligible_paths=(), hard_veto=True)
+    selected, _ = select_stage_a_candidates(
+        cards, _spec(market=True), _coverage_settings(max_market_candidate_rate=0.03)
+    )
+    assert [item.listing_id for item in selected] == ["new-lower"]
+
+
+def test_coverage_priority_replaces_within_a_saturated_path():
+    cards = _coverage_cards()
+    cards[0] = replace(cards[0], primary_path="semantic_archive")
+    selected, _ = select_stage_a_candidates(
+        cards, _spec(market=True),
+        _coverage_settings(path_caps={"market_buyout_inspection": 1}),
+    )
+    assert [item.listing_id for item in selected] == ["known-a", "new-higher"]
+
+
+def test_inspection_metadata_does_not_change_eligibility_heat_or_priority():
+    unknown = _assess()
+    unseen = _assess(dedupe={"inspection_attempted": False})
+    attempted = _assess(dedupe={"inspection_attempted": True})
+    assert unknown.inspection_attempted is None
+    assert unseen.observation(selected=False)["inspection_attempted"] is False
+    assert attempted.observation(selected=False)["inspection_attempted"] is True
+    assert unknown.eligible_paths == unseen.eligible_paths == attempted.eligible_paths
+    assert unknown.inspection_score == unseen.inspection_score == attempted.inspection_score
+
+
+@pytest.mark.parametrize("buyout", [None, 40_000])
+def test_low_bid_does_not_stand_in_for_missing_or_over_band_buyout(buyout):
+    candidate = _assess(price=buyout, bid=1000, market=True)
+    assert "market_buyout_inspection" not in candidate.eligible_paths
+    assert "unknown_interesting" not in candidate.eligible_paths
+    assert not candidate.value_inspection_candidate
+    if buyout is None:
+        assert candidate.discovery_price_fraction is None
+        assert candidate.actionable_buyout_fraction is None
+
+
+@pytest.mark.parametrize("cheap_retry", [True, False])
+def test_one_slot_overdue_failed_retry_cannot_be_stolen_by_either_reservation(cheap_retry):
+    cards = _coverage_cards()
+    retry = replace(
+        cards[0], detail_retry_overdue=True, value_inspection_candidate=cheap_retry
+    )
+    selected, _ = select_stage_a_candidates(
+        [retry, cards[2]], _spec(market=True),
+        _coverage_settings(max_candidates_per_query=1),
+    )
+    assert selected == [retry]
+
+
+def test_recent_failed_attempt_can_yield_one_slot_but_is_not_ineligible():
+    cards = _coverage_cards()
+    retry = replace(cards[0], detail_retry_overdue=False)
+    selected, capped = select_stage_a_candidates(
+        [retry, cards[2]], _spec(market=True),
+        _coverage_settings(max_candidates_per_query=1),
+    )
+    assert selected == [cards[2]]
+    assert retry in capped and retry.eligible
+
+
+def test_overdue_retry_metadata_is_explicit_and_does_not_change_eligibility():
+    regular = _assess()
+    retry = _assess(dedupe={"inspection_attempted": True, "detail_retry_overdue": True})
+    assert retry.observation(selected=True)["detail_retry_overdue"] is True
+    assert retry.eligible_paths == regular.eligible_paths
+    assert retry.inspection_score == regular.inspection_score

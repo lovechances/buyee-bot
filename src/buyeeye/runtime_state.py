@@ -7,10 +7,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
 from sqlmodel import Field, SQLModel, select
 
-from .db import DB_PATH, AlertState, get_session, init_db
+from .db import DB_PATH, AlertState, ListingProtection, get_session, init_db
 from .discovery import QuerySpec
 
 
@@ -79,7 +78,37 @@ class SeenListing(SQLModel, table=True):
     last_inspected_at: datetime | None = None
     latest_trace_json: str | None = None
     event_history_json: str | None = None
+    history_expired_at: datetime | None = None
+    history_expiry_reason: str | None = None
+    detail_expired_at: datetime | None = None
+    listing_expired_at: datetime | None = None
     sightings: int = 1
+
+
+class MaintenanceState(SQLModel, table=True):
+    id: int = Field(default=1, primary_key=True)
+    policy_version: str = "retention-v1"
+    phase: int = 0
+    next_due_at: datetime | None = None
+    last_completed_at: datetime | None = None
+    runs: int = 0
+    rows_processed: int = 0
+    last_result_json: str | None = None
+    low_space: bool = False
+    free_bytes: int | None = None
+    last_warning_attempt_at: datetime | None = None
+    last_warning_sent_at: datetime | None = None
+
+
+class ScanDailyAggregate(SQLModel, table=True):
+    key: str = Field(primary_key=True)
+    day: str = Field(index=True)
+    family: str
+    query_layer: str
+    strategy_type: str
+    counters_json: str = "{}"
+    routes_json: str = "{}"
+    alert_routes_json: str = "{}"
 
 
 class RuntimeHealthState(SQLModel, table=True):
@@ -165,6 +194,8 @@ class DedupeResult:
     lifetime_first_seen: bool = False
     material_state_changed: bool = False
     revisit_reason: str | None = None
+    inspection_attempted: bool | None = None
+    detail_retry_overdue: bool = False
 
 
 def _key(*parts: str) -> str:
@@ -191,9 +222,6 @@ def _json_list(value: str | None) -> list[dict[str, Any]]:
 
 _TRACE_MAX_BYTES = 3_000
 _TRACE_HISTORY_MAX_BYTES = 12_000
-_CHEAP_TRACE_RETENTION_DAYS = 14
-_TRACE_PRUNE_INTERVAL = timedelta(hours=6)
-_last_trace_prune_at: datetime | None = None
 
 
 def _short_trace_value(value: Any, limit: int = 180) -> Any:
@@ -556,6 +584,8 @@ def record_query_result(
     db_path: str | Path = DB_PATH,
     failed: bool = False,
 ) -> None:
+    from .maintenance import optional_diagnostics_allowed
+
     init_db(db_path)
     now = datetime.now(UTC)
     key = _query_key(spec)
@@ -689,6 +719,7 @@ def record_query_result(
                 logic_reconsidered=int(getattr(result, "logic_reconsidered", 0) or 0),
                 post_detail_decisions_json=json.dumps(
                     list(getattr(result, "post_detail_decisions", []) or [])[:6]
+                    if optional_diagnostics_allowed(db_path) else []
                 ),
                 lifetime_first_seen=int(getattr(result, "lifetime_first_seen", 0) or 0),
                 historical_revisits=int(getattr(result, "historical_revisits", 0) or 0),
@@ -754,6 +785,7 @@ def mark_listing_seen(
                 False,
                 lifetime_first_seen=True,
                 revisit_reason="lifetime_first_seen",
+                inspection_attempted=False,
             )
         processed = row.last_processed_at
         if processed.tzinfo is None:
@@ -764,6 +796,19 @@ def mark_listing_seen(
         outcomes = json.loads(row.stage_a_outcomes_json or "{}")
         if not isinstance(outcomes, dict):
             outcomes = {}
+        inspection_attempted = bool(row.first_inspected_at or "selected" in outcomes.values())
+        inspection_history = [event for event in _json_list(row.event_history_json)
+                              if event.get("stage_a") == "selected"
+                              or event.get("detail") in {"enriched", "failed"}]
+        last_attempt = row.last_inspected_at
+        if last_attempt and last_attempt.tzinfo is None:
+            last_attempt = last_attempt.replace(tzinfo=UTC)
+        detail_retry_overdue = bool(
+            last_attempt
+            and last_attempt < now - timedelta(hours=max(1, fully_evaluated_freshness_hours))
+            and inspection_history
+            and inspection_history[-1].get("detail") == "failed"
+        )
         if not unchanged:
             outcomes = {}
             row.stage_a_outcomes_json = None
@@ -885,6 +930,8 @@ def mark_listing_seen(
             lifetime_first_seen=incomplete_processing_retry,
             material_state_changed=not unchanged,
             revisit_reason=revisit_reason,
+            inspection_attempted=inspection_attempted,
+            detail_retry_overdue=detail_retry_overdue,
         )
 
 
@@ -948,14 +995,30 @@ def record_listing_traces(
     """
     if not traces:
         return
-    global _last_trace_prune_at
+    from .maintenance import optional_diagnostics_allowed
 
     init_db(db_path)
     now = datetime.now(UTC)
+    allow_optional = optional_diagnostics_allowed(db_path)
     with get_session(db_path) as session:
+        protected = set()
+        if not allow_optional:
+            protected.update((p.source, p.source_listing_id) for p in session.exec(select(ListingProtection)).all())
+            protected.update((p.source, p.source_listing_id) for p in session.exec(select(AlertState)).all())
         for (source, source_listing_id), trace in traces.items():
             row = session.get(SeenListing, _key(source, source_listing_id))
             if row is None:
+                continue
+            essential = bool(
+                (source, source_listing_id) in protected
+                or (trace.get("stage_a") or {}).get("selected")
+                or trace.get("detail_status") in {"enriched", "failed"}
+                or trace.get("route") or trace.get("alert_event")
+            )
+            if not allow_optional and not essential:
+                if row.history_expiry_reason != "low_space:optional_trace_omitted":
+                    row.history_expired_at = now
+                    row.history_expiry_reason = "low_space:optional_trace_omitted"
                 continue
             compact = dict(trace)
             compact.setdefault("recorded_at", now.isoformat())
@@ -1067,35 +1130,8 @@ def record_listing_traces(
                         separators=(",", ":"),
                     )
                 row.event_history_json = history_encoded
-        # Cheap Stage A misses are valuable for the imminent manual benchmark,
-        # but retaining their JSON forever would eventually fill the small
-        # Railway volume.  Clear only old never-inspected traces; stable listing
-        # identity, dedupe/classification columns, alert state, and every
-        # inspected candidate history remain untouched. SQLite can reuse the
-        # freed pages without a destructive VACUUM.
-        if (
-            _last_trace_prune_at is None
-            or now - _last_trace_prune_at >= _TRACE_PRUNE_INTERVAL
-        ):
-            cutoff = now - timedelta(days=_CHEAP_TRACE_RETENTION_DAYS)
-            session.exec(
-                text(
-                    """
-                    UPDATE seenlisting
-                    SET latest_trace_json = NULL
-                    WHERE key IN (
-                        SELECT key
-                        FROM seenlisting
-                        WHERE first_inspected_at IS NULL
-                          AND latest_trace_json IS NOT NULL
-                          AND last_processed_at < :cutoff
-                        LIMIT 2000
-                    )
-                    """
-                ),
-                params={"cutoff": cutoff.replace(tzinfo=None).isoformat(sep=" ")},
-            )
-            _last_trace_prune_at = now
+        # Retention now runs independently in persisted, bounded daemon slices;
+        # a quiet source or a restart cannot disable it indefinitely.
         session.commit()
 
 
@@ -1125,9 +1161,9 @@ def get_health(db_path: str | Path = DB_PATH) -> RuntimeHealthState:
         return row
 
 
-def hourly_metrics(db_path: str | Path = DB_PATH) -> dict[str, object]:
+def hourly_metrics(db_path: str | Path = DB_PATH, *, hours: float = 1) -> dict[str, object]:
     init_db(db_path)
-    cutoff = datetime.now(UTC) - timedelta(hours=1)
+    cutoff = datetime.now(UTC) - timedelta(hours=min(72, max(1, hours)))
     with get_session(db_path) as session:
         rows = session.exec(select(ScanEvent).where(ScanEvent.recorded_at >= cutoff)).all()
     totals: dict[str, object] = {

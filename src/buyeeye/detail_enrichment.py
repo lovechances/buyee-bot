@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlmodel import Field, SQLModel
 
@@ -17,7 +18,41 @@ from .browser_session import (
     restore_session_cookies_async,
 )
 from .db import DB_PATH, get_session, init_db
+from .live_sources import buyee_item_id, clean_marketplace_title, image_url_from_attributes
 from .normalize import normalize_text
+
+
+def detail_payload_script() -> str:
+    return r"""
+    () => {
+      const text = s => document.querySelector(s)?.textContent?.replace(/\s+/g, ' ').trim() || '';
+      const meta = p => document.querySelector(`meta[property="${p}"],meta[name="${p}"]`)?.content || '';
+      const labels = [...document.querySelectorAll('tr,dl')].flatMap(node => {
+        if (node.tagName === 'TR') {
+          const cells = [...node.querySelectorAll('th,td')].map(x => x.innerText.trim());
+          return cells.length >= 2 ? [[cells[0], cells.slice(1).join(' ')]] : [];
+        }
+        return [...node.querySelectorAll('dt')].map(dt => [dt.innerText.trim(), dt.nextElementSibling?.innerText?.trim() || '']);
+      });
+      return {
+        association_version: 1,
+        page_url: location.href,
+        canonical_url: document.querySelector('link[rel="canonical"]')?.href || '',
+        og_url: meta('og:url'),
+        heading: text('.itemInformation__itemName, .itemInformation__title, h1'),
+        document_title: document.title,
+        og_title: meta('og:title'),
+        description: text('.itemInformation__description, .item-description, [data-item-description]'),
+        og_description: meta('og:description') || meta('description'),
+        breadcrumbs: [...document.querySelectorAll('nav a, .breadcrumb a')].map(x => x.innerText.trim()).filter(Boolean),
+        labels,
+        primary_images: meta('og:image') ? [{
+          provenance: 'og_image', attributes: {src: meta('og:image')}
+        }] : [],
+        visible_text: document.body.innerText.slice(0, 30000)
+      };
+    }
+    """
 
 
 @dataclass
@@ -78,14 +113,34 @@ class DetailRepository:
                 expires = expires.replace(tzinfo=UTC)
             if expires <= datetime.now(UTC):
                 return None
-            stored = json.loads(row.observation_json)
-            if stored.get("raw"):
-                refreshed = parse_detail_payload(source, source_listing_id, stored["raw"])
-                refreshed.observed_at = stored["observed_at"]
-                return refreshed
-            return DetailObservation(**stored)
+            try:
+                stored = json.loads(row.observation_json)
+            except (TypeError, ValueError):
+                return None
+            if not isinstance(stored, dict):
+                return None
+            if (row.source, row.source_listing_id) != (source, source_listing_id) or (
+                stored.get("source"), stored.get("source_listing_id")
+            ) != (source, source_listing_id):
+                return None
+            # Legacy whole-document image captures have no observed page identity
+            # or gallery provenance. Refresh only selected Stage B candidates;
+            # never relabel a legacy/wrong-page payload with the requested ID.
+            try:
+                raw = stored.get("raw") or {}
+                if not isinstance(raw, dict):
+                    return None
+                validate_detail_identity(source, source_listing_id, raw)
+                refreshed = parse_detail_payload(source, source_listing_id, raw)
+            except (TypeError, ValueError):
+                return None
+            refreshed.observed_at = stored["observed_at"]
+            return refreshed
 
     def put(self, observation: DetailObservation) -> None:
+        validate_detail_identity(observation.source, observation.source_listing_id, observation.raw)
+        if observation.image_urls != _bound_detail_images(observation.raw):
+            raise DetailIdentityError("detail cache image provenance mismatch")
         init_db(self.db_path)
         now = datetime.now(UTC)
         payload = json.dumps(asdict(observation), ensure_ascii=False, sort_keys=True)
@@ -146,9 +201,54 @@ def _visible_int(visible_text: str, label: str) -> int | None:
     return int(match.group().replace(",", "")) if match else None
 
 
+class DetailIdentityError(ValueError):
+    """The requested listing and the observed page do not agree."""
+
+
+def validate_detail_identity(source: str, listing_id: str, payload: dict[str, Any]) -> None:
+    if source != "buyee" or not payload.get("page_url"):
+        raise DetailIdentityError("detail page identity unavailable")
+    for field_name in ("page_url", "canonical_url", "og_url"):
+        value = payload.get(field_name)
+        if value and buyee_item_id(str(value)) != listing_id:
+            raise DetailIdentityError("detail page identity mismatch")
+    auction_id = _visible_value(str(payload.get("visible_text") or ""), "Auction ID")
+    if auction_id and auction_id.strip() != listing_id:
+        raise DetailIdentityError("detail auction identity mismatch")
+
+
+def _bound_detail_images(payload: dict[str, Any]) -> list[str]:
+    # Only images explicitly associated with this product are eligible. The old
+    # document.images array includes browsing-history/recommendation products.
+    records = payload.get("primary_images") or []
+    urls = []
+    for record in records:
+        if not isinstance(record, dict) or record.get("provenance") not in {
+            "primary_gallery", "og_image",
+        }:
+            continue
+        url = image_url_from_attributes(record.get("attributes") or {})
+        if url and record.get("provenance") == "og_image":
+            parsed = urlsplit(url)
+            if parsed.hostname not in {
+                "images.auctions.yahoo.co.jp", "auctions.c.yimg.jp", "pctr.c.yimg.jp",
+                "cdnyauction.buyee.jp", "cdnyauction-pctr.buyee.jp",
+            } or not (
+                parsed.hostname == "images.auctions.yahoo.co.jp" and parsed.path.startswith("/image/")
+                or "images.auctions.yahoo.co.jp/image/" in parsed.path
+            ):
+                # A generic site's social-sharing image is not a product photo.
+                continue
+        if url:
+            urls.append(url)
+    return list(dict.fromkeys(urls))
+
+
 def parse_detail_payload(
     source: str, source_listing_id: str, payload: dict[str, Any]
 ) -> DetailObservation:
+    if payload.get("page_url") or payload.get("association_version"):
+        validate_detail_identity(source, source_listing_id, payload)
     labels = {
         normalize_text(str(row[0])): normalize_text(str(row[1]))
         for row in payload.get("labels", [])
@@ -168,7 +268,7 @@ def parse_detail_payload(
     title_candidates = [payload.get("heading"), payload.get("og_title"), payload.get("document_title")]
     title = next(
         (
-            normalize_text(str(value)).removesuffix(" | Buyee")
+            clean_marketplace_title(str(value))
             for value in title_candidates
             if value and not re.search(r"(?i)^Buyee|With Authentication", str(value))
         ),
@@ -192,13 +292,7 @@ def parse_detail_payload(
     bad_count = _visible_int(visible_text, "Bad")
     if feedback_count is None and good_count is not None and bad_count is not None:
         feedback_count = good_count + bad_count
-    images = list(
-        dict.fromkeys(
-            str(url)
-            for url in payload.get("images", [])
-            if "images.auctions.yahoo.co.jp/image/" in str(url)
-        )
-    )
+    images = _bound_detail_images(payload) if payload.get("page_url") else []
     hierarchy_without_size = [
         part for part in category_hierarchy if not re.match(r"(?i)^size\b", part)
     ]
@@ -246,6 +340,16 @@ def apply_detail(
 ) -> None:
     if retrieval not in {"cache_hit", "live_fetch"}:
         raise ValueError("Detail retrieval must be cache_hit or live_fetch")
+    if (listing.source, listing.source_listing_id) != (
+        observation.source, observation.source_listing_id,
+    ):
+        raise DetailIdentityError("detail observation identity mismatch")
+    if observation.raw.get("page_url") or observation.raw.get("association_version"):
+        validate_detail_identity(listing.source, listing.source_listing_id, observation.raw)
+    if observation.image_urls:
+        validate_detail_identity(listing.source, listing.source_listing_id, observation.raw)
+        if observation.image_urls != _bound_detail_images(observation.raw):
+            raise DetailIdentityError("detail image provenance unavailable")
     observed = asdict(observation)
     listing.raw = {
         **(listing.raw or {}),
@@ -280,8 +384,20 @@ def apply_detail(
             listing.bid_count = observation.bid_count
         if observation.watch_count is not None:
             listing.watch_count = observation.watch_count
-    if observation.image_urls:
+    # On cache hits a currently observed, item-bound card thumbnail is fresher.
+    # Live gallery observations may replace it; unscoped legacy arrays may not.
+    card_image_fresh = (
+        retrieval == "cache_hit"
+        and (listing.raw.get("image_integrity") or {}).get("status") == "card_bound"
+        and listing.image_url
+    )
+    if observation.image_urls and not card_image_fresh:
         listing.image_url = observation.image_urls[0]
+        listing.raw["image_integrity"] = {
+            "status": "detail_bound", "source": listing.source,
+            "source_listing_id": listing.source_listing_id,
+            "observed_at": observation.observed_at, "clear_persisted": False,
+        }
     if observation.seller_feedback_percent is not None:
         listing.raw["seller_feedback_percent"] = observation.seller_feedback_percent
     if observation.seller_feedback_count is not None:
@@ -331,12 +447,17 @@ class BuyeeDetailService:
         pending: list[Any] = []
         enriched = 0
         for listing in listings:
-            cached = self._cached_observation(listing)
-            if cached is not None:
-                apply_detail(listing, cached, retrieval="cache_hit")
-                enriched += 1
-            else:
-                pending.append(listing)
+            try:
+                cached = self._cached_observation(listing)
+                if cached is not None:
+                    apply_detail(listing, cached, retrieval="cache_hit")
+                    enriched += 1
+                    continue
+            except (OSError, TypeError, ValueError):
+                # Malformed or cross-item cache data is not a successful detail
+                # observation. Try this candidate through the same bounded path.
+                pass
+            pending.append(listing)
         if not pending:
             return enriched, 0
 
@@ -357,38 +478,15 @@ class BuyeeDetailService:
                 page = await context.new_page()
                 for listing in pending:
                     try:
+                        if listing.source != "buyee" or buyee_item_id(listing.url) != listing.source_listing_id:
+                            raise DetailIdentityError("requested detail URL identity mismatch")
                         await page.goto(listing.url, wait_until="domcontentloaded", timeout=60000)
                         payload = None
                         for attempt in range(3):
                             await page.wait_for_timeout(2000)
                             try:
                                 await page.wait_for_load_state("domcontentloaded", timeout=30000)
-                                payload = await page.evaluate(
-                                    r"""
-                            () => {
-                              const text = s => document.querySelector(s)?.textContent?.replace(/\s+/g, ' ').trim() || '';
-                              const meta = p => document.querySelector(`meta[property="${p}"],meta[name="${p}"]`)?.content || '';
-                              const labels = [...document.querySelectorAll('tr,dl')].flatMap(node => {
-                                if (node.tagName === 'TR') {
-                                  const cells = [...node.querySelectorAll('th,td')].map(x => x.innerText.trim());
-                                  return cells.length >= 2 ? [[cells[0], cells.slice(1).join(' ')]] : [];
-                                }
-                                return [...node.querySelectorAll('dt')].map(dt => [dt.innerText.trim(), dt.nextElementSibling?.innerText?.trim() || '']);
-                              });
-                              return {
-                                heading: text('.itemInformation__itemName, .itemInformation__title, h1'),
-                                document_title: document.title,
-                                og_title: meta('og:title'),
-                                description: text('.itemInformation__description, .item-description, [data-item-description]'),
-                                og_description: meta('og:description') || meta('description'),
-                                breadcrumbs: [...document.querySelectorAll('nav a, .breadcrumb a')].map(x => x.innerText.trim()).filter(Boolean),
-                                labels,
-                                images: [...document.images].map(x => x.currentSrc || x.src).filter(x => /yimg|buyee|auctions/i.test(x)),
-                                visible_text: document.body.innerText.slice(0, 30000)
-                              };
-                            }
-                            """
-                                )
+                                payload = await page.evaluate(detail_payload_script())
                                 break
                             except PlaywrightError as exc:
                                 if "Execution context was destroyed" not in str(exc) or attempt == 2:
@@ -406,7 +504,10 @@ class BuyeeDetailService:
                     except (OSError, PlaywrightError, TimeoutError, ValueError) as exc:
                         listing.raw = {
                             **(listing.raw or {}),
-                            "stage_b": {"status": "failed", "error_type": type(exc).__name__},
+                            "stage_b": {
+                                "status": "failed", "error_type": type(exc).__name__,
+                                "identity_conflict": isinstance(exc, DetailIdentityError),
+                            },
                         }
                         failed += 1
                 await page.close()

@@ -714,7 +714,8 @@ def test_health_exposes_stage_a_recognition_telemetry(monkeypatch, tmp_path, cap
         },
     )
 
-    assert main(["health"]) == 0
+    # A fresh database exposes telemetry but is not yet a healthy live scanner.
+    assert main(["health"]) == 1
     output = capsys.readouterr().out
 
     assert "stage_a_telemetry_scans=0" in output

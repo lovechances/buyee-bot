@@ -9,8 +9,8 @@ from pathlib import Path
 from .db import DB_PATH, StatusIncidentState, get_session, init_db
 from .discord_alerts import send_status_event
 
-OUTAGE_MESSAGE = "BuyEye is temporarily down and not scanning."
-RECOVERY_MESSAGE = "BuyEye recovered and is scanning normally again."
+OUTAGE_MESSAGE = "BuyEye source acquisition is degraded after sustained failed scans. Recovery is running."
+RECOVERY_MESSAGE = "BuyEye has resumed successful scans. Some searches may still need retries."
 AUTH_REQUIRED_MESSAGE = "BuyEye needs its Buyee login refreshed."
 MAJOR_UPDATE_MESSAGES = {
     "alert-quality-recall-v2": (

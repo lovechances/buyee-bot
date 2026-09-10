@@ -32,6 +32,8 @@ class StageAAssessment:
     reject_reason: str | None
     reasons: tuple[str, ...]
     value_inspection_candidate: bool = False
+    inspection_attempted: bool | None = None
+    detail_retry_overdue: bool = False
 
     @property
     def eligible(self) -> bool:
@@ -52,6 +54,8 @@ class StageAAssessment:
             "item_type_confident": self.item_type_confident,
             "actionable_price": self.actionable_price,
             "value_inspection_candidate": self.value_inspection_candidate,
+            "inspection_attempted": self.inspection_attempted,
+            "detail_retry_overdue": self.detail_retry_overdue,
             "price_in_discovery_band": self.price_in_discovery_band,
             "discovery_price_fraction": self.discovery_price_fraction,
             "actionable_buyout_fraction": self.actionable_buyout_fraction,
@@ -483,6 +487,12 @@ def assess_stage_a(
         reject_reason=None if paths and not hard_veto else reject_reason,
         reasons=tuple(reasons),
         value_inspection_candidate=value_inspection_candidate,
+        inspection_attempted=(
+            dedupe.get("inspection_attempted")
+            if isinstance(dedupe.get("inspection_attempted"), bool)
+            else None
+        ),
+        detail_retry_overdue=dedupe.get("detail_retry_overdue") is True,
     )
 
 
@@ -532,9 +542,28 @@ def select_stage_a_candidates(
         path_counts[path] = path_counts.get(path, 0) + 1
 
     reserve = max(0, min(1, int(config.get("value_inspection_reserved_slots", 1))))
-    if reserve and selected and not any(item.value_inspection_candidate for item in selected):
-        for candidate in ranked:
-            if not candidate.value_inspection_candidate or candidate in selected:
+    if reserve and selected:
+        # Cheapness alone does not rotate inspections: a previously inspected
+        # cheap card can otherwise reclaim this slot on every fresh query.
+        # Offer the SAME one slot to the highest-ranked uninspected cheap card
+        # before considering another known inspection attempt. Unknown legacy
+        # history is not silently treated as proof of a previous inspection.
+        selected_value = any(item.value_inspection_candidate for item in selected)
+        selected_uninspected_value = any(
+            item.value_inspection_candidate and item.inspection_attempted is False
+            for item in selected
+        )
+        uninspected = [
+            item for item in ranked
+            if item.value_inspection_candidate and item.inspection_attempted is False
+        ]
+        policies = []
+        if uninspected and not selected_uninspected_value:
+            policies.extend((item, True) for item in uninspected)
+        if not selected_value:
+            policies.extend((item, False) for item in ranked if item.value_inspection_candidate)
+        for candidate, coverage_only in policies:
+            if candidate in selected:
                 continue
             path = candidate.primary_path or "unknown_interesting"
             path_cap = path_caps.get(path)
@@ -545,9 +574,13 @@ def select_stage_a_candidates(
             compatible = [
                 item
                 for item in reversed(selected)
-                if path_cap is None
-                or path_counts.get(path, 0) < path_cap
-                or (item.primary_path or "unknown_interesting") == path
+                if not item.detail_retry_overdue
+                and (not coverage_only or item.inspection_attempted is True)
+                and (
+                    path_cap is None
+                    or path_counts.get(path, 0) < path_cap
+                    or (item.primary_path or "unknown_interesting") == path
+                )
             ]
             if not compatible:
                 continue

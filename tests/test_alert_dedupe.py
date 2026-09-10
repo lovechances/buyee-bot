@@ -111,6 +111,21 @@ def test_same_material_listing_and_route_drift_do_not_realert() -> None:
     assert route_only.should_alert is False
 
 
+def test_known_type_normalization_change_is_not_a_new_listing_event():
+    previous = _state(last_alert_at=NOW - timedelta(days=2),
+                      last_material_identity="number (n)ine|core|denim|-|-|")
+    current = _snapshot(identity="number (n)ine|core|trousers|-|-|")
+    assert not _alert_event_decision(previous, current, now=NOW).should_alert
+
+
+def test_newly_resolved_identity_evidence_still_can_realert():
+    previous = _state(last_alert_at=NOW - timedelta(days=2),
+                      last_material_identity="number (n)ine|core|t_shirt|-|-|")
+    result = _alert_event_decision(previous, _snapshot(), now=NOW)
+    assert result.should_alert
+    assert result.event == "identity_materially_changed"
+
+
 def test_same_fixed_price_listing_unchanged_after_one_hour_does_not_realert() -> None:
     previous = _state(
         route="buyouts",

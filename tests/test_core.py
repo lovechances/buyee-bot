@@ -1103,6 +1103,7 @@ def test_detail_cache_avoids_browser_fetch_and_propagates_full_title(tmp_path):
         item_type_observed="knitwear",
         material_original="mohair",
         raw={
+            "page_url": "https://buyee.jp/item/cached-1",
             "heading": "Number (N)ine 2001SS Time Migration Skull Mohair Knit Size 3",
             "labels": [["Item Type", "knitwear"], ["Material", "mohair"]],
         },
@@ -2212,7 +2213,7 @@ def test_immature_cheap_silver_bid_is_not_an_implausibly_low_auth_price():
 
     assert evaluation.auction_maturity.price_actionable is False
     assert "implausibly low price for auth-sensitive item" not in evaluation.auth_risk.reasons
-    assert evaluation.auth_risk.level == "medium"
+    assert evaluation.auth_risk.level == "high"  # Item authentication, not provisional price.
 
 
 def test_auth_risk_uses_actionable_buyout_instead_of_low_current_bid():
@@ -2237,10 +2238,10 @@ def test_auth_risk_uses_actionable_buyout_instead_of_low_current_bid():
 
     assert evaluation.auction_maturity.price_actionable is True
     assert "implausibly low price for auth-sensitive item" not in evaluation.auth_risk.reasons
-    assert evaluation.auth_risk.level == "medium"
+    assert evaluation.auth_risk.level == "high"  # Seller/photos cannot close the auth gap.
 
 
-def test_supported_silver_piece_uses_silver_route_when_specific_auth_gaps_are_absent():
+def test_supported_sensitive_silver_remains_reviewable_without_item_authentication():
     listing = LiveListing(
         source="buyee",
         source_listing_id="chrome-silver-route",
@@ -2268,14 +2269,14 @@ def test_supported_silver_piece_uses_silver_route_when_specific_auth_gaps_are_ab
     ]
     evaluation = evaluate_listing(listing, comps)
 
-    assert evaluation.auth_risk.level == "medium"
+    assert evaluation.auth_risk.level == "high"
     assert evaluation.desirability.score >= 50
     assert evaluation.economics.comp_confidence == "medium"
     assert evaluation.economics.opportunity_score >= 70
-    assert _route_evaluation(listing, evaluation)[0] == "silver"
+    assert _route_evaluation(listing, evaluation)[0] == "review"
 
 
-def test_expensive_medium_risk_silver_without_value_evidence_is_suppressed():
+def test_expensive_unverified_sensitive_silver_without_value_evidence_is_suppressed():
     listing = LiveListing(
         source="buyee",
         source_listing_id="chrome-dealer-dagger",
@@ -2299,7 +2300,7 @@ def test_expensive_medium_risk_silver_without_value_evidence_is_suppressed():
 
     evaluation = evaluate_listing(listing)
 
-    assert evaluation.auth_risk.level == "medium"
+    assert evaluation.auth_risk.level == "high"
     assert evaluation.desirability.score >= 50
     assert evaluation.economics.comp_confidence == "none"
     assert evaluation.directional.thesis is None

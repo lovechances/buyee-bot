@@ -64,6 +64,41 @@ class AlertState(SQLModel, table=True):
     last_alert_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class AlertSendLedger(SQLModel, table=True):
+    """Compact durable evidence of successful sends, not a second listing payload."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    source: str
+    source_listing_id: str = Field(index=True)
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    signature: str
+    route: str
+    thesis: str | None = None
+    event: str | None = None
+    delivery: str | None = None
+    price_jpy: int | None = None
+    price_kind: str | None = None
+    material_identity: str | None = None
+    material_risk: str | None = None
+    material_evidence: str | None = None
+
+
+class ListingProtection(SQLModel, table=True):
+    """Explicit human evidence is durable; it never overrides live eligibility."""
+
+    __table_args__ = (UniqueConstraint("source", "source_listing_id"),)
+    key: str = Field(primary_key=True)
+    source: str
+    source_listing_id: str = Field(index=True)
+    pinned_at: datetime | None = None
+    pin_reason: str | None = None
+    feedback_label: str | None = None
+    feedback_at: datetime | None = None
+    feedback_provenance: str | None = None
+    feedback_history_json: str | None = None
+    purchased_at: datetime | None = None
+
+
 class StatusIncidentState(SQLModel, table=True):
     """Persistent, single-row dedupe state for quiet operational notices."""
 
@@ -159,6 +194,13 @@ def save_listings(listings: list[Any], path: str | Path = DB_PATH) -> tuple[int,
                 created += 1
             else:
                 for field_name, value in values.items():
+                    if field_name == "image_url" and value is None and (
+                        (getattr(row, "raw", None) or {}).get("image_integrity") or {}
+                    ).get("clear_persisted") is True:
+                        # Explicit acquisition integrity decision, not a generic
+                        # partial update: do not retain a rejected old thumbnail.
+                        existing.image_url = None
+                        continue
                     if value is not None and (
                         not isinstance(value, str) or bool(value.strip())
                     ):
@@ -198,6 +240,7 @@ def save_alert_state(
     material_evidence_state: str | None = None,
     verified_median_jpy: int | None = None,
     alert_event: str | None = None,
+    delivery: str | None = None,
 ) -> None:
     material_supplied = material_identity is not None
     with get_session(path) as session:
@@ -240,6 +283,20 @@ def save_alert_state(
                 state.last_verified_median_jpy = verified_median_jpy
                 state.last_alert_event = alert_event
             state.last_alert_at = datetime.now(UTC)
+        session.add(AlertSendLedger(
+            source=source,
+            source_listing_id=source_listing_id,
+            signature=signature,
+            route=route,
+            thesis=thesis,
+            event=alert_event,
+            delivery=delivery,
+            price_jpy=material_price_jpy,
+            price_kind=material_price_kind,
+            material_identity=material_identity,
+            material_risk=material_risk_state,
+            material_evidence=material_evidence_state,
+        ))
         session.commit()
 
 

@@ -37,7 +37,7 @@ def assess_attention(
     """
     if route == "review":
         return AttentionDecision("needs_review", "normal", "inspectable risk uncertainty")
-    if route in {"buyouts", "ending", "silver"}:
+    if route in {"buyouts", "silver"}:
         return AttentionDecision(
             "actionable_opportunity", "normal", "qualified actionable primary route"
         )
@@ -51,6 +51,8 @@ def assess_attention(
             )
         )
     )
+    if route == "ending" and credible_value:
+        return AttentionDecision("actionable_opportunity", "normal", "qualified value thesis approaching close")
     config = (settings or {}).get("alert", {})
     high_cost = float(config.get("unverified_grail_high_ticket_usd", 300))
     landed = evaluation.directional.landed_usd
@@ -63,7 +65,7 @@ def assess_attention(
         and has_grail_design_evidence(evaluation.directional.piece_signals)
     )
     quiet = bool(
-        route == "grails"
+        route in {"grails", "ending"}
         and config.get("quiet_unverified_high_ticket_archive", True)
         and high_cost > 0
         and landed is not None
@@ -76,7 +78,7 @@ def assess_attention(
         return AttentionDecision(
             "archive_discovery",
             "quiet",
-            "named archive; high acquisition cost without compelling value evidence",
+            "named archive; high acquisition cost without compelling value evidence; timing alone is not value",
         )
     return AttentionDecision(
         "archive_discovery", "normal", "qualified independent archive/piece evidence"

@@ -308,6 +308,10 @@ def diagnose_listing(
             "source=? AND source_listing_id=?",
             (source, listing_id),
         )
+        protection = _select_one(
+            connection, "listingprotection", "source=? AND source_listing_id=?",
+            (source, listing_id),
+        )
         query_state = None
         if seen and _table_exists(connection, "queryruntimestate"):
             query_columns = _columns(connection, "queryruntimestate")
@@ -431,6 +435,21 @@ def diagnose_listing(
         "latest_trace": latest_trace,
         "event_history": history,
         "alert_state": alert,
+        "human_evidence": protection,
+        "retention": {
+            "history_expired_at": (seen or {}).get("history_expired_at"),
+            "history_expiry_reason": (seen or {}).get("history_expiry_reason"),
+            "detail_expired_at": (seen or {}).get("detail_expired_at"),
+            "listing_expired_at": (seen or {}).get("listing_expired_at"),
+            "coverage": (
+                "partial_or_expired"
+                if (seen or {}).get("history_expired_at")
+                or (seen or {}).get("detail_expired_at")
+                or (seen or {}).get("listing_expired_at")
+                else "retained_or_legacy"
+            ),
+            "identity_ledger_retained": seen is not None,
+        },
         "dedupe": {
             "signature": (seen or {}).get("signature"),
             "next_standard_revisit": next_revisit,
@@ -441,6 +460,8 @@ def diagnose_listing(
         "legacy_limitations": (
             []
             if latest_trace
+            else ["historical evidence expired or was omitted under the explicit retention policy"]
+            if (seen or {}).get("history_expired_at")
             else [
                 "page/rank and per-stage event history were not recorded before this build",
                 "historical comp candidates cannot be reconstructed from aggregate scan events",

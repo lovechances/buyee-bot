@@ -53,7 +53,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "ultra-refinement-v9"
+DECISION_LOGIC_VERSION = "ultra-refinement-v10"
 
 
 @dataclass
@@ -158,6 +158,8 @@ def _compact_listing_trace(
         "item_type",
         "item_type_confident",
         "value_inspection_candidate",
+        "inspection_attempted",
+        "detail_retry_overdue",
         "actionable_price",
         "price_in_discovery_band",
         "discovery_price_fraction",
@@ -270,7 +272,8 @@ def _directional_why(evaluation: ListingEvaluation) -> str:
     elif profile.era:
         parts.append(profile.era.value.replace("_", " ").title())
     if profile.item_type:
-        parts.append(profile.item_type.value.replace("_", " "))
+        item = profile.item_subtype or profile.item_type
+        parts.append(item.value.replace("_", " "))
     if evaluation.directional.piece_signals:
         parts.append("/".join(evaluation.directional.piece_signals[:2]))
     if (
@@ -324,20 +327,16 @@ def _auth_reviewworthy(
         return True
     raw = listing.raw or {}
     photos = int(raw.get("detail_photo_count") or 0)
-    feedback = int(raw.get("seller_feedback_count") or 0)
     has_piece_identity = bool(
         has_iconic_piece_context(profile)
         or has_grail_design_evidence(evaluation.directional.piece_signals)
     )
-    # Sold-price evidence can establish market value; it cannot make a
-    # photo-less generic silver listing useful to authenticate.  Always demand
-    # inspectable piece identity and coverage, relaxing only seller-history
-    # depth when the economics themselves are credible.
+    # Coverage supports inspectability, never authenticity. A small seller is
+    # not itself disqualifying; neither a large seller nor photos certify it.
     minimum_photos = 2 if credible_economics else 4
     return bool(
         has_piece_identity
         and photos >= minimum_photos
-        and (credible_economics or feedback >= 20)
     )
 
 
@@ -566,6 +565,8 @@ def _post_detail_decision(
     economics = evaluation.economics
     risk = evaluation.auth_risk.level
     profile = evaluation.profile
+    if ((listing.raw or {}).get("stage_b") or {}).get("identity_conflict"):
+        return PostDetailDecision(None, "detail page does not match this listing", "detail_identity_conflict")
     low_priority_collaboration = bool(
         profile.relationship
         and profile.relationship.provenance.endswith(".collaboration_low_priority")
@@ -732,7 +733,7 @@ def _post_detail_decision(
         and (directional_value or credible_economics or true_grail)
     ):
         return PostDetailDecision(
-            "ending", "qualifying opportunity ending within the configured threshold"
+            "ending", f"{_directional_why(evaluation)}; ending within the configured threshold"
         )
     if true_grail:
         return PostDetailDecision("grails", _directional_why(evaluation))
@@ -946,6 +947,14 @@ def _alert_event_decision(
         and current.identity_confidence == "high"
         and previous.last_material_identity
         and previous.last_material_identity != current.identity
+        # Refining an already-known normalized type/era after a code change
+        # does not create a new acquisition event. Newly resolved identity
+        # evidence can; prices, timing and sold evidence have their own events.
+        and any(
+            old in {"", "-", "unknown", "uncertain"}
+            and new not in {"", "-", "unknown", "uncertain"}
+            for old, new in zip(previous.last_material_identity.split("|"), current.identity.split("|"))
+        )
     ):
         event = "identity_materially_changed"
     if (
@@ -1070,6 +1079,8 @@ async def scan_once(
                     "lifetime_first_seen": seen.lifetime_first_seen,
                     "material_state_changed": seen.material_state_changed,
                     "revisit_reason": seen.revisit_reason,
+                    "inspection_attempted": seen.inspection_attempted,
+                    "detail_retry_overdue": seen.detail_retry_overdue,
                 },
             }
             if seen.lifetime_first_seen:
@@ -1308,6 +1319,7 @@ async def scan_once(
             listing.source_listing_id in stage_b_ids
             and evaluation.desirability.score >= comp_threshold
             and evaluation.auth_risk.level != "do_not_touch"
+            and not ((listing.raw or {}).get("stage_b") or {}).get("identity_conflict")
         ):
             result.comp_queried += 1
             try:
@@ -1625,6 +1637,7 @@ async def scan_once(
                 material_evidence_state=material.evidence_state,
                 verified_median_jpy=material.verified_median_jpy,
                 alert_event=alert_event.event,
+                delivery=attention.delivery,
             )
             result.new_alerts += 1
             family_funnel(assessment.detected_family)["alerts"] += 1

@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 
 from sqlmodel import select
 
-from buyeeye import runtime_state
 from buyeeye.db import get_session
 from buyeeye.discovery import (
     MarketplaceSearchFilters,
@@ -645,7 +644,7 @@ def test_listing_trace_history_is_compact_and_bounded(tmp_path):
 
 
 def test_old_never_inspected_trace_is_pruned_without_removing_dedupe_identity(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     db_path = tmp_path / "state.db"
     mark_listing_seen("buyee", "cheap-reject", "sig-reject", "Roen", db_path)
@@ -682,7 +681,6 @@ def test_old_never_inspected_trace_is_pruned_without_removing_dedupe_identity(
             session.add(row)
         session.commit()
 
-    monkeypatch.setattr(runtime_state, "_last_trace_prune_at", None)
     record_listing_traces(
         {
             ("buyee", "inspected"): {
@@ -694,6 +692,10 @@ def test_old_never_inspected_trace_is_pruned_without_removing_dedupe_identity(
         },
         db_path,
     )
+    # Cleanup no longer depends on trace writes or a process-local timer.
+    from buyeeye.maintenance import run_maintenance_slice
+
+    run_maintenance_slice(db_path, force=True)
 
     with get_session(db_path) as session:
         rejected = session.exec(

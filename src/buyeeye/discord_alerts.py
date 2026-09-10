@@ -408,6 +408,8 @@ def build_listing_alert_payload(
         relationship = _relationship_label(evaluation)
         if relationship:
             signal_parts.append(f"Relationship {relationship}")
+        if _nested(evaluation, "profile", "auth_sensitive"):
+            signal_parts.append("Authenticity unverified")
         fields.append({"name": "Signal", "value": " | ".join(signal_parts), "inline": False})
         fields.append(
             {

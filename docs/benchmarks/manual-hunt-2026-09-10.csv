@@ -1,0 +1,27 @@
+benchmark_id,row,url_or_id,annotation,source,marketplace_id,user_feedback_tags
+manual-hunt-2026-09-10,1,https://buyee.jp/item/jdirectitems/auction/o1219575641,,buyee,o1219575641,manual_interest_unrated
+manual-hunt-2026-09-10,2,https://buyee.jp/item/jdirectitems/auction/n1217516540,a bit too expensive,buyee,n1217516540,price_objection
+manual-hunt-2026-09-10,3,https://buyee.jp/item/jdirectitems/auction/r1227256998,not my size and just a bit too expensive,buyee,r1227256998,size_constraint;price_objection
+manual-hunt-2026-09-10,4,https://buyee.jp/item/jdirectitems/auction/n1238725647,$46 balenciaga jeans…cmon bro…would be great ping,buyee,n1238725647,strong_alert_interest;user_reported_price
+manual-hunt-2026-09-10,5,https://buyee.jp/item/jdirectitems/auction/f1214226865,too expensive but cool piece,buyee,f1214226865,interesting_but_too_expensive
+manual-hunt-2026-09-10,6,https://buyee.jp/item/jdirectitems/auction/t1222582674,,buyee,t1222582674,manual_interest_unrated
+manual-hunt-2026-09-10,7,https://buyee.jp/item/jdirectitems/auction/g1201770622,,buyee,g1201770622,manual_interest_unrated
+manual-hunt-2026-09-10,8,https://buyee.jp/item/jdirectitems/auction/c1211862596,"not sure if authentic, would have to look",buyee,c1211862596,authenticity_uncertain
+manual-hunt-2026-09-10,9,https://buyee.jp/item/jdirectitems/auction/f1051997767,"not sure if authentic, would have to look",buyee,f1051997767,authenticity_uncertain
+manual-hunt-2026-09-10,10,https://buyee.jp/item/jdirectitems/auction/e1206936947,,buyee,e1206936947,manual_interest_unrated
+manual-hunt-2026-09-10,11,https://buyee.jp/item/jdirectitems/auction/e1244072587,,buyee,e1244072587,manual_interest_unrated
+manual-hunt-2026-09-10,12,https://buyee.jp/item/jdirectitems/auction/j1237781532,,buyee,j1237781532,manual_interest_unrated;longitudinal_overlap_prior_18
+manual-hunt-2026-09-10,13,https://buyee.jp/item/jdirectitems/auction/h1238476063,"low price, also includes authentication guarantee from Buyee",buyee,h1238476063,user_reported_low_price;user_reported_authentication_service
+manual-hunt-2026-09-10,14,https://buyee.jp/item/jdirectitems/auction/c1157326782,hate color but if piece was black or other color its cool,buyee,c1157326782,color_objection;conditional_design_interest
+manual-hunt-2026-09-10,15,https://buyee.jp/item/jdirectitems/auction/g1228389581,too expensive but cool,buyee,g1228389581,interesting_but_too_expensive
+manual-hunt-2026-09-10,16,https://buyee.jp/item/jdirectitems/auction/w1230036935,,buyee,w1230036935,manual_interest_unrated
+manual-hunt-2026-09-10,17,https://buyee.jp/item/jdirectitems/auction/x1184359198,not as good as the $1 the bot found but decent lol,buyee,x1184359198,decent_relative_interest
+manual-hunt-2026-09-10,18,https://buyee.jp/item/jdirectitems/auction/u1234723893,,buyee,u1234723893,manual_interest_unrated
+manual-hunt-2026-09-10,19,https://buyee.jp/item/jdirectitems/auction/x1243943183,"a bit too expensive, design isn’t anything cool",buyee,x1243943183,price_objection;low_design_interest
+manual-hunt-2026-09-10,20,https://buyee.jp/item/jdirectitems/auction/r1229681678,"way too expensive, but cool tee",buyee,r1229681678,interesting_but_too_expensive
+manual-hunt-2026-09-10,21,https://buyee.jp/item/jdirectitems/auction/k1236929442,"good price, wouldn’t buy piece",buyee,k1236929442,good_price_but_personally_unwanted
+manual-hunt-2026-09-10,22,https://buyee.jp/item/jdirectitems/auction/c1239443570,"bot sent this before, bought them just now",buyee,c1239443570,purchase_reported;bot_origin_reported
+manual-hunt-2026-09-10,23,https://buyee.jp/item/jdirectitems/auction/d1184054169,a bit pricey but considerable purchase,buyee,d1184054169,price_objection;purchase_consideration
+manual-hunt-2026-09-10,24,https://buyee.jp/item/jdirectitems/auction/b1231732915,iffy but decent price,buyee,b1231732915,uncertain_interest;decent_price
+manual-hunt-2026-09-10,25,https://buyee.jp/item/jdirectitems/auction/t1228669967?conversionType=jdirectitems_auction_DirectSearch,quite a bit too much but good piece,buyee,t1228669967,interesting_but_too_expensive
+manual-hunt-2026-09-10,26,https://buyee.jp/item/jdirectitems/auction/g1223149511?conversionType=jdirectitems_auction_DirectSearch,may buy these,buyee,g1223149511,purchase_consideration

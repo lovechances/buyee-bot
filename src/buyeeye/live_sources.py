@@ -5,9 +5,10 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
 import httpx
 import yaml
@@ -23,6 +24,60 @@ from .browser_session import (
 from .db import DB_PATH, save_listings
 from .discovery import MarketplaceSearchFilters
 from .normalize import normalize_brand, normalize_text
+
+
+def search_card_payload_script() -> str:
+    return (
+        """
+        () => {
+          const cards = Array.from(document.querySelectorAll(
+            __PRIMARY_SEARCH_CARD_SELECTOR__
+          ));
+          return cards.map((card, index) => {
+            const links = Array.from(card.querySelectorAll(
+              'a[href*="/item/jdirectitems/auction/"]'
+            ));
+            const titleLink = card.querySelector(
+              '.itemCard__itemName a[href*="/item/jdirectitems/auction/"]'
+            );
+            const link = titleLink || links[0];
+            const titleNode = card.querySelector(
+              '.itemCard__itemName, .top-items__title, .top-items__name, '
+              + '[data-item-title], h2, h3'
+            );
+            const itemPath = href => {
+              try { return new URL(href, document.baseURI).pathname.replace(/[/]$/, ''); }
+              catch { return ''; }
+            };
+            const imageLinks = links.filter(a => itemPath(a.href) === itemPath(link?.href));
+            const image = imageLinks.flatMap(a => [...a.querySelectorAll('img')])[0];
+            const attributes = image ? Object.fromEntries(
+              ['src', 'data-src', 'data-original', 'srcset', 'data-srcset']
+                .map(name => [name, image.getAttribute(name) || ''])
+            ) : {};
+            return {
+              association_version: 1,
+              search_rank_on_page: index + 1,
+              href: link?.href || '',
+              card_item_hrefs: [...card.querySelectorAll(
+                'a[href*="/item/jdirectitems/auction/"], a[href*="/item/yahoo/auction/"], '
+                + 'a[href*="/paypayfleamarket/item/"]'
+              )].map(a => a.href),
+              text: (card.innerText || '').replace(/\\s+/g, ' ').trim(),
+              item_title: (titleNode?.textContent || '').replace(/\\s+/g, ' ').trim(),
+              title: (titleLink?.textContent || link?.getAttribute('title')
+                || link?.getAttribute('aria-label') || '')
+                .replace(/\\s+/g, ' ').trim(),
+              image_attributes: {...attributes, current_src: image?.currentSrc || ''},
+              image_href: image?.closest('a')?.href || '',
+              image_alt: image?.alt || '',
+              data_title: titleLink?.getAttribute('data-title')
+                || link?.getAttribute('data-title') || ''
+            };
+          }).filter(x => x.href).slice(0, 500);
+        }
+        """
+    ).replace("__PRIMARY_SEARCH_CARD_SELECTOR__", json.dumps(_PRIMARY_SEARCH_CARD_SELECTOR))
 
 
 class AuthExpiredError(RuntimeError):
@@ -41,6 +96,63 @@ _PAGINATION_PAGE_PATTERN = re.compile(
 _PRIMARY_SEARCH_CARD_SELECTOR = ".g-main > ul.auctionSearchResult > li.itemCard"
 
 
+def buyee_item_id(url: str) -> str | None:
+    """An item identity comes from a Buyee item path, never arbitrary URL text."""
+    parsed = urlsplit(urljoin("https://buyee.jp", url))
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
+        "buyee.jp", "www.buyee.jp",
+    }:
+        return None
+    match = re.fullmatch(
+        r"/item/(?:(?:jdirectitems|yahoo)/auction/)?([A-Za-z0-9_-]+)/?", parsed.path
+    )
+    return match.group(1) if match else None
+
+
+def image_url_from_attributes(attributes: dict[str, Any]) -> str | None:
+    """Read an already item-bound image; lazy placeholders are not product photos."""
+    candidates = [attributes.get("data-src"), attributes.get("data-original")]
+    for name in ("data-srcset", "srcset"):
+        # Prefer the largest declared source. Do not mistake a density descriptor
+        # or a data: placeholder for an image URL.
+        entries = []
+        for entry in str(attributes.get(name) or "").split(","):
+            parts = entry.strip().split()
+            if not parts:
+                continue
+            descriptor = re.fullmatch(r"([0-9.]+)[wx]", parts[-1]) if len(parts) > 1 else None
+            weight = float(descriptor.group(1)) if descriptor else 0
+            entries.append((weight, parts[0]))
+        candidates.extend(url for _, url in sorted(entries, reverse=True))
+    # During a lazy/recycled image transition currentSrc can still describe the
+    # previous resource. Prefer the current DOM's explicit item-bound URL.
+    candidates.extend([attributes.get("src"), attributes.get("current_src")])
+    for value in candidates:
+        if not value or str(value).startswith("data:"):
+            continue
+        url = urljoin("https://buyee.jp", str(value))
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            continue
+        if re.search(
+            r"(?i)(?:^|[/_.-])(?:loading|spacer|blank|transparent|placeholder|noimage|no-image|logo|badge)"
+            r"(?:[/_.-]|$)|\.(?:svg|gif)$", parsed.path,
+        ):
+            continue
+        return url
+    return None
+
+
+def clean_marketplace_title(value: str) -> str:
+    """Remove observed site/badge chrome, never garment wording such as NEW."""
+    title = normalize_text(value)
+    title = re.split(r"\s*/【Buyee】|\s+\|\s+Buyee\b", title, maxsplit=1)[0].strip()
+    return re.sub(
+        r"\s*(?:Appraisal option available(?:\s*NEW)?|With Authentication)\s*$",
+        "", title, flags=re.IGNORECASE,
+    ).strip()
+
+
 def _parser_failure_shape(url: str, status: int | None, shape: dict[str, Any]) -> dict[str, Any]:
     """Keep response structure, never page content, credentials, or URL parameters."""
     path = urlsplit(url).path
@@ -54,6 +166,7 @@ def _parser_failure_shape(url: str, status: int | None, shape: dict[str, Any]) -
     for field in (
         "primary_containers", "primary_lists", "primary_cards",
         "primary_auction_links", "all_auction_links",
+        "primary_supported_links", "primary_paypay_links", "primary_missing_href",
     ):
         value = shape.get(field)
         counts[field] = max(0, value) if type(value) is int else None
@@ -70,18 +183,7 @@ async def _log_parser_failure_shape(page: Any, response: Any, reason: str) -> No
     """A diagnostic failure must never replace the scanner's original safe failure."""
     try:
         shape = await page.evaluate(
-            """selector => ({
-              ready_state: document.readyState,
-              primary_containers: document.querySelectorAll('.g-main').length,
-              primary_lists: document.querySelectorAll('.g-main > ul.auctionSearchResult').length,
-              primary_cards: document.querySelectorAll(selector).length,
-              primary_auction_links: document.querySelectorAll(
-                selector + ' a[href*="/item/jdirectitems/auction/"]'
-              ).length,
-              all_auction_links: document.querySelectorAll(
-                'a[href*="/item/jdirectitems/auction/"]'
-              ).length
-            })""",
+            parser_failure_shape_script(),
             _PRIMARY_SEARCH_CARD_SELECTOR,
         )
         evidence = _parser_failure_shape(
@@ -95,6 +197,39 @@ async def _log_parser_failure_shape(page: Any, response: Any, reason: str) -> No
         logging.getLogger("buyeeye.runtime").warning(
             "parser_failure_shape_unavailable error=%s", type(exc).__name__
         )
+
+
+def parser_failure_shape_script() -> str:
+    """Counts distinguish known unsupported cards from absent href hydration.
+
+    They do not assert why a source failed or silently turn that failure into a
+    healthy empty scan. PayPay's known path is diagnostic-only, not acquisition.
+    """
+    return """selector => {
+      const cards = [...document.querySelectorAll(selector)];
+      const links = cards.flatMap(card => [...card.querySelectorAll('a[href]')]);
+      const pathIs = (anchor, prefix) => {
+        try {
+          const url = new URL(anchor.href, document.baseURI);
+          return ['buyee.jp', 'www.buyee.jp'].includes(url.hostname)
+            && url.pathname.startsWith(prefix);
+        } catch { return false; }
+      };
+      return {
+        ready_state: document.readyState,
+        primary_containers: document.querySelectorAll('.g-main').length,
+        primary_lists: document.querySelectorAll('.g-main > ul.auctionSearchResult').length,
+        primary_cards: cards.length,
+        primary_auction_links: document.querySelectorAll(
+          selector + ' a[href*="/item/jdirectitems/auction/"]'
+        ).length,
+        primary_supported_links: links.filter(a => pathIs(a, '/item/jdirectitems/auction/')).length,
+        primary_paypay_links: links.filter(a => pathIs(a, '/paypayfleamarket/item/')).length,
+        primary_missing_href: cards.filter(card => ![...card.querySelectorAll('a')]
+          .some(a => (a.getAttribute('href') || '').trim())).length,
+        all_auction_links: document.querySelectorAll('a[href*="/item/jdirectitems/auction/"]').length
+      };
+    }"""
 
 
 def _bound_page_number(data_bind: str | None) -> int | None:
@@ -272,41 +407,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                 )
                 await page.wait_for_timeout(8000)
                 primary_card_selector = json.dumps(_PRIMARY_SEARCH_CARD_SELECTOR)
-                listing_script = (
-                    """
-                    () => {
-                      const cards = Array.from(document.querySelectorAll(
-                        __PRIMARY_SEARCH_CARD_SELECTOR__
-                      ));
-                      return cards.map(card => {
-                        const links = Array.from(card.querySelectorAll(
-                          'a[href*="/item/jdirectitems/auction/"]'
-                        ));
-                        const titleLink = card.querySelector(
-                          '.itemCard__itemName a[href*="/item/jdirectitems/auction/"]'
-                        );
-                        const link = titleLink || links[0];
-                        const titleNode = card.querySelector(
-                          '.itemCard__itemName, .top-items__title, .top-items__name, '
-                          + '[data-item-title], h2, h3'
-                        );
-                        const image = card.querySelector('img');
-                        return {
-                          href: link?.href || '',
-                          text: (card.innerText || '').replace(/\\s+/g, ' ').trim(),
-                          item_title: (titleNode?.textContent || '').replace(/\\s+/g, ' ').trim(),
-                          title: (titleLink?.textContent || link?.getAttribute('title')
-                            || link?.getAttribute('aria-label') || '')
-                            .replace(/\\s+/g, ' ').trim(),
-                          image_url: image?.currentSrc || image?.src || '',
-                          image_alt: image?.alt || '',
-                          data_title: titleLink?.getAttribute('data-title')
-                            || link?.getAttribute('data-title') || ''
-                        };
-                      }).filter(x => x.href).slice(0, 500);
-                    }
-                    """
-                ).replace("__PRIMARY_SEARCH_CARD_SELECTOR__", primary_card_selector)
+                listing_script = search_card_payload_script()
                 card_signature_script = (
                     """
                     () => [...new Set(Array.from(document.querySelectorAll(
@@ -340,7 +441,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                         seen_page_signatures.add(page_signature)
                     for rank, row in enumerate(data, start=1):
                         row["search_page"] = current_page
-                        row["search_rank_on_page"] = rank
+                        row.setdefault("search_rank_on_page", rank)
                     all_rows.extend(data)
                     self.last_page_count += 1
                     # The budget counts pages fetched, not pages parsed.  Do
@@ -423,7 +524,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                     recovered_rows = await page.evaluate(listing_script)
                     for rank, row in enumerate(recovered_rows, start=1):
                         row["search_page"] = current_page
-                        row["search_rank_on_page"] = rank
+                        row.setdefault("search_rank_on_page", rank)
                     all_rows.extend(recovered_rows)
                     if all_rows:
                         self.parser_reload_successes += 1
@@ -460,14 +561,7 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _item_id_from_href(href: str) -> str:
-        match = re.search(r"/auction/([A-Za-z0-9]+)(?:\?|$)", href)
-        if match:
-            return match.group(1)
-        match = re.search(r"/item/([A-Za-z0-9]+)(?:\?|$)", href)
-        if match:
-            return match.group(1)
-        compact = re.sub(r"[^A-Za-z0-9]", "", href)
-        return compact[-32:] if len(compact) > 32 else compact
+        return buyee_item_id(href) or ""
 
     @staticmethod
     def _is_primary_search_result(href: str, query: str | None) -> bool:
@@ -494,7 +588,7 @@ class BuyeeAuthenticatedSource(ListingSource):
         ):
             value = row.get(key)
             if value:
-                cleaned = normalize_text(str(value))
+                cleaned = clean_marketplace_title(str(value))
                 if cleaned and not re.search(
                     r"(?i)Time Remaining|YEN|JPY|US\$|^With Authentication$|"
                     r"^(?:With Authentication\s+)?\d+%\s*OFF$",
@@ -564,6 +658,11 @@ class BuyeeAuthenticatedSource(ListingSource):
             item_id = BuyeeAuthenticatedSource._item_id_from_href(href)
             if not item_id or item_id in seen:
                 continue
+            card_ids = {buyee_item_id(str(url)) for url in row.get("card_item_hrefs", [])}
+            if card_ids - {item_id}:
+                # Whole-card text supplies price as well as title. A card that
+                # contains competing item identities cannot safely supply either.
+                continue
             title = BuyeeAuthenticatedSource._extract_card_title(row)
             title_original = title
             if title_original and title_original.lower() in {"time remaining", ""}:
@@ -574,6 +673,10 @@ class BuyeeAuthenticatedSource(ListingSource):
             time_remaining = BuyeeAuthenticatedSource._extract_time_remaining(text)
             price = BuyeeAuthenticatedSource._extract_price(text)
             buyout_price = BuyeeAuthenticatedSource._extract_buyout_price(text)
+            image_url = None
+            image_bound = buyee_item_id(str(row.get("image_href") or "")) == item_id
+            if image_bound:
+                image_url = image_url_from_attributes(row.get("image_attributes") or {})
             raw_page = row.get("search_page")
             search_page = raw_page if isinstance(raw_page, int) and raw_page > 0 else None
             if search_page is not None:
@@ -591,7 +694,20 @@ class BuyeeAuthenticatedSource(ListingSource):
                 "time_remaining": time_remaining,
                 "bid_count": BuyeeAuthenticatedSource._extract_bid_count(text),
                 "watch_count": BuyeeAuthenticatedSource._extract_watch_count(text),
-                "image_url": row.get("image_url") or row.get("img_src") or None,
+                "image_url": image_url,
+                "image_integrity": {
+                    "status": "card_bound" if image_url else "unavailable",
+                    "source": "buyee", "source_listing_id": item_id,
+                    "clear_persisted": image_url is None,
+                },
+                "search_card": {
+                    "source": "buyee", "source_listing_id": item_id,
+                    "observed_at": datetime.now(UTC).isoformat(),
+                    "url": href, "title_original": title_original,
+                    "title_observed": row.get("item_title") or row.get("title"),
+                    "current_price": price, "buyout_price": buyout_price,
+                    "image_url": image_url,
+                },
                 "buyout_indicator": "buyout" if buyout_price is not None else None,
                 "search_page": search_page,
                 "search_rank_on_page": rank_on_page,
@@ -613,7 +729,7 @@ class BuyeeAuthenticatedSource(ListingSource):
                     starting_price=price,
                     seller_name=None,
                     condition=None,
-                    image_url=row.get("image_url") or row.get("img_src") or None,
+                    image_url=image_url,
                     time_remaining=time_remaining,
                     buyout_indicator=raw["buyout_indicator"],
                     bid_count=raw["bid_count"],
@@ -627,7 +743,7 @@ class BuyeeAuthenticatedSource(ListingSource):
     def _parse_listing_html(html: str, query: str | None = None) -> list[LiveListing]:
         soup = BeautifulSoup(html, "lxml")
         rows: list[dict[str, Any]] = []
-        for card in soup.select(_PRIMARY_SEARCH_CARD_SELECTOR):
+        for dom_rank, card in enumerate(soup.select(_PRIMARY_SEARCH_CARD_SELECTOR), start=1):
             links = card.select("a[href*='/item/jdirectitems/auction/']")
             title_link = card.select_one(
                 ".itemCard__itemName a[href*='/item/jdirectitems/auction/']"
@@ -639,11 +755,26 @@ class BuyeeAuthenticatedSource(ListingSource):
                 ".itemCard__itemName, .top-items__title, .top-items__name, "
                 "[data-item-title], h2, h3"
             )
-            image = card.select_one("img")
             href = str(link.get("href") or "")
+            item_id = buyee_item_id(href)
+            image = next(
+                (
+                    image
+                    for anchor in links if buyee_item_id(str(anchor.get("href") or "")) == item_id
+                    for image in anchor.select("img")
+                ),
+                None,
+            )
             rows.append(
                 {
+                    "association_version": 1,
                     "href": href if href.startswith("http") else f"https://buyee.jp{href}",
+                    "card_item_hrefs": [
+                        str(anchor.get("href") or "") for anchor in card.select(
+                            'a[href*="/item/jdirectitems/auction/"], '
+                            'a[href*="/item/yahoo/auction/"], a[href*="/paypayfleamarket/item/"]'
+                        )
+                    ],
                     "text": card.get_text(" ", strip=True),
                     "item_title": title_node.get_text(" ", strip=True) if title_node else "",
                     "title": (
@@ -651,11 +782,12 @@ class BuyeeAuthenticatedSource(ListingSource):
                         if title_link
                         else link.get("title") or link.get_text(" ", strip=True)
                     ),
-                    "image_url": image.get("src") if image else "",
+                    "image_attributes": dict(image.attrs) if image else {},
+                    "image_href": str(image.find_parent("a").get("href") or "") if image else "",
                     "image_alt": image.get("alt") if image else "",
                     "data_title": link.get("data-title") or "",
                     "search_page": 1,
-                    "search_rank_on_page": len(rows) + 1,
+                    "search_rank_on_page": dom_rank,
                 }
             )
             if len(rows) >= 500:

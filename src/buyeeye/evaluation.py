@@ -531,6 +531,12 @@ def _phrase_present(text: str, phrase: str) -> bool:
 
 
 def _piece_signals(profile: FashionProfile, evidence_text: str) -> tuple[str, ...]:
+    # SKULL is also a golf collection name. Require an explicit depiction
+    # phrase before treating that name as an observed design on the item.
+    if profile.brand and profile.brand.value == "Oakley" and not re.search(
+        r"(?i)skull\s+(?:print|graphic|motif|embroid)|スカル(?:柄|刺繍|プリント)", evidence_text
+    ):
+        evidence_text = re.sub(r"(?i)\bskull\b|スカル", " ", evidence_text)
     signals = {
         term for term in _DIRECTIONAL_DESIGN_TERMS if _phrase_present(evidence_text, term)
     }
@@ -1486,12 +1492,21 @@ def assess_auth_risk(profile: FashionProfile, title: str, price_jpy: int | None,
     if counterfeit:
         points += 100
         reasons.append("counterfeit-associated seller wording")
-    if raw.get("provenance_inconsistency"):
+    if raw.get("provenance_inconsistency") or (raw.get("stage_b") or {}).get("identity_conflict"):
         points += 100
         reasons.append("materially contradictory identity evidence")
     if profile.auth_sensitive:
         points += 15
         reasons.append("frequently counterfeited brand/category")
+        if profile.category and profile.category.value == "jewelry":
+            # A seller rating, image count, cheap price or service-availability
+            # badge is not item-level authentication. Keep the claim separate
+            # from the manufacturer's identity and the price opportunity.
+            points += 30
+            reasons.append("item-level authentication unverified for sensitive jewelry")
+        if re.search(r"(?i)\b(?:coated|coating|plated|plating|silver\s+coat)\b|メッキ|コーティング", title):
+            points += 30
+            reasons.append("plated/coated material wording requires item-specific review")
         if price_jpy is not None and price_jpy < 5_000:
             points += 30
             reasons.append("implausibly low price for auth-sensitive item")
@@ -1513,7 +1528,7 @@ def assess_auth_risk(profile: FashionProfile, title: str, price_jpy: int | None,
         reasons.append(
             f"seller feedback {feedback_percent:g}% across {feedback_count:,} ratings"
         )
-    if counterfeit or raw.get("provenance_inconsistency"):
+    if counterfeit or raw.get("provenance_inconsistency") or (raw.get("stage_b") or {}).get("identity_conflict"):
         level = "do_not_touch"
     elif points >= 45:
         level = "high"

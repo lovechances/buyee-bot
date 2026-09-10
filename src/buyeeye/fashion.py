@@ -73,6 +73,7 @@ class FashionProfile:
     era: Evidence | None = None
     collection: Evidence | None = None
     item_type: Evidence | None = None
+    item_subtype: Evidence | None = None
     category: Evidence | None = None
     material: Evidence | None = None
     season: Evidence | None = None
@@ -93,7 +94,8 @@ def load_taxonomy() -> dict[str, Any]:
 
 def _term_matches(text: str, term: str) -> bool:
     """Match Latin tokens/phrases on boundaries while preserving Japanese substring matching."""
-    needle = normalize_text(str(term)).casefold()
+    needle = normalize_text(str(term)).casefold().replace("’", "'")
+    text = text.replace("’", "'")
     if not needle:
         return False
     # Taxonomy season shorthands intentionally overlap forms such as 2001SS:
@@ -139,7 +141,20 @@ def _item_type_evidence(
     Sellers commonly join a Latin motif/model directly to Tシャツ. Generic
     Latin boundaries remain unchanged for brand, counterfeit and other tokens.
     """
-    matched = _first_match(text, item_types, "taxonomy.item_types")
+    # Materials and decorative attributes are not the offered object. A denim
+    # hat, knit glove or chain-pattern tie must not become jeans/knitwear/silver.
+    object_text = re.sub(
+        r"(?i)\b(?:chain|skull|ring)\s*[- ]?(?:pattern(?:ed)?|print(?:ed)?|motif)\b"
+        r"|(?:チェーン|スカル|リング)(?:柄|プリント)", " ", text,
+    )
+    material_terms = {"denim", "デニム", "knit", "ニット", "mohair", "モヘア"}
+    nouns = {
+        kind: [term for term in terms if normalize_text(term).casefold() not in material_terms]
+        for kind, terms in item_types.items()
+    }
+    matched = _first_match(object_text, nouns, "taxonomy.item_types")
+    if matched is None:
+        matched = _first_match(object_text, item_types, "taxonomy.item_types")
     tee_categories = {
         "t-shirts", "t shirts", "t-shirts & tanks", "short sleeve t shirts",
         "long sleeve t shirts", "tシャツ", "半袖tシャツ", "長袖tシャツ",
@@ -1432,12 +1447,30 @@ def enrich_title(
     text = normalize_text(title).casefold()
     profile = FashionProfile()
     profile.item_type = _item_type_evidence(
-        text, taxonomy.get("item_types", {}), category_hierarchy
+        normalize_text(scope_title).casefold() if scope_title else text,
+        taxonomy.get("item_types", {}), category_hierarchy
     )
+    if profile.item_type is None and scope_title:
+        # Stage B must still resolve a noun-less card from the richer evidence.
+        # This fallback cannot overrule an explicit object already in the title.
+        profile.item_type = _item_type_evidence(text, taxonomy.get("item_types", {}), category_hierarchy)
+    if profile.item_type:
+        subtype = _first_match(
+            normalize_text(scope_title).casefold() if scope_title else text,
+            {"polo": ["polo", "ポロシャツ"], "shorts": ["shorts", "ショーツ", "ハーフパンツ"],
+             "gloves": ["gloves", "手袋"], "hat": ["hat", "帽子", "ハット"],
+             "tie": ["necktie", "tie", "ネクタイ"], "skirt": ["skirt", "スカート"]},
+            "title.object_subtype",
+        )
+        if subtype:
+            profile.item_subtype = subtype
     matched_brand: dict[str, Any] | None = None
     collaboration_match: tuple[str, tuple[str, ...]] | None = None
 
-    brand_match = _brand_match(text, taxonomy)
+    # Description boilerplate can name other houses. Prefer the offered title
+    # over those references; query hints still never establish manufacture.
+    title_match = _brand_match(normalize_text(scope_title).casefold(), taxonomy) if scope_title else None
+    brand_match = title_match or _brand_match(text, taxonomy)
     observed_text = normalize_text(brand_observed).casefold()
     observed_match = _brand_match(observed_text, taxonomy) if observed_text else None
     if brand_match is None and observed_match is not None:
@@ -1545,6 +1578,10 @@ def enrich_title(
                         str(term), 0.85, f"taxonomy.brands.{brand_key}.generic_signals", str(term)
                     )
                 )
+        if record.get("designer_requires_era") and not (profile.era or profile.collection):
+            # A house name alone cannot date vintage/licensed inventory to the
+            # contemporary designer. Preserve maker recognition, not that era.
+            profile.designer = None
 
     profile.material = _first_match(text, taxonomy.get("materials", {}), "taxonomy.materials")
     season_match = re.search(r"(?i)\b((?:aw|fw|ss)\s?\d{2}|\d{2}\s?(?:aw|fw|ss))\b", text)

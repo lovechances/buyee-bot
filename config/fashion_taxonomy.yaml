@@ -3,7 +3,7 @@ provenance: manual_v1_research
 
 relationship_terms:
   style_reference_prefixes: ["inspired by", "inspired", "in the style of", "homage to", "homage", "オマージュ"]
-  style_reference_suffixes: ["inspired", "style", "type", "like", "homage", "風", "タイプ", "系", "スタイル", "オマージュ"]
+  style_reference_suffixes: ["inspired", "style", "type", "like", "homage", "風", "タイプ", "系", "スタイル", "オマージュ", "好きに", "好きな方", "好きの方", "好きへ"]
   cultural_reference_phrases: ["the devil wears prada", "devil wears prada", "プラダを着た悪魔"]
 
 product_scope_terms:
@@ -76,6 +76,7 @@ brands:
     canonical: "Saint Laurent"
     aliases: ["saint laurent", "saint laurent paris", "ysl", "サンローラン", "サンローランパリ", "yves saint laurent", "イヴ・サンローラン", "イヴサンローラン", "イブサンローラン"]
     designer: "Hedi Slimane"
+    designer_requires_era: true
     eras:
       hedi_slimane: ["hedi", "エディ", "2013", "2014", "2015", "2016"]
     iconic_signals:
@@ -88,6 +89,7 @@ brands:
     canonical: "Celine"
     aliases: ["celine homme", "celine", "céline", "セリーヌ"]
     designer: "Hedi Slimane"
+    designer_requires_era: true
     eras:
       hedi_slimane: ["hedi slimane", "エディ・スリマン", "エディスリマン", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]
     menswear_categories: ["jacket", "coat", "shirt", "t_shirt", "knitwear", "denim", "trousers", "footwear", "bag", "belt", "wallet", "accessory"]
@@ -287,6 +289,9 @@ brands:
   dolce_gabbana:
     canonical: "Dolce & Gabbana"
     aliases: ["dolce & gabbana", "dolce&gabbana", "dolce and gabbana", "ドルチェ&ガッバーナ", "ドルチェ＆ガッバーナ", "ドルチェアンドガッバーナ"]
+    recognition_aliases: ["D&G", "D & G", "ディーアンドジー"]
+    relationships:
+      diffusion: ["D&G", "D & G", "ディーアンドジー"]
   roberto_cavalli:
     canonical: "Roberto Cavalli"
     aliases: ["roberto cavalli", "ロベルトカヴァリ", "ロベルト カヴァリ"]
@@ -316,14 +321,15 @@ item_types:
   knitwear: ["knitwear", "knit", "sweater", "jumper", "mohair", "cardigan", "ニット", "セーター", "モヘア", "カーディガン"]
   hoodie: ["hoodie", "hooded sweatshirt", "sweatshirt", "sweat shirt", "hooded", "パーカー", "フーディ", "スウェット", "トレーナー"]
   t_shirt: ["t-shirt", "t shirt", "tshirt", "tee", "long sleeve tee", "tシャツ", "カットソー", "ロンT"]
-  shirt: ["shirt", "button-up", "button up", "button-down", "button down", "open collar", "シャツ", "開襟"]
+  shirt: ["shirt", "button-up", "button up", "button-down", "button down", "open collar", "polo shirt", "polo", "ポロシャツ", "シャツ", "開襟"]
+  skirt: ["skirt", "スカート"]
   denim: ["denim", "jeans", "デニム", "ジーンズ", "Gパン"]
   trousers: ["sweatpants", "sweat pants", "sweats", "pants", "trousers", "trouser", "slacks", "cargo pants", "shorts", "スウェットパンツ", "パンツ", "スラックス", "カーゴ", "ショーツ", "ボトムス"]
   footwear: ["engineer boots", "chelsea boots", "side-gore boots", "boots", "boot", "sneakers", "sneaker", "shoes", "loafer", "derby", "sandals", "エンジニアブーツ", "サイドゴアブーツ", "ブーツ", "スニーカー", "シューズ", "ローファー", "サンダル"]
   bag: ["shoulder bag", "crossbody bag", "tote bag", "backpack", "duffle bag", "briefcase", "bag", "ショルダーバッグ", "トートバッグ", "バックパック", "ブリーフケース", "バッグ", "鞄", "リュック"]
   belt: ["belt", "ベルト"]
   wallet: ["wallet", "card holder", "card case", "coin case", "財布", "カードケース", "コインケース"]
-  accessory: ["keyholder", "scarf", "hat", "cap", "necktie", "tie", "gloves", "sunglasses", "キーホルダ", "スカーフ", "帽子", "キャップ", "ネクタイ", "手袋", "サングラス"]
+  accessory: ["keyholder", "scarf", "hat", "cap", "necktie", "tie", "gloves", "sunglasses", "キーホルダ", "スカーフ", "帽子", "ハット", "キャップ", "ネクタイ", "手袋", "サングラス"]
 
 materials:
   silver: ["sterling silver", "silver", "sterling", "sv925", "s925", "925", "シルバー", "銀製"]
@@ -335,7 +341,7 @@ materials:
 negative_terms:
   irrelevant: ["poster", "figure", "doll", "toy", "phone case", "pants hanger", "ポスター", "フィギュア", "人形", "ぬいぐるみ", "スマホケース", "パンツハンガー"]
   counterfeit: ["counterfeit", "replica", "fake", "偽物", "コピー品", "模倣品", "レプリカ"]
-  non_target_maker: ["no brand", "ノーブランド", "社外品"]
+  non_target_maker: ["no brand", "ノーブランド", "社外品", "MEN'S MELROSE", "メンズメルローズ", "SUPER TUFF", "SUPERTUFF"]
   generic: ["basic", "logo tee", "plain", "simple", "シンプル", "無地", "ノベルティ", "販促", "付録"]
 
 corpus_sources:

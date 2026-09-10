@@ -293,6 +293,7 @@ def test_cached_detail_keeps_fresh_search_card_auction_state(tmp_path):
             bid_count=1,
             watch_count=2,
             raw={
+                "page_url": "https://buyee.jp/item/jdirectitems/auction/cached-price",
                 "heading": "Maison Margiela reconstructed denim jacket",
                 "labels": [
                     ["Current Price", "1,000 YEN"],
