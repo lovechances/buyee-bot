@@ -148,8 +148,10 @@ A low current bid is not substituted for an absent or over-ceiling buyout. Exist
 
 ## Post-change replay and natural validation
 
-Post-change `ultra-refinement-v10` working-tree replay was captured at **September 10, 22:06:46 UTC** against the same immutable baseline. It produced **no changed final-route outcome among the 26**. The purchase-positive shorts now retain the shorts subtype separately from denim material (broad type trousers); their latest stale one-day auction observation still does not replay as actionable. Historical delivery and purchase evidence remain unchanged.
+Post-change `ultra-refinement-v10` working-tree replay was captured at **September 10, 22:06:46 UTC** against the same immutable baseline, then confirmed against the final source at **22:15:22 UTC**. It produced **no changed final-route outcome among the 26**. The purchase-positive shorts now retain the shorts subtype separately from denim material (broad type trousers); their latest stale one-day auction observation still does not replay as actionable. Historical delivery and purchase evidence remain unchanged.
 
 The fourteen uncaptured objects still have no replayable identity. Recomputing the known records did not manufacture detail evidence, simulate production selection, or resolve their source availability. The bounded selector improvement is demonstrated separately on an identical retained card cohort above; it is not credited with a new benchmark discovery or useful alert.
 
 Natural post-deployment observations remain pending. Unit tests, development calibration, and offline replay do not establish better recommendation quality or maintenance readiness by themselves.
+
+Final local verification: **590 tests passed**, including the bounded reserve, overdue failed-retry and unknown-gallery review regressions; Ruff and compile checks passed. The follow-on primary-image review repair does not change the 26 frozen route outcomes. Production validation is reported separately from this frozen benchmark.

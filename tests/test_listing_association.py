@@ -118,6 +118,7 @@ def test_whole_document_pants_jacket_fault_cannot_replace_bound_product_image():
     assert listing.seller_name == "pants-seller"
     assert listing.buyout_price == 9561
     assert listing.raw["detail_photo_count"] == 1
+    assert listing.raw["detail_photo_coverage"] == "primary_only"
     assert observation.raw["images"] == [JACKET, PANTS]
     assert build_listing_alert_payload(listing, "buyouts", "test", 70)["embeds"][0]["thumbnail"]["url"] == PANTS
 

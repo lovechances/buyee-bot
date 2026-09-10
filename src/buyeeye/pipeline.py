@@ -334,9 +334,31 @@ def _auth_reviewworthy(
     # Coverage supports inspectability, never authenticity. A small seller is
     # not itself disqualifying; neither a large seller nor photos certify it.
     minimum_photos = 2 if credible_economics else 4
+    # Bound extraction may expose only the product's primary image. Unknown
+    # gallery coverage must not silently disable the entire review route. This
+    # does not relax item identity, value-thesis or shared counterfeit vetoes.
+    observed = ((raw.get("stage_b") or {}).get("observed") or {})
+    card = raw.get("search_card") or {}
+    current_card_bound = bool(
+        (raw.get("image_integrity") or {}).get("status") == "card_bound"
+        and card.get("source") == listing.source
+        and card.get("source_listing_id") == listing.source_listing_id
+        and card.get("image_url") == listing.image_url
+        and listing.image_url
+    )
+    primary_inspectable = bool(
+        raw.get("detail_photo_coverage") == "primary_only"
+        and evaluation.identity.confidence == "high"
+        and photos >= 1
+        and observed.get("source") == listing.source
+        and observed.get("source_listing_id") == listing.source_listing_id
+        and (observed.get("raw") or {}).get("association_version") == 1
+        and observed.get("image_urls")
+        and (listing.image_url in observed["image_urls"] or current_card_bound)
+    )
     return bool(
         has_piece_identity
-        and photos >= minimum_photos
+        and (photos >= minimum_photos or primary_inspectable)
     )
 
 

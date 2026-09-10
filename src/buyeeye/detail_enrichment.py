@@ -403,6 +403,18 @@ def apply_detail(
     if observation.seller_feedback_count is not None:
         listing.raw["seller_feedback_count"] = observation.seller_feedback_count
     listing.raw["detail_photo_count"] = len(observation.image_urls)
+    # This counts verified extracted images, not the marketplace's full gallery.
+    # A social/product image proves inspectability, not a one-photo-only offer.
+    primary_only = bool(observation.image_urls) and all(
+        record.get("provenance") == "og_image"
+        for record in observation.raw.get("primary_images", [])
+        if isinstance(record, dict)
+    )
+    listing.raw["detail_photo_coverage"] = (
+        "primary_only" if primary_only
+        else "gallery_observed" if observation.image_urls
+        else "unavailable"
+    )
 
 
 class BuyeeDetailService:

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import pytest
 
+from buyeeye.detail_enrichment import apply_detail, parse_detail_payload
 from buyeeye.evaluation import evaluate_listing
 from buyeeye.fashion import enrich_title
 from buyeeye.live_sources import LiveListing
-from buyeeye.pipeline import _post_detail_decision
+from buyeeye.models import Comp
+from buyeeye.pipeline import _auth_reviewworthy, _post_detail_decision
 
 
 def item(title, price=3000, **raw):
@@ -56,6 +58,84 @@ def test_sensitive_jewelry_photos_seller_or_badge_do_not_authenticate():
     evaluation = evaluate_listing(listing)
     assert evaluation.auth_risk.level == "high"
     assert _post_detail_decision(listing, evaluation).route in {None, "review"}
+
+
+def _primary_image_listing(title):
+    listing = item(title, 4000, seller_feedback_count=12, seller_feedback_percent=100)
+    listing.source_listing_id = "a111111111"
+    listing.url = "https://buyee.jp/item/jdirectitems/auction/a111111111"
+    observation = parse_detail_payload("buyee", listing.source_listing_id, {
+        "association_version": 1, "page_url": listing.url, "heading": title,
+        "primary_images": [{"provenance": "og_image", "attributes": {
+            "src": "https://cdnyauction.buyee.jp/images.auctions.yahoo.co.jp/image/primary.jpg",
+        }}],
+    })
+    apply_detail(listing, observation)
+    return listing
+
+
+def test_bound_primary_image_unknown_gallery_keeps_specific_chrome_review_possible():
+    listing = _primary_image_listing("Chrome Hearts keeper floral cross 925 silver ring")
+    evaluation = evaluate_listing(listing)
+    assert listing.raw["detail_photo_count"] == 1
+    assert listing.raw["detail_photo_coverage"] == "primary_only"
+    assert evaluation.auth_risk.level == "high"
+    assert _post_detail_decision(listing, evaluation).route == "review"
+
+
+def test_cached_primary_proof_can_keep_fresher_item_bound_card_thumbnail():
+    listing = _primary_image_listing("Chrome Hearts keeper floral cross 925 silver ring")
+    listing.image_url += "?revision=current"
+    listing.raw["image_integrity"] = {"status": "card_bound"}
+    listing.raw["search_card"] = {
+        "source": listing.source, "source_listing_id": listing.source_listing_id,
+        "image_url": listing.image_url,
+    }
+    assert _post_detail_decision(listing, evaluate_listing(listing)).route == "review"
+
+
+def test_unknown_gallery_exception_requires_high_piece_identity():
+    listing = _primary_image_listing("Chrome Hearts keeper floral cross 925 silver ring")
+    evaluation = evaluate_listing(listing)
+    evaluation.identity.confidence = "medium"
+    assert not _auth_reviewworthy(listing, evaluation, credible_economics=False)
+
+
+def test_verified_comp_economics_with_primary_image_still_requires_auth_review():
+    listing = _primary_image_listing("Chrome Hearts keeper floral cross 925 silver ring")
+    comps = [Comp("ebay_sold", listing.title_original, price, 1.0, 30,
+                  source_listing_id=f"fixture-chrome-{i}")
+             for i, price in enumerate((45000, 48000, 50000, 52000, 55000))]
+    evaluation = evaluate_listing(listing, comps)
+    assert evaluation.economics.opportunity_score >= 70
+    assert evaluation.auth_risk.level == "high"
+    assert _post_detail_decision(listing, evaluation).route == "review"
+
+
+@pytest.mark.parametrize("alteration", ["unbound", "other_item", "different_image", "gallery_observed", "missing_image"])
+def test_one_image_without_matching_primary_proof_does_not_relax_review(alteration):
+    listing = _primary_image_listing("Chrome Hearts keeper floral cross 925 silver ring")
+    if alteration == "unbound":
+        listing.raw["stage_b"]["observed"]["raw"].pop("association_version")
+    elif alteration == "other_item":
+        listing.raw["stage_b"]["observed"]["source_listing_id"] = "b222222222"
+    elif alteration == "different_image":
+        listing.image_url = "https://example.test/unrelated.jpg"
+    elif alteration == "gallery_observed":
+        listing.raw["detail_photo_coverage"] = "gallery_observed"
+    else:
+        listing.image_url = None
+    assert _post_detail_decision(listing, evaluate_listing(listing)).route is None
+
+
+@pytest.mark.parametrize("title", [
+    "Chrome Hearts 925 silver braided bracelet",
+    "Chrome Hearts replica keeper floral cross 925 silver ring",
+    "keeper floral cross S925 silver COATING ring クロムハーツ好きに",
+])
+def test_primary_image_never_rescues_generic_fake_or_audience_reference(title):
+    listing = _primary_image_listing(title)
+    assert _post_detail_decision(listing, evaluate_listing(listing)).route is None
 
 
 def test_collection_word_not_observed_motif_but_explicit_graphic_survives():

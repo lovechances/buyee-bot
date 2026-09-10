@@ -53,6 +53,8 @@ Buyee's [official authentication guide](https://media.buyee.jp/pr/authenticity_o
 
 User corrections are retained as human evidence: the Stüssy/mastermind friend purchase, Prada fit-limited interest, confirmed genuine Needles discussion, and both Chrome user-reported replicas. Two Puma/McQueen shoe IDs fit the description, so a specific rating is not assigned to both. Unrated screenshots stay unrated; the Margiela/H&M negative does not become a blanket collaboration ban.
 
+Initial natural v10 validation found a follow-on interaction: all 13 freshly bound details exposed one primary product image, while Chrome review expected two/four photos. Treating extracted primary coverage as a complete one-photo gallery would disable useful review. The narrow follow-on explicitly labels primary-only coverage as unknown gallery total; a high-identity, piece-specific Chrome candidate already qualifying on existing value/grail rules can remain reviewable with a source/ID-bound primary image. Known sparse-gallery, missing/unbound/mismatched image, generic and counterfeit cases remain suppressed. Risk stays high; even verified-comp economics cannot turn this exception into a buyout/silver route. No gallery count or authenticity is manufactured.
+
 ## F. Recall repair, without more browser slots
 
 One existing cheap-item reservation previously could always go to an already-inspected candidate. `x1184359198`, ¥1,990 GU × Undercover zip jeans, had 22 sightings and no inspection despite cheap-value eligibility. In the retained partial Undercover cohort, both selected candidates had prior B attempts. The repair lets the same single slot replace an already-attempted candidate with the highest-ranked eligible never-attempted candidate, preserving global/path/market caps and existing scoring. Unknown history is not treated as proof of prior inspection.
@@ -79,7 +81,7 @@ The permanent ledger still grows: measured workload about 585 bytes/new ID inclu
 
 ## I. Validation
 
-The complete suite passes **578 tests**; Ruff, compileall and diff checks pass. The existing calibration remains **22/22 aligned**. Fixture tests execute the actual extraction JavaScript in isolated headless Chromium with network blocked, without using authenticated local profiles. Independent review found and fixed coat/coating confusion, accessory-over-garment parsing, noun-less Stage B fallback, ending attention labels and low-space initialization ordering. Natural deployment observations are supplied in the live handoff. Unit/offline evidence is not live quality improvement proof.
+The complete suite passes **590 tests** (578 in the initial implementation plus 12 follow-on coverage regressions); Ruff, compileall and diff checks pass. The existing calibration remains **22/22 aligned**. Fixture tests execute the actual extraction JavaScript in isolated headless Chromium with network blocked, without using authenticated local profiles. Independent review found and fixed coat/coating confusion, accessory-over-garment parsing, noun-less Stage B fallback, ending attention labels, low-space initialization ordering and the unknown-gallery/review interaction. Natural deployment observations are supplied in the live handoff. Unit/offline evidence is not live quality improvement proof.
 
 ## J. Operations and rollback
 
