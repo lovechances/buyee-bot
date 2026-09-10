@@ -6,6 +6,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from sqlmodel import select
@@ -80,6 +81,24 @@ def test_market_structure_search_url_uses_verified_native_buyee_parameters():
         "item_type=auction&new=1&sort=end&order=d"
     )
     assert "aucmaxprice" not in url
+
+
+@pytest.mark.parametrize("query", ["y project", "ロエン", "サンローランパリ", "ニードルズ"])
+def test_semantic_search_explicitly_requests_supported_auction_source(query):
+    url = BuyeeAuthenticatedSource._search_url(query)
+    assert parse_qs(urlsplit(url).query) == {"item_type": ["auction"]}
+    assert "/category/" not in url
+
+
+def test_source_default_preserves_existing_category_price_sort_and_filter_object():
+    filters = MarketplaceSearchFilters(category_id="23200", max_current_price_jpy=9000,
+                                       sort_by="end", sort_order="a")
+    url = BuyeeAuthenticatedSource._search_url("Saint Laurent", filters)
+    assert "/category/23200?" in url
+    assert parse_qs(urlsplit(url).query) == {
+        "aucmaxprice": ["9000"], "sort": ["end"], "order": ["a"], "item_type": ["auction"],
+    }
+    assert filters.item_type is None  # Native default does not mutate discovery configuration.
 
 
 def test_market_ending_search_uses_mens_category_and_supported_closing_filter():

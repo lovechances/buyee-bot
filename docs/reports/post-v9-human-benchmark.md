@@ -144,6 +144,8 @@ These records establish searches, **not the unseen Balenciaga jeans' result rank
 
 All 116 scheduled market strategies currently request `item_type=auction`. The filter type accepts `fleamarket`, but no corresponding strategy is scheduled. This is distinct from the earlier PayPay-source limitation; mixed manual inventory must not be relabeled as naturally covered Yahoo inventory. Parser/source handling is evaluated separately, without adding a new acquisition lane here.
 
+During the subsequent **22:21–22:38 UTC** natural deployment window, new diagnostic counts resolved a current source-boundary failure: four failed semantic broad families returned only Flea Market primary links (99–100 cards, 198–200 unsupported links, zero auction links, zero missing-href cards). Unlike market slices, semantic URLs did not explicitly select a marketplace. The final bounded correction defaults unspecified source to the existing native `item_type=auction` in the shared URL builder. It retains fixed-price/buyout offers from the auction marketplace, all existing price/category/sort controls, scheduler keys, cadences and pages. No prior historical rank or particular benchmark miss is retrospectively explained by this new sample; it establishes a current acquisition failure and a directly corresponding source-filter repair. Its natural coverage/latency effect still needs the final deployment sample and longer observation.
+
 A low current bid is not substituted for an absent or over-ceiling buyout. Existing maturity/discovery checks and added focused tests preserve missing buyout as `None`, not zero; missing/¥40,000 buyout with a ¥1,000 early current bid cannot claim the ¥25,000 buyout-band or cheap-value path. Market/value inspection tests: **44 passed**.
 
 ## Post-change replay and natural validation
@@ -154,4 +156,4 @@ The fourteen uncaptured objects still have no replayable identity. Recomputing t
 
 Natural post-deployment observations remain pending. Unit tests, development calibration, and offline replay do not establish better recommendation quality or maintenance readiness by themselves.
 
-Final local verification: **590 tests passed**, including the bounded reserve, overdue failed-retry and unknown-gallery review regressions; Ruff and compile checks passed. The follow-on primary-image review repair does not change the 26 frozen route outcomes. Production validation is reported separately from this frozen benchmark.
+Final local verification: **595 tests passed**, including the bounded reserve, overdue failed-retry, unknown-gallery review and native source-default regressions; Ruff and compile checks passed. The follow-on primary-image review repair does not change the 26 frozen route outcomes. Production validation is reported separately from this frozen benchmark.

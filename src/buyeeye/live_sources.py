@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit
 
 import httpx
 import yaml
@@ -334,11 +334,12 @@ class BuyeeAuthenticatedSource(ListingSource):
         url = f"https://buyee.jp/item/search/query/{quote(query, safe='')}"
         if search_filters and search_filters.category_id:
             url += f"/category/{search_filters.category_id}"
-        if search_filters:
-            encoded = search_filters.encoded_query()
-            if encoded:
-                url += f"?{encoded}"
-        return url
+        params = search_filters.query_params() if search_filters else {}
+        # Unqualified semantic searches can default to Flea Market inventory.
+        # Request the source this adapter actually supports, just as existing
+        # market slices do; do not adopt unsupported cards or recommendations.
+        params.setdefault("item_type", "auction")
+        return f"{url}?{urlencode(params)}"
 
     def _annotate_discovery(self, listings: list[LiveListing]) -> list[LiveListing]:
         if not self.discovery_context:
