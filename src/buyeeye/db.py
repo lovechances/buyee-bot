@@ -70,7 +70,7 @@ class AlertSendLedger(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     source: str
     source_listing_id: str = Field(index=True)
-    sent_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
     signature: str
     route: str
     thesis: str | None = None
@@ -81,6 +81,7 @@ class AlertSendLedger(SQLModel, table=True):
     material_identity: str | None = None
     material_risk: str | None = None
     material_evidence: str | None = None
+    offer_context_json: str | None = None
 
 
 class ListingProtection(SQLModel, table=True):
@@ -107,6 +108,7 @@ class StatusIncidentState(SQLModel, table=True):
     auth_required_announced: bool = False
     auth_failure_streak: int = 0
     release_keys_json: str = "[]"
+    release_events_json: str | None = None
     # Nullable additive incident timing keeps short self-healing source stalls
     # internal while allowing a genuinely prolonged outage to survive restarts.
     source_failure_started_at: datetime | None = None
@@ -139,6 +141,12 @@ def init_db(path: str | Path = DB_PATH) -> None:
                 connection.execute(
                     text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}')
                 )
+        # Existing databases need the time index too; create_all only creates
+        # indexes automatically for newly created tables.
+        if "alertsendledger" in existing_tables:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_alertsendledger_sent_at ON alertsendledger(sent_at)"
+            ))
 
 
 def get_session(path: str | Path = DB_PATH) -> Session:
@@ -241,6 +249,7 @@ def save_alert_state(
     verified_median_jpy: int | None = None,
     alert_event: str | None = None,
     delivery: str | None = None,
+    offer_context_json: str | None = None,
 ) -> None:
     material_supplied = material_identity is not None
     with get_session(path) as session:
@@ -296,6 +305,7 @@ def save_alert_state(
             material_identity=material_identity,
             material_risk=material_risk_state,
             material_evidence=material_evidence_state,
+            offer_context_json=offer_context_json,
         ))
         session.commit()
 

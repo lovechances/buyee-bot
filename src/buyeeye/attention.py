@@ -1,9 +1,16 @@
 """Delivery attention, separate from identity, value, risk and primary routing."""
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
+from sqlmodel import select
+
+from .db import AlertSendLedger, get_session
 from .evaluation import (
     ListingEvaluation,
     _design_concepts,
@@ -21,6 +28,135 @@ class AttentionDecision:
 
     def observation(self) -> dict[str, str]:
         return asdict(self)
+
+
+def offer_comparison_context(listing: Any, evaluation: ListingEvaluation) -> dict[str, Any] | None:
+    """Narrow observed substitute families, not a physical-stock/duplicate claim.
+
+    These two recurring models are demonstrated in the frozen production
+    cohort. Other models remain independent until comparison evidence exists.
+    Unknown size/condition never proves substitutability.
+    """
+    profile = evaluation.profile
+    if not profile.brand or not profile.item_type or not profile.product_scope.acquisition_attributable:
+        return None
+    title = str(listing.title_original or "").casefold()
+    if profile.brand.value == "Maison Martin Margiela" and profile.item_type.value == "t_shirt" and re.search(r"\baids\b|エイズ", title):
+        model = "margiela:aids_tee"
+    elif profile.brand.value == "Takahiromiyashita TheSoloist." and "oofos" in title and re.search(r"flip[- ]flop|フリップフロップ", title):
+        model = "soloist_oofos:flip_flop"
+    else:
+        return None
+    # Explicit editions/constructions outside this narrow model comparison
+    # stay independent. A familiar model name does not erase a useful variant.
+    if re.search(r"anniversary|記念|reversible|リバーシブル|limited edition|限定|復刻", title):
+        return None
+    sleeve = (
+        "long" if re.search(r"long[- ]sleeve|長袖", title) else
+        "short" if re.search(r"short[- ]sleeve|半袖", title) else None
+    )
+    size_match = re.search(r"(?i)(size|サイズ|US|UK|EU)\s*[:：]?\s*(xxl|xl|xs|s|m|l|\d{1,2}(?:\.\d+)?)\b", title)
+    size = size_match.group(2).upper() if size_match else None
+    size_system = size_match.group(1).upper() if size_match and size_match.group(1).upper() in {"US", "UK", "EU"} else "unspecified"
+    if not size_match:
+        suffix = re.search(r"(?i)(xxl|xl|xs|s|m|l|\d{1,2}(?:\.\d+)?)\s*サイズ", title)
+        size = suffix.group(1).upper() if suffix else None
+    colors = {
+        color for color, pattern in {
+            "black": r"\bblack\b|ブラック|黒", "white": r"\bwhite\b|ホワイト|白",
+            "grey": r"\bgr[ae]y\b|グレー", "red": r"\bred\b|レッド|赤",
+            "blue": r"\bblue\b|ブルー|青", "green": r"\bgreen\b|グリーン|緑",
+            "orange": r"\borange\b|オレンジ", "yellow": r"\byellow\b|イエロー|黄",
+            "beige": r"\bbeige\b|ベージュ", "silver": r"\bsilver\b|シルバー|銀",
+        }.items() if re.search(pattern, title)
+    }
+    condition = str(getattr(listing, "condition", "") or "").strip().casefold()
+    if condition in {"unused", "new", "unworn"}:
+        condition = "unworn"
+    elif condition in {"no obvious damages/dirt", "no noticeable scratches or stains", "used"}:
+        condition = "used"
+    else:
+        condition = None
+    observed = ((listing.raw or {}).get("stage_b") or {}).get("observed") or {}
+    metadata_size = str(observed.get("size_original") or "").strip()
+    metadata_size = re.sub(r"(?i)^size\s*", "", metadata_size).upper()
+    if size and metadata_size and size != metadata_size:
+        size = None  # Conflicting sizing does not prove an interchangeable offer.
+    kind = evaluation.auction_maturity.actionable_price_kind
+    price = listing.buyout_price if kind == "buyout" else listing.current_price if kind == "current_bid" else None
+    timing = re.findall(r"(\d+)\s*(day|hour|minute)", str(listing.time_remaining or "").casefold())
+    minutes = sum(int(n) * {"day": 1440, "hour": 60, "minute": 1}[unit] for n, unit in timing)
+    if not size or not condition or not price or not colors or not minutes:
+        return None
+    return {"version": 1, "model": model, "size": size, "condition": condition,
+            "sleeve": sleeve, "size_system": size_system,
+            "subtype": profile.item_subtype.value if profile.item_subtype else None,
+            "material": profile.material.value if profile.material else None,
+            "price_jpy": price, "price_kind": kind,
+            "relationship": profile.relationship.value if profile.relationship else None,
+            "era": profile.era.value if profile.era else None,
+            "season": profile.season.value if profile.season else None,
+            "colors": sorted(colors),
+            "comparison_expires_at": (datetime.now(UTC) + timedelta(minutes=minutes)).isoformat(),
+            "design": sorted(_design_concepts(evaluation.directional.piece_signals))}
+
+
+def compare_recent_offers(
+    current: dict[str, Any], previous: list[dict[str, Any]],
+    *, now: datetime | None = None,
+) -> bool:
+    """True only for a non-improving, comparable secondary offer."""
+    now = now or datetime.now(UTC)
+    for prior in previous:
+        if not current.get("colors") or not current.get("size") or not current.get("condition"):
+            continue
+        try:
+            expires = datetime.fromisoformat(prior.get("comparison_expires_at") or "")
+        except (ValueError, TypeError):
+            continue
+        if expires.tzinfo is None or expires <= now:
+            continue
+        if any(current.get(k) != prior.get(k) for k in (
+            "version", "model", "size", "condition", "price_kind", "relationship", "era", "season", "colors", "design",
+            "sleeve", "subtype", "material", "size_system",
+        )):
+            continue
+        old_price = prior.get("price_jpy")
+        if not isinstance(old_price, (int, float)) or old_price <= 0:
+            continue
+        # Any >5% cheaper offer stays normal. This is interruption policy,
+        # never an FMV claim or an opportunity eligibility threshold.
+        if current["price_jpy"] >= old_price * 0.95:
+            return True
+    return False
+
+
+def assess_substitute_attention(
+    listing: Any, evaluation: ListingEvaluation, decision: AttentionDecision,
+    path: str | Path, *, now: datetime | None = None,
+) -> AttentionDecision:
+    context = offer_comparison_context(listing, evaluation)
+    if not context or decision.delivery == "quiet" or decision.role == "needs_review":
+        return decision
+    now = now or datetime.now(UTC)
+    with get_session(path) as session:
+        rows = session.exec(select(AlertSendLedger).where(
+            AlertSendLedger.sent_at >= now - timedelta(hours=72),
+            AlertSendLedger.source == listing.source,
+            AlertSendLedger.source_listing_id != listing.source_listing_id,
+        ).order_by(AlertSendLedger.sent_at.desc()).limit(200)).all()
+        previous = []
+        for row in rows:
+            try:
+                value = json.loads(row.offer_context_json or "null")
+            except (ValueError, TypeError):
+                continue
+            if isinstance(value, dict):
+                previous.append(value)
+    if compare_recent_offers(context, previous, now=now):
+        return AttentionDecision("secondary_offer", "quiet",
+            "recent comparable model/size/condition offer; no material price or design improvement")
+    return decision
 
 
 def assess_attention(

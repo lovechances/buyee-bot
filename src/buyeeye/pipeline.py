@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from .attention import assess_attention
+from .attention import assess_attention, assess_substitute_attention, offer_comparison_context
 from .browser_session import has_valid_session
 from .comp_cache import CompRepository, CompService
 from .comp_sources import ObservedUSSoldSource, YahooEndedSource
@@ -53,7 +53,7 @@ from .stage_a import (
     select_stage_a_candidates,
 )
 
-DECISION_LOGIC_VERSION = "ultra-refinement-v10"
+DECISION_LOGIC_VERSION = "ultra-refinement-v11"
 
 
 @dataclass
@@ -160,6 +160,7 @@ def _compact_listing_trace(
         "value_inspection_candidate",
         "inspection_attempted",
         "detail_retry_overdue",
+        "uninspected_age_hours",
         "actionable_price",
         "price_in_discovery_band",
         "discovery_price_fraction",
@@ -642,13 +643,34 @@ def _post_detail_decision(
             "detail category explicitly identifies non-menswear inventory",
             "category_mismatch",
         )
+    # Independent, piece-specific realized evidence outranks a generic archive
+    # label. This is not a price ceiling: the same expensive piece can qualify
+    # when credible acquisition economics support it.
+    if (
+        evaluation.auction_maturity.price_actionable
+        and economics.comp_confidence in {"medium", "high"}
+        and economics.net_margin_jpy is not None
+        and economics.net_margin_jpy <= 0
+        and economics.resale_median_jpy is not None
+        and economics.resale_median_jpy < (
+            listing.buyout_price if evaluation.auction_maturity.actionable_price_kind == "buyout"
+            else listing.current_price or 0
+        )
+    ):
+        return PostDetailDecision(None,
+            "verified piece-specific sold evidence does not support the acquisition cost",
+            "verified_negative_economics")
     if _structurally_generic(listing, evaluation) and not credible_economics:
         return PostDetailDecision(
             None,
             "ordinary product archetype lacks independent design or market evidence",
             "generic_after_detail",
         )
-    if low_priority_collaboration and evaluation.directional.thesis != "asymmetric_value":
+    if (
+        low_priority_collaboration
+        and evaluation.directional.thesis != "asymmetric_value"
+        and not credible_economics
+    ):
         return PostDetailDecision(
             None,
             "secondary-brand collaboration lacks independent directional evidence",
@@ -666,14 +688,10 @@ def _post_detail_decision(
         ),
     )
     directional_value = evaluation.directional.thesis == "asymmetric_value"
-    actionable_buyout_thesis = bool(
-        evaluation.auction_maturity.actionable_price_kind == "buyout"
-        and (directional_value or credible_economics)
-    )
     if (
         evaluation.auction_maturity.auction_type == "open_auction"
         and evaluation.auction_maturity.level == "low"
-        and not actionable_buyout_thesis
+        and not evaluation.auction_maturity.price_actionable
     ):
         if true_grail and heat >= archive_watch_min_heat:
             if risk == "high":
@@ -1103,6 +1121,7 @@ async def scan_once(
                     "revisit_reason": seen.revisit_reason,
                     "inspection_attempted": seen.inspection_attempted,
                     "detail_retry_overdue": seen.detail_retry_overdue,
+                    "uninspected_age_hours": seen.uninspected_age_hours,
                 },
             }
             if seen.lifetime_first_seen:
@@ -1636,6 +1655,12 @@ async def scan_once(
                 ] = f"pending_alert:{alert_event.event}"
             result.suppressed_alerts += 1
             continue
+        # Same-ID eligibility/dedupe is settled first. Similar distinct offers
+        # keep their own route, storage and card; only redundant pushes change.
+        attention = assess_substitute_attention(listing, evaluation, attention, db_path)
+        listing.raw["diagnostic"]["attention"] = attention.observation()
+        if stage_b_status == "enriched" and result.post_detail_decisions:
+            result.post_detail_decisions[-1]["attention"] = attention.observation()
         sent, _, _ = send_listing_alert(
             listing, route, reason, evaluation.desirability.score, evaluation
         )
@@ -1660,6 +1685,7 @@ async def scan_once(
                 verified_median_jpy=material.verified_median_jpy,
                 alert_event=alert_event.event,
                 delivery=attention.delivery,
+                offer_context_json=json.dumps(offer_comparison_context(listing, evaluation)),
             )
             result.new_alerts += 1
             family_funnel(assessment.detected_family)["alerts"] += 1

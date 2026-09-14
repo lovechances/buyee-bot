@@ -147,12 +147,24 @@ def _item_type_evidence(
         r"(?i)\b(?:chain|skull|ring)\s*[- ]?(?:pattern(?:ed)?|print(?:ed)?|motif)\b"
         r"|(?:チェーン|スカル|リング)(?:柄|プリント)", " ", text,
     )
+    # A depicted accessory is not the offered object: e.g. sunglasses/skull
+    # print T-shirt. Require both a local depiction relation and garment noun.
+    object_text = re.sub(
+        r"(?i)(?:\bsunglasses\b|サングラス|眼鏡|メガネ)"
+        r"(?=[^.;。]{0,24}(?:graphic|print|motif|柄|プリント|モチーフ)"
+        r"[^.;。]{0,12}(?:t-shirt|t shirt|tee\b|tシャツ|シャツ))",
+        " ", object_text,
+    )
     material_terms = {"denim", "デニム", "knit", "ニット", "mohair", "モヘア"}
     nouns = {
         kind: [term for term in terms if normalize_text(term).casefold() not in material_terms]
         for kind, terms in item_types.items()
     }
     matched = _first_match(object_text, nouns, "taxonomy.item_types")
+    hair_accessory = re.search(r"(?i)\bhair (?:ties?|bands?)\b|ヘアゴム|ヘアバンド", object_text)
+    bracelet = re.search(r"(?i)\bbracelet\b|ブレスレット", object_text)
+    if hair_accessory and (not bracelet or hair_accessory.start() < bracelet.start()):
+        matched = Evidence("accessory", 0.9, "title.offered_hair_accessory", hair_accessory.group(0))
     if matched is None:
         matched = _first_match(object_text, item_types, "taxonomy.item_types")
     tee_categories = {
@@ -195,6 +207,13 @@ def _brand_match(
                 )
     if not matches:
         return None
+    if len({match[2] for match in matches}) > 1 and re.search(r"\s[x×]\s|コラボ", text):
+        explicit_participants = [
+            match for match in matches
+            if _find_brand_collaboration_match(text, match[3], taxonomy)
+        ]
+        if explicit_participants:
+            matches = explicit_participants
     _, core_alias, brand_key, record, alias = max(
         matches, key=lambda match: (match[0], match[1])
     )
@@ -297,7 +316,7 @@ def _participant_matches_observed(
 ) -> bool:
     if not relationship or relationship.value != "collaboration":
         return False
-    normalized = normalize_text(observed).casefold()
+    normalized = _participant_label(observed)
     return any(
         normalized == participant
         or _term_matches(normalized, participant)
@@ -337,6 +356,12 @@ def _scope_audience(text: str, category_hierarchy: tuple[str, ...]) -> tuple[str
         return "kids", "title grammatically scopes the product to kids"
     if re.search(r"(?i)\b(?:women'?s?|womens|ladies)\b|レディース|女性用", text):
         return "womens", "title identifies women's inventory"
+    explicit_mens = bool(
+        re.search(r"(?i)(?:^|[ >/＞])(?:men'?s?|mens|メンズ|男性用)(?:$|[ >/＞])", hierarchy)
+        or re.search(r"(?i)\bmen'?s\b|メンズ|男性用", text)
+    )
+    if not explicit_mens and re.search(r"(?i)パンプス|\bslingback pumps\b|\bstiletto heels\b", text):
+        return "womens", "explicit pump/stiletto shoe archetype without a men's context"
     if re.search(
         r"(?i)(?:^|[ >/＞])(?:men'?s?|mens|メンズ|男性用)(?:$|[ >/＞])",
         hierarchy,
@@ -487,6 +512,18 @@ def _media_ephemera_offer(
     )
     if bundled_media:
         return None
+    # Ephemera depicting knitwear remains paper, even with garment/art words.
+    # Conversely a postcard-print tee is still the garment. Multiple explicit
+    # paper nouns corroborate an offered invitation/DM rather than its artwork.
+    paper_terms = ("postcard", "invitation", "flyer", "ポストカード", "招待状", "フライヤー")
+    paper_matches = [term for term in paper_terms if _term_matches(scope_title, term)]
+    if paper_matches:
+        depicted_paper = bool(re.search(
+            rf"(?i){media_terms_pattern}\s*(?:graphic|print|motif|柄|プリント|モチーフ)"
+            rf".{{0,16}}{garment_terms}", scope_title,
+        ))
+        if not depicted_paper:
+            return max(paper_matches, key=len)
     if re.search(reference_marker, scope_title, flags=re.IGNORECASE) and re.search(
         garment_terms, scope_title, flags=re.IGNORECASE
     ):
@@ -801,6 +838,27 @@ def _stationery_non_fashion_offer(
     return stationery_match
 
 
+def _hanger_offer(scope_title: str) -> str | None:
+    """Clothes hangers are display equipment; included hangers are not the offer."""
+    hanger = r"(?:(?<![a-z0-9])(?:clothes?\s+|shirt\s+|coat\s+|pants?\s+)?hangers?(?![a-z0-9])|ハンガー)"
+    if not re.search(hanger, scope_title, re.IGNORECASE):
+        return None
+    # Wallet hangers/key chains are complete wearable accessories, not clothes
+    # hangers. This narrow noun relation must not rescue a clothes-hanger set.
+    if re.search(r"(?i)\bwallet\s+hanger\b|ウォレットハンガー", scope_title):
+        return None
+    garment = r"(?:(?<![a-z0-9])(?:tee|shirt|jacket|blazer|coat|pants|trousers|suit|dress)(?![a-z0-9])|シャツ|ジャケット|ブルゾン|コート|パンツ|スーツ)"
+    bundled = re.search(
+        rf"(?i){garment}.{{0,90}}(?:\b(?:with|includes?|including|supplied with)\b.{{0,12}}{hanger}"
+        rf"|{hanger}(?:・ガーメント)?\s*(?:付属|付き|付))", scope_title,
+    )
+    depicted = re.search(
+        rf"(?i){hanger}\s*(?:graphic|print|motif|柄|プリント|モチーフ).{{0,16}}{garment}",
+        scope_title,
+    )
+    return None if bundled or depicted else "clothes hanger/display equipment is the offered object"
+
+
 def _incomplete_product_offer(
     scope_title: str,
     category_hierarchy: tuple[str, ...],
@@ -836,14 +894,14 @@ def _incomplete_product_offer(
             "t-shirt", "t shirt", "tshirt", "tee", "shirt", "hoodie", "jacket",
             "coat", "sweater", "cardigan", "pants", "trousers", "jeans", "shorts",
             "boots", "shoes", "sneakers", "belt", "bag", "wallet", "pendant",
-            "necklace", "bracelet", "ring", "sunglasses", "eyeglasses", "glasses",
+            "necklace", "bracelet", "ring", "earring", "earrings", "sunglasses", "eyeglasses", "glasses",
             "scarf", "hat", "cap", "watch",
         ),
         (
             "tシャツ", "シャツ", "パーカー", "ジャケット", "コート", "ニット",
             "カーディガン", "パンツ", "デニム", "ブーツ", "シューズ", "スニーカー",
             "ベルト", "バッグ", "財布", "ペンダント", "ネックレス", "ブレスレット",
-            "指輪", "サングラス", "メガネ", "眼鏡", "スカーフ", "帽子", "時計",
+            "指輪", "ピアス", "サングラス", "メガネ", "眼鏡", "スカーフ", "帽子", "時計",
         ),
     )
     # Link/コマ is a component only in a watch relationship. The same words
@@ -948,18 +1006,27 @@ def _incomplete_product_offer(
         (
             "replacement lens", "lens", "lenses", "temple arm", "temple arms",
             "nose pad", "nose pads", "ear sock", "ear socks", "buckle", "buckles",
+            "earring back", "earring backs", "earring catch", "earring catches",
             "sole", "soles", "heel tip", "heel tips", "watch movement", "watch dial",
             "watch hands", "watch bezel", "watch crown", "zipper", "zip pull",
             "laces", "shoelaces", "shoe laces",
         ),
         (
             "偏光レンズ", "レンズ", "テンプル", "ノーズパッド", "イヤーソック",
-            "鼻パッド", "バックル", "靴底", "アウトソール", "ヒールチップ",
+            "鼻パッド", "ピアスキャッチ", "ピアス キャッチ", "バックル", "靴底", "アウトソール", "ヒールチップ",
             "ムーブメント", "文字盤", "時計針", "ベゼル", "リューズ", "ファスナー",
             "靴紐", "シューレース",
         ),
     )
     part = re.search(part_nouns, scope_title, re.IGNORECASE)
+    # Search cards sometimes omit レンズ but retain the explicit optical
+    # replacement relation. Racing Jacket is also an eyewear model name.
+    if (
+        not part
+        and re.search(r"交換\s*偏光|\breplacement\s+polarized\b", scope_title, re.IGNORECASE)
+        and re.search(r"(?i)サングラス|\bsunglasses\b|\boakley\b|オークリー", scope_title)
+    ):
+        return "component_only", "replacement polarized optical component, not complete eyewear"
     if not part:
         return (
             ("complete", "complete fashion object explicitly includes its protective case")
@@ -986,6 +1053,23 @@ def _incomplete_product_offer(
             r"|ムーブメント|文字盤|時計針|リューズ|靴紐|シューレース",
             part.group(0),
         )
+        standalone_small_part = re.search(
+            r"(?i)\bnose pads?\b|ノーズパッド|鼻パッド|\bearring (?:backs?|catches?)\b|ピアス\s*キャッチ",
+            part.group(0),
+        )
+        if standalone_small_part:
+            if re.search(
+                rf"(?i){part_nouns}\s*(?:graphic|print|motif|柄|プリント|モチーフ)"
+                rf".{{0,16}}{product_nouns}", scope_title,
+            ):
+                return None
+            included_small_part = re.search(
+                rf"(?i){product_nouns}.{{0,35}}\b(?:with|includes?|including)\b.{{0,15}}{part_nouns}"
+                rf"|{part_nouns}\s*(?:付属|付き|付|装着済み|交換済み)", scope_title,
+            )
+            if included_small_part:
+                return "complete", "complete wearable explicitly includes its small components"
+            return "component_only", f"small component offered, host noun does not establish completeness ({part.group(0)})"
         if intrinsic_component and not re.search(product_nouns, residual, re.IGNORECASE):
             return "component_only", f"component offered without a complete object ({part.group(0)})"
         return (
@@ -1129,6 +1213,7 @@ def analyze_product_scope(
         [str(term) for term in scope_terms.get("stationery_non_fashion", [])],
     )
     incomplete_offer = _incomplete_product_offer(scope_title_text, category_hierarchy)
+    hanger_offer = _hanger_offer(scope_title_text)
     if packaging_match:
         offer_kind = "packaging_only"
         reasons.append(f"offer is packaging/accessory only ({packaging_match})")
@@ -1143,6 +1228,9 @@ def analyze_product_scope(
         reasons.append(
             f"offered object is stationery or a non-wearable tool ({stationery_match})"
         )
+    elif hanger_offer:
+        offer_kind = "non_fashion"
+        reasons.append(hanger_offer)
     elif incomplete_offer and incomplete_offer[0] != "complete":
         offer_kind = "non_fashion"
         reasons.append(incomplete_offer[1])
@@ -1188,7 +1276,11 @@ def _collaboration_participants(term: str) -> tuple[str, ...]:
 
 
 def _participant_label(value: str) -> str:
-    return re.sub(r"^[\W_]+|[\W_]+$", "", normalize_text(value).casefold())
+    normalized = re.sub(r"^[\W_]+|[\W_]+$", "", normalize_text(value).casefold())
+    for canonical, aliases in load_taxonomy().get("relationship_terms", {}).get("partner_aliases", {}).items():
+        if normalized in {normalize_text(str(alias)).casefold() for alias in aliases}:
+            return str(canonical)
+    return normalized
 
 
 def _term_pattern(term: str) -> str:
@@ -1263,6 +1355,17 @@ def _find_brand_collaboration_match(
     """
     target_canonical = str(record.get("canonical") or "")
     target_label = _participant_label(target_canonical)
+    # Explicit Japanese コラボ wording plus BOTH participants of an already
+    # configured partnership is evidence even when the seller omits an ×.
+    if "コラボ" in text:
+        partner_aliases = taxonomy.get("relationship_terms", {}).get("partner_aliases", {})
+        for configured in record.get("relationships", {}).get("collaboration_low_priority", []):
+            participants = _collaboration_participants(str(configured))
+            if len(participants) == 2 and all(
+                any(_term_matches(text, str(alias)) for alias in (participant, *partner_aliases.get(participant, [])))
+                for participant in participants
+            ):
+                return str(configured), participants
     aliases = sorted(
         {
             str(alias)
@@ -1363,6 +1466,11 @@ def _classify_relationship(
         text,
         [str(term) for term in relationships.get("collaboration_low_priority", [])],
     )
+    if not low_priority_collaboration_match and collaboration_match:
+        low_priority_collaboration_match = _longest_term_match(
+            normalize_text(collaboration_match[0]).casefold(),
+            [str(term) for term in relationships.get("collaboration_low_priority", [])],
+        )
     if low_priority_collaboration_match:
         return PieceRelationship(
             "collaboration",
@@ -1459,11 +1567,14 @@ def enrich_title(
             normalize_text(scope_title).casefold() if scope_title else text,
             {"polo": ["polo", "ポロシャツ"], "shorts": ["shorts", "ショーツ", "ハーフパンツ"],
              "gloves": ["gloves", "手袋"], "hat": ["hat", "帽子", "ハット"],
-             "tie": ["necktie", "tie", "ネクタイ"], "skirt": ["skirt", "スカート"]},
+             "tie": ["necktie", "tie", "ネクタイ"], "skirt": ["skirt", "スカート"],
+             "socks": ["socks", "ソックス", "靴下"], "beret": ["beret", "ベレー帽"]},
             "title.object_subtype",
         )
         if subtype:
             profile.item_subtype = subtype
+        if profile.item_type.provenance == "title.offered_hair_accessory":
+            profile.item_subtype = Evidence("hair_accessory", 0.9, "title.object_subtype", profile.item_type.matched_term)
     matched_brand: dict[str, Any] | None = None
     collaboration_match: tuple[str, tuple[str, ...]] | None = None
 
@@ -1473,6 +1584,49 @@ def enrich_title(
     brand_match = title_match or _brand_match(text, taxonomy)
     observed_text = normalize_text(brand_observed).casefold()
     observed_match = _brand_match(observed_text, taxonomy) if observed_text else None
+    if observed_text and observed_match is None:
+        # Marketplace typography can separate Takahiro/Miyashita and alter
+        # punctuation. Normalize only the structured maker, not keyword text.
+        observed_key = _identity_key(observed_text)
+        observed_match = next((
+            (key, record, str(record["canonical"]), True)
+            for key, record in taxonomy.get("brands", {}).items()
+            if observed_key in {
+                _identity_key(str(value))
+                for value in (record["canonical"], *record.get("aliases", []))
+            }
+        ), None)
+    compatible_specific_identity = bool(
+        brand_match and _observed_brand_matches_target(
+            observed_text,
+            Evidence(brand_match[1]["canonical"], 0.98, "title.brand", brand_match[2]),
+            taxonomy,
+        )
+    )
+    if not compatible_specific_identity and observed_match and any(
+        _term_matches(normalize_text(scope_title).casefold() if scope_title else text, str(alias))
+        for alias in observed_match[1].get("aliases", [])
+    ):
+        # When a title actually names several houses, its strongest structured
+        # maker can resolve which one is offered; an unrelated observed maker
+        # still triggers the existing contradiction guard instead of a rewrite.
+        brand_match = observed_match
+    maker_title = normalize_text(scope_title).casefold() if scope_title else text
+    generic_label_claim = _term_matches(maker_title, "japanese label")
+    mentioned_families = {
+        key for key, record in taxonomy.get("brands", {}).items()
+        if any(_term_matches(maker_title, str(alias)) for alias in record.get("aliases", []))
+    } if generic_label_claim else set()
+    unresolved_keyword_maker = bool(
+        generic_label_claim and len(mentioned_families) >= 2
+        and not observed_match
+    )
+    if unresolved_keyword_maker:
+        # A generic attribution followed by target-name lists establishes no
+        # particular manufacturer. Do not borrow query/keyword prestige.
+        brand_match = None
+    elif generic_label_claim and observed_match:
+        brand_match = observed_match
     if brand_match is None and observed_match is not None:
         brand_match = observed_match
     if brand_match is not None:
@@ -1515,6 +1669,8 @@ def enrich_title(
             collection_matches: list[tuple[bool, int, dict[str, Any], str]] = []
             for collection in record.get("collections", []):
                 for term in collection.get("terms", []):
+                    if term in collection.get("discovery_only_terms", []):
+                        continue
                     term_text = str(term)
                     if _term_matches(text, term_text):
                         is_season_only = bool(
@@ -1584,6 +1740,23 @@ def enrich_title(
             profile.designer = None
 
     profile.material = _first_match(text, taxonomy.get("materials", {}), "taxonomy.materials")
+    if profile.material and profile.material.value == "silver" and profile.item_type and profile.item_type.value != "jewelry":
+        metal_claim = bool(re.search(
+            r"(?i)(?<![a-z0-9])(?:sterling(?:\s+silver)?|(?:sv|s)?925)(?![a-z0-9])|銀製",
+            text,
+        ))
+        if metal_claim:
+            # Hardware can be silver; the shoe, bag or hair tie is not thereby
+            # a complete silver object. This is a seller claim, not an assay.
+            profile.material = Evidence("silver_component", profile.material.confidence, "title.non_jewelry_metal_component", profile.material.matched_term)
+        else:
+            # Bare silver on footwear/clothing is color, not precious-metal
+            # evidence. Preserve any independently named leather/etc. instead.
+            profile.material = _first_match(
+                text,
+                {key: terms for key, terms in taxonomy.get("materials", {}).items() if key != "silver"},
+                "taxonomy.materials",
+            )
     season_match = re.search(r"(?i)\b((?:aw|fw|ss)\s?\d{2}|\d{2}\s?(?:aw|fw|ss))\b", text)
     if season_match:
         profile.season = Evidence(
@@ -1603,6 +1776,7 @@ def enrich_title(
         "red": ["red", "レッド", "赤"],
         "blue": ["blue", "ブルー", "青"],
         "brown": ["brown", "ブラウン", "茶"],
+        "silver": ["silver", "シルバー", "銀色"],
     }
     profile.color = _first_match(text, colors, "title.colors")
     if collaboration_match:
@@ -1624,6 +1798,12 @@ def enrich_title(
 
     for group, terms in taxonomy.get("negative_terms", {}).items():
         for term in terms:
+            if (
+                group == "irrelevant"
+                and str(term).casefold() in {"pants hanger", "パンツハンガー"}
+                and _hanger_offer(normalize_text(scope_title).casefold() if scope_title else text) is None
+            ):
+                continue
             # Maison Margiela's named Replica Line is legitimate house
             # nomenclature. Remove only that phrase before risk matching so an
             # additional standalone "replica" (or any other fake wording)
@@ -1644,11 +1824,15 @@ def enrich_title(
                 if legitimate_margiela_replica_line
                 else text
             )
+            if group == "counterfeit" and str(term).casefold() == "fake":
+                # A material description is not a counterfeit maker claim.
+                # Separate standalone fake wording remains in the risk text.
+                risk_text = re.sub(r"(?i)(?<![a-z0-9])fake\s+leather(?![a-z0-9])", " ", risk_text)
             if _term_matches(risk_text, str(term)):
                 profile.negative_signals.append(
                     Evidence(f"{group}:{term}", 0.95, f"taxonomy.negative_terms.{group}", str(term))
                 )
-    if matched_brand is None and hinted_brand and hinted_brand != "unknown":
+    if matched_brand is None and not unresolved_keyword_maker and hinted_brand and hinted_brand != "unknown":
         profile.brand = Evidence(hinted_brand, 0.55, "marketplace_hint", hinted_brand)
         profile.relationship = PieceRelationship(
             "uncertain", 0.55, "marketplace_hint", hinted_brand

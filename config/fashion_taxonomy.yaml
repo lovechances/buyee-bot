@@ -2,6 +2,7 @@ version: 1
 provenance: manual_v1_research
 
 relationship_terms:
+  partner_aliases: {gu: ["ジーユー"], uniqlo: ["ユニクロ"]}
   style_reference_prefixes: ["inspired by", "inspired", "in the style of", "homage to", "homage", "オマージュ"]
   style_reference_suffixes: ["inspired", "style", "type", "like", "homage", "風", "タイプ", "系", "スタイル", "オマージュ", "好きに", "好きな方", "好きの方", "好きへ"]
   cultural_reference_phrases: ["the devil wears prada", "devil wears prada", "プラダを着た悪魔"]
@@ -9,7 +10,7 @@ relationship_terms:
 product_scope_terms:
   packaging_only: ["box only", "empty box", "dust bag only", "case only", "本体なし", "箱のみ", "空箱", "保存袋のみ", "ケースのみ", "付属品のみ"]
   container_products: ["sunglasses case", "eyewear case", "eyeglass case", "glasses case", "サングラスケース", "アイウェアケース", "メガネケース", "眼鏡ケース"]
-  media_ephemera: ["blu-ray", "bluray", "dvd", "vhs", "cd", "photo book", "photobook", "lookbook", "catalogue", "catalog", "magazine", "book", "pamphlet", "ブルーレイ", "写真集", "ルックブック", "カタログ", "雑誌", "書籍", "冊子", "パンフレット"]
+  media_ephemera: ["blu-ray", "bluray", "dvd", "vhs", "cd", "photo book", "photobook", "lookbook", "catalogue", "catalog", "magazine", "book", "pamphlet", "postcard", "invitation", "flyer", "ポストカード", "招待状", "フライヤー", "ブルーレイ", "写真集", "ルックブック", "カタログ", "雑誌", "書籍", "冊子", "パンフレット"]
   automotive_non_fashion: ["steering wheel cover", "steering-wheel cover", "steering wheel", "steering-wheel", "automotive interior trim", "automotive trim", "vehicle interior trim", "vehicle trim", "car interior trim", "car trim", "dashboard trim", "door trim", "automotive parts", "automotive part", "vehicle parts", "vehicle part", "car parts", "car part", "automotive accessories", "automotive accessory", "vehicle accessories", "vehicle accessory", "car accessories", "car accessory", "gear shift knob", "shift knob", "ステアリングホイール", "ステアリングカバー", "車用ステアリング", "ステアリング", "車用ハンドル", "カーパーツ", "カー用品", "車用品", "自動車部品", "車両部品", "車用内装パーツ", "車内装パーツ", "内装パーツ", "内装トリム", "ドアトリム", "シフトノブ"]
   stationery_non_fashion: ["wax seal kit", "wax sealing kit", "sealing wax kit", "wax seal set", "sealing wax set", "wax seal stamp", "sealing stamp set", "seal stamp set", "rubber stamp", "rubber stamp set", "stamp kit", "stamp set", "stationery set", "sealing stamp", "シーリングスタンプ セット", "シーリングスタンプセット", "シーリングスタンプ", "シーリングワックス", "ワックスシールキット", "ワックススタンプ キット", "封蝋用スタンプ", "封蝋キット", "封蝋セット", "判子セット", "はんこセット", "ハンコセット", "印鑑セット", "スタンプ キット", "スタンプセット", "文房具セット", "判子", "はんこ", "印鑑"]
 
@@ -23,8 +24,10 @@ brands:
     collections:
       - name: "A Closed Feeling"
         terms: ["a closed feeling", "closed feeling", "08aw"]
+        discovery_only_terms: ["08aw"]  # Historical search term, not collection identity.
       - name: "The High Streets"
         terms: ["high streets", "03aw", "カート期"]
+        discovery_only_terms: ["03aw", "カート期"]
       - name: "Time Migration"
         terms: ["time migration", "タイム期", "01ss"]
     iconic_signals:
@@ -35,6 +38,7 @@ brands:
   takahiromiyashita_thesoloist:
     canonical: "Takahiromiyashita TheSoloist."
     aliases: ["takahiromiyashita thesoloist.", "takahiromiyashita thesoloist", "thesoloist", "the soloist", "ソロイスト"]
+    recognition_aliases: ["soloist."]
   kapital:
     canonical: "Kapital"
     aliases: ["kapital", "キャピタル"]
@@ -59,7 +63,7 @@ brands:
   dior_homme:
     canonical: "Dior Homme"
     aliases: ["dior homme", "ディオールオム", "dior hedi"]
-    observed_brand_aliases: ["dior"]
+    observed_brand_aliases: ["dior", "christian dior"]
     designer: "Hedi Slimane"
     eras:
       hedi_slimane: ["hedi", "エディ", "2001", "2002", "2003", "2004", "2005", "2006", "2007"]
@@ -262,6 +266,7 @@ brands:
   junya_watanabe:
     canonical: "Junya Watanabe"
     aliases: ["junya watanabe", "ジュンヤワタナベ", "ジュンヤ ワタナベ"]
+    observed_brand_aliases: ["comme des garcons", "comme des garçons"]
   issey_miyake:
     canonical: "Issey Miyake"
     aliases: ["issey miyake", "イッセイミヤケ", "イッセイ ミヤケ"]
@@ -300,7 +305,9 @@ brands:
     aliases: ["oakley", "オークリー"]
   enfants_riches_deprimes:
     canonical: "Enfants Riches Déprimés"
-    aliases: ["enfants riches déprimés", "enfants riches deprimes", "エンファン リッシュ デプリメ"]
+    # Observed Japanese auction wording replaces a zero-yield spelling; same query count.
+    aliases: ["enfants riches déprimés", "enfants riches deprimes", "アンファンリッシュデプリメ"]
+    recognition_aliases: ["ERD", "E.R.D.", "アンファン リッシュ デプリメ", "エンファン リッシュ デプリメ"]
   y_project:
     canonical: "Y/Project"
     aliases: ["y/project", "y project", "ワイプロジェクト"]
@@ -329,9 +336,10 @@ item_types:
   bag: ["shoulder bag", "crossbody bag", "tote bag", "backpack", "duffle bag", "briefcase", "bag", "ショルダーバッグ", "トートバッグ", "バックパック", "ブリーフケース", "バッグ", "鞄", "リュック"]
   belt: ["belt", "ベルト"]
   wallet: ["wallet", "card holder", "card case", "coin case", "財布", "カードケース", "コインケース"]
-  accessory: ["keyholder", "scarf", "hat", "cap", "necktie", "tie", "gloves", "sunglasses", "キーホルダ", "スカーフ", "帽子", "ハット", "キャップ", "ネクタイ", "手袋", "サングラス"]
+  accessory: ["keyholder", "scarf", "hat", "cap", "necktie", "tie", "gloves", "sunglasses", "socks", "beret", "ソックス", "靴下", "ベレー帽", "キーホルダ", "スカーフ", "帽子", "ハット", "キャップ", "ネクタイ", "手袋", "サングラス"]
 
 materials:
+  faux_leather: ["faux leather", "fake leather", "synthetic leather", "PU leather", "フェイクレザー", "合成皮革", "人工皮革"]
   silver: ["sterling silver", "silver", "sterling", "sv925", "s925", "925", "シルバー", "銀製"]
   leather: ["leather", "calf", "horsehide", "レザー", "革", "馬革"]
   mohair: ["mohair", "モヘア"]

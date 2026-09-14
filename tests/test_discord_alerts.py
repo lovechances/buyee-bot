@@ -98,7 +98,7 @@ def test_actionable_verified_card_is_compact_and_evidence_backed() -> None:
             url=f"https://grailed.example/sold/{index}",
             original_price=usd,
             original_currency="USD",
-        )
+         price_evidence="realized")
         for index, (price_jpy, usd) in enumerate(
             ((15_000, 100), (30_000, 200), (45_000, 300)), start=1
         )
@@ -118,8 +118,8 @@ def test_actionable_verified_card_is_compact_and_evidence_backed() -> None:
     assert "U.S. sold $100–$300" in rendered
     assert "est. 4.2×" in rendered
     assert rendered.count("core archive tee at an unusually attractive actionable price") == 1
-    assert rendered.count("Identity HIGH") == 1
-    assert rendered.count("Relationship CORE") == 1
+    assert "Identity HIGH" not in rendered  # Internal classifications do not crowd the phone card.
+    assert "Relationship CORE" not in rendered
     assert rendered.count("Risk MEDIUM") == 1
     assert rendered.count("seller 98.7% (412)") == 1
     assert rendered.count("https://grailed.example") == 2
@@ -139,8 +139,8 @@ def test_unverified_directional_card_never_invents_fmv() -> None:
 
     assert "¥3,800 BUYOUT" in rendered
     assert "U.S. resale unverified" in rendered
-    assert "Directional confidence: MED" in rendered
-    assert "Relationship DIFFUSION" in rendered
+    assert "Directional confidence:" not in rendered
+    assert "DIFFUSION" in rendered
     assert "U.S. sold" not in rendered
     assert "FMV" not in rendered
     assert "×" not in rendered
@@ -171,7 +171,7 @@ def test_early_auction_marks_bid_provisional_and_hides_even_available_economics(
         url="https://grailed.example/sold/archive",
         original_price=300,
         original_currency="USD",
-    )
+     price_evidence="realized")
     listing = _listing(buyout_price=None, time_remaining="5 day(s)")
     evaluation = _evaluation(
         actionable=False,
@@ -210,7 +210,7 @@ def test_yahoo_ended_evidence_cannot_be_rendered_as_us_sold_or_fmv() -> None:
             url=f"https://auctions.yahoo.co.jp/closed/{index}",
             original_price=100_000 + index * 1_000,
             original_currency="JPY",
-        )
+         price_evidence="realized")
         for index in range(3)
     ]
     lone_us_sale = Comp(
@@ -222,7 +222,7 @@ def test_yahoo_ended_evidence_cannot_be_rendered_as_us_sold_or_fmv() -> None:
         url="https://grailed.example/sold/lone",
         original_price=600,
         original_currency="USD",
-    )
+     price_evidence="realized")
     payload = build_listing_alert_payload(
         _listing(),
         "buyouts",
@@ -252,7 +252,7 @@ def test_low_confidence_us_match_is_a_link_not_a_valuation_claim() -> None:
         url="https://grailed.example/sold/weak",
         original_price=600,
         original_currency="USD",
-    )
+     price_evidence="realized")
     payload = build_listing_alert_payload(
         _listing(),
         "buyouts",

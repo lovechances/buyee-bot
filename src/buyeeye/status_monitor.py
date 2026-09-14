@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import multiprocessing
+import os
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
+
+import httpx
 
 from .db import DB_PATH, StatusIncidentState, get_session, init_db
 from .discord_alerts import send_status_event
@@ -17,13 +23,22 @@ MAJOR_UPDATE_MESSAGES = {
         "BuyEye update: alert quality and opportunity finding have been improved."
     ),
     "status-monitoring-v1": "BuyEye update: status monitoring is now live.",
+    "ultra-refinement-v11": (
+        "BuyEye now separates listing prices from estimated costs and handles misleading product descriptions more carefully. "
+        "Inspection has also been adjusted so overlooked candidates can get a closer look."
+    ),
 }
+RELEASE_MAX_ATTEMPTS = 3
+RELEASE_RETRY_SECONDS = 60
+RELEASE_TOTAL_TIMEOUT = 15
 
 
 @dataclass(frozen=True)
 class StatusEventResult:
     emitted: bool
     outcome: str
+    message_id: str | None = None
+    channel_id: str | None = None
 
 
 def _transition(event: str, result: StatusEventResult, **evidence: object) -> StatusEventResult:
@@ -52,36 +67,173 @@ def _state(path: str | Path) -> StatusIncidentState:
         return state
 
 
-def _release_keys(state: StatusIncidentState) -> set[str]:
+def _release_post(url: str, message: str, pipe: Any) -> None:
+    """One POST only: a timeout after sending cannot safely be retried blindly."""
     try:
-        values = json.loads(state.release_keys_json or "[]")
-    except (TypeError, json.JSONDecodeError):
-        return set()
-    return {str(value) for value in values} if isinstance(values, list) else set()
+        response = httpx.post(
+            str(httpx.URL(url).copy_set_param("wait", "true")),
+            json={"content": message, "allowed_mentions": {"parse": []}},
+            timeout=httpx.Timeout(connect=5, read=10, write=10, pool=5),
+        )
+        if response.is_success:
+            try:
+                data = response.json()
+            except ValueError:
+                data = {}
+            if isinstance(data, dict) and str(data.get("id", "")).isdigit() and str(data.get("channel_id", "")).isdigit():
+                pipe.send({"state": "sent", "result": str(response.status_code),
+                           "message_id": str(data["id"]), "channel_id": str(data["channel_id"])})
+            else:
+                pipe.send({"state": "ambiguous", "result": "accepted_without_message_evidence"})
+        elif response.status_code >= 500:
+            pipe.send({"state": "ambiguous", "result": f"http_{response.status_code}"})
+        else:
+            try:
+                retry = float(response.headers.get("Retry-After", RELEASE_RETRY_SECONDS))
+            except ValueError:
+                retry = RELEASE_RETRY_SECONDS
+            pipe.send({"state": "pending", "result": f"http_{response.status_code}",
+                       "retry_seconds": min(3600, max(RELEASE_RETRY_SECONDS, retry))})
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        pipe.send({"state": "pending", "result": "connection_failed_before_send"})
+    except httpx.InvalidURL:
+        pipe.send({"state": "pending", "result": "invalid_webhook_configuration"})
+    except (httpx.HTTPError, TimeoutError):
+        pipe.send({"state": "ambiguous", "result": "network_outcome_unconfirmed"})
+
+
+def send_release_summary(message: str) -> dict[str, Any]:
+    """Use only the existing status webhook, with bounded wait=true confirmation."""
+    url = os.environ.get("DISCORD_WEBHOOK_STATUS", "").strip()
+    if not url:
+        return {"state": "pending", "result": "status_unconfigured"}
+    parent, child = multiprocessing.Pipe(duplex=False)
+    process = multiprocessing.Process(target=_release_post, args=(url, message, child))
+    try:
+        process.start()
+        process.join(RELEASE_TOTAL_TIMEOUT)
+        if process.is_alive():
+            process.terminate()
+            process.join(2)
+            return {"state": "ambiguous", "result": "delivery_timeout"}
+        if parent.poll():
+            return parent.recv()
+        return {"state": "ambiguous", "result": "worker_outcome_unconfirmed"}
+    finally:
+        parent.close()
+        child.close()
+
+
+def _release_history(value: str | None) -> dict[str, Any]:
+    try:
+        events = json.loads(value or "{}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("release_event_history_invalid; do not resend until reconciled") from exc
+    if not isinstance(events, dict) or any(not isinstance(event, dict) for event in events.values()):
+        raise ValueError("release_event_history_invalid; do not resend until reconciled")
+    return events
+
+
+def release_event_status(event_key: str, path: str | Path = DB_PATH) -> dict[str, Any]:
+    """Read-only even for old or absent databases; never registers or sends."""
+    if event_key not in MAJOR_UPDATE_MESSAGES:
+        raise ValueError(f"Unknown major status event: {event_key}")
+    base = {"event_key": event_key, "message": MAJOR_UPDATE_MESSAGES[event_key],
+            "status": "not_registered", "attempts": 0, "read_only": True}
+    if not Path(path).exists():
+        return base
+    with sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='statusincidentstate'").fetchone():
+            return base
+        row = connection.execute("SELECT * FROM statusincidentstate WHERE id=1").fetchone()
+        if row is None:
+            return base
+        record = dict(row)
+        event = _release_history(record.get("release_events_json")).get(event_key)
+        if event:
+            return {**base, **event}
+        if event_key in json.loads(row["release_keys_json"] or "[]"):
+            return {**base, "status": "sent_legacy", "message_id": None}
+    return base
 
 
 def announce_major_update(
     event_key: str,
     path: str | Path = DB_PATH,
+    *,
+    now: datetime | None = None,
 ) -> StatusEventResult:
-    """Emit an explicitly registered user-facing release event once."""
+    """Explicit release invocation only; normal daemon starts never call this.
+
+    Persist a claim before the network operation. Definite failures allow at
+    most three explicitly invoked attempts with cooldown; ambiguous delivery
+    or a crash with an outstanding claim requires human reconciliation.
+    """
     message = MAJOR_UPDATE_MESSAGES.get(event_key)
     if message is None:
         raise ValueError(f"Unknown major status event: {event_key}")
-    state = _state(path)
-    keys = _release_keys(state)
-    if event_key in keys:
-        return StatusEventResult(False, "deduped")
-    sent, status, _ = send_status_event(message)
-    if not sent:
-        return StatusEventResult(False, f"delivery_failed:{status}")
-    keys.add(event_key)
-    with get_session(path) as session:
-        current = session.get(StatusIncidentState, 1)
-        assert current is not None
-        current.release_keys_json = json.dumps(sorted(keys))
-        session.commit()
-    return StatusEventResult(True, "emitted")
+    current_time = now or datetime.now(UTC)
+    current_time = current_time.replace(tzinfo=current_time.tzinfo or UTC)
+    _state(path)
+    with sqlite3.connect(path, timeout=5) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        encoded, keys_json = connection.execute(
+            "SELECT release_events_json,release_keys_json FROM statusincidentstate WHERE id=1"
+        ).fetchone()
+        events = _release_history(encoded)
+        keys = set(json.loads(keys_json or "[]"))
+        event = events.get(event_key, {})
+        if event_key in keys or event.get("status") == "sent":
+            return StatusEventResult(False, "deduped", event.get("message_id"), event.get("channel_id"))
+        if event.get("status") in {"attempting", "ambiguous"}:
+            return StatusEventResult(False, "delivery_unconfirmed_do_not_retry")
+        if int(event.get("attempts", 0)) >= RELEASE_MAX_ATTEMPTS:
+            return StatusEventResult(False, "retry_limit_reached")
+        if event.get("next_retry_at") and current_time < datetime.fromisoformat(event["next_retry_at"]):
+            return StatusEventResult(False, "retry_cooldown")
+        if event.get("message") and event["message"] != message:
+            return StatusEventResult(False, "registered_message_changed")
+        event = {**event, "event_key": event_key, "message": message,
+                 "created_at": event.get("created_at", current_time.isoformat()),
+                 "status": "pending", "attempts": int(event.get("attempts", 0))}
+        configured = bool(os.environ.get("DISCORD_WEBHOOK_STATUS", "").strip())
+        if configured:
+            event.update(status="attempting", attempts=event["attempts"] + 1,
+                         last_attempt_at=current_time.isoformat(), next_retry_at=None)
+        else:
+            event["last_result"] = "status_unconfigured"
+        events[event_key] = event
+        connection.execute("UPDATE statusincidentstate SET release_events_json=? WHERE id=1",
+                           (json.dumps(events, sort_keys=True),))
+    if not configured:
+        return StatusEventResult(False, "delivery_failed:status_unconfigured")
+
+    delivery = send_release_summary(message)
+    with sqlite3.connect(path, timeout=5) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        encoded, keys_json = connection.execute(
+            "SELECT release_events_json,release_keys_json FROM statusincidentstate WHERE id=1"
+        ).fetchone()
+        events = _release_history(encoded)
+        event = events[event_key]
+        event.update(status=delivery["state"], last_result=delivery["result"])
+        if delivery["state"] == "sent":
+            event.update(sent_at=current_time.isoformat(), message_id=delivery["message_id"], channel_id=delivery["channel_id"])
+            keys = set(json.loads(keys_json or "[]"))
+            keys.add(event_key)
+            connection.execute("UPDATE statusincidentstate SET release_keys_json=? WHERE id=1",
+                               (json.dumps(sorted(keys)),))
+        elif delivery["state"] == "pending":
+            event["next_retry_at"] = (current_time + timedelta(
+                seconds=delivery.get("retry_seconds", RELEASE_RETRY_SECONDS)
+            )).isoformat()
+        connection.execute("UPDATE statusincidentstate SET release_events_json=? WHERE id=1",
+                           (json.dumps(events, sort_keys=True),))
+    if delivery["state"] == "sent":
+        return StatusEventResult(True, "emitted", delivery["message_id"], delivery["channel_id"])
+    return StatusEventResult(False, "delivery_unconfirmed_do_not_retry" if delivery["state"] == "ambiguous"
+                             else f"delivery_failed:{delivery['result']}")
 
 
 def record_source_failure(

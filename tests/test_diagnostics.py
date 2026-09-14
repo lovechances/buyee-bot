@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from buyeeye.cli import main
-from buyeeye.db import Listing, get_session, init_db
+from buyeeye.db import AlertSendLedger, Listing, get_session, init_db
 from buyeeye.diagnostics import (
     benchmark_listings,
     diagnose_listing,
@@ -118,6 +118,112 @@ def test_marketplace_identity_accepts_paypay_url_and_bare_id() -> None:
         "buyee",
         "z609539002",
     )
+
+
+def test_legacy_auction_alias_and_shopping_preserve_source_identity():
+    assert marketplace_listing_identity(
+        "https://buyee.jp/item/yahoo/auction/h1238476063?conversionType=history"
+    ) == ("buyee", "h1238476063")
+    url = "https://buyee.jp/item/jdirectitems/shopping/ssol-shopping_2348621003856"
+    expected = ("buyee_shopping", "ssol-shopping_2348621003856")
+    assert marketplace_listing_identity(url) == expected
+    assert marketplace_listing_identity(expected[1]) == expected
+    assert marketplace_listing_identity(expected[1], source="shopping") == expected
+    with pytest.raises(ValueError, match="conflicts"):
+        marketplace_listing_identity(url, source="buyee")
+    with pytest.raises(ValueError, match="conflicts"):
+        marketplace_listing_identity(expected[1], source="buyee")
+    with pytest.raises(ValueError, match="conflicts"):
+        marketplace_listing_identity(
+            "https://buyee.jp/item/yahoo/auction/h1238476063", source="shopping"
+        )
+
+
+@pytest.mark.parametrize("url", [
+    "https://evil.example/item/jdirectitems/auction/h1238476063",
+    "https://buyee.jp.evil.example/item/yahoo/auction/h1238476063",
+    "https://evil.example/jp/auction/h1238476063",
+    "https://buyee.jp/search?next=/item/jdirectitems/auction/h1238476063",
+])
+def test_marketplace_identity_does_not_trust_foreign_host_or_embedded_path(url):
+    with pytest.raises(ValueError):
+        marketplace_listing_identity(url)
+
+
+def test_benchmark_unique_denominator_preserves_reference_annotations(tmp_path, monkeypatch):
+    from buyeeye import diagnostics
+
+    db_path = tmp_path / "references.db"
+    init_db(db_path)
+    mark_listing_seen("buyee", "e1206936947", "signature", "Number Nine", db_path)
+    calls = []
+    original = diagnostics.diagnose_listing
+
+    def recording_diagnostic(*args, **kwargs):
+        calls.append(args[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(diagnostics, "diagnose_listing", recording_diagnostic)
+    benchmark = tmp_path / "references.csv"
+    benchmark.write_text(
+        "url_or_id,annotation,source\n"
+        "https://buyee.jp/item/jdirectitems/auction/e1206936947,unranked interest,buyee\n"
+        "https://buyee.jp/item/yahoo/auction/e1206936947?conversionType=history,another good possible purchase,buyee\n"
+        "https://buyee.jp/item/jdirectitems/shopping/ssol-shopping_2348621003856,manual purchase,buyee_shopping\n",
+        encoding="utf-8",
+    )
+    before = db_path.read_bytes()
+    report = benchmark_listings(db_path, benchmark)
+    assert len(calls) == 2
+    assert report["total"] == 3
+    assert report["seen"] == 2  # Explicitly retained raw-reference compatibility.
+    assert report["unique_total"] == 2
+    assert report["unique_seen"] == 1
+    item = report["unique_items"][0]
+    assert item["reference_indices"] == [1, 2]
+    assert item["annotations"] == ["unranked interest", "another good possible purchase"]
+    assert item["latest_annotation"] == "another good possible purchase"
+    shopping = report["results"][2]
+    assert shopping["marketplace_id"] == "ssol-shopping_2348621003856"
+    assert shopping["acquisition_supported"] is False
+    assert shopping["outcome"] == "source_coverage_miss"
+    assert report["unique_outcomes"]["source_coverage_miss"] == 1
+    assert db_path.read_bytes() == before
+
+
+def test_diagnostic_send_ledger_is_source_qualified_and_read_only(tmp_path):
+    db_path = tmp_path / "send-ledger.db"
+    init_db(db_path)
+    with get_session(db_path) as session:
+        for source in ("buyee", "buyee_shopping"):
+            session.add(AlertSendLedger(
+                source=source, source_listing_id="same123", signature="sent",
+                route="buyouts", thesis="asymmetric_value", event="initial_alert",
+                price_jpy=200, price_kind="buyout", delivery="normal",
+            ))
+        session.commit()
+    before = db_path.read_bytes()
+    result = diagnose_listing(db_path, "same123", source="buyee")
+    assert result["send_ledger"]["total"] == 1
+    assert result["send_ledger"]["truncated"] is False
+    assert result["send_ledger"]["events"][0]["source"] == "buyee"
+    assert result["send_ledger"]["events"][0]["price_kind"] == "buyout"
+    assert db_path.read_bytes() == before
+
+
+def test_latest_manifest_retains_27_references_26_identities():
+    from pathlib import Path
+
+    from buyeeye.diagnostics import _benchmark_inputs
+
+    rows = _benchmark_inputs(Path(__file__).parents[1] / "docs/benchmarks/manual-hunt-2026-09-13.csv")
+    identities = [marketplace_listing_identity(row["value"], source=row["source"]) for row in rows]
+    assert len(rows) == 27
+    assert len(set(identities)) == 26
+    assert identities[9] == identities[26] == ("buyee", "e1206936947")
+    assert rows[9]["annotation"] == "unranked interest"
+    assert rows[26]["annotation"] == "another good possible purchase"
+    assert "bought manually" in rows[12]["annotation"]
 
 
 def test_benchmark_listings_batches_read_only_diagnostics_and_miss_categories(

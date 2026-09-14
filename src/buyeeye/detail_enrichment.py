@@ -201,6 +201,30 @@ def _visible_int(visible_text: str, label: str) -> int | None:
     return int(match.group().replace(",", "")) if match else None
 
 
+def _primary_visible_brand(payload: dict[str, Any]) -> str | None:
+    """Read Buyee's product metadata, never a brand in seller/recommendation copy.
+
+    Production's Brand row is not a table/dl. Bind the fallback to the observed
+    item page and its metadata sequence before Item Explanation. A missing
+    value, multiple Brand rows, or an unfamiliar layout remains unknown.
+    """
+    if payload.get("association_version") != 1 or not payload.get("page_url"):
+        return None
+    text = str(payload.get("visible_text") or "")
+    text = re.split(r"(?im)^\s*(?:Item Explanation|Recently viewed items|Recommended items)\s*$", text)[0]
+    lines = [normalize_text(line) for line in text.splitlines() if normalize_text(line)]
+    positions = [i for i, line in enumerate(lines) if line == "Brand"]
+    if len(positions) != 1:
+        return None
+    i = positions[0]
+    if i + 2 >= len(lines) or lines[i + 2] != "Item Condition":
+        return None
+    value = lines[i + 1]
+    if value in {"-", "ー", "Unknown", "Not specified"} or len(value) > 100:
+        return None
+    return value
+
+
 class DetailIdentityError(ValueError):
     """The requested listing and the observed page do not agree."""
 
@@ -303,7 +327,8 @@ def parse_detail_payload(
         title_original=title,
         description_original=normalize_text(str(description)) if description else None,
         category_hierarchy=category_hierarchy,
-        brand_observed=_label_value(labels, r"^brand$", r"ブランド"),
+        brand_observed=_label_value(labels, r"^brand$", r"ブランド")
+        or _primary_visible_brand(payload),
         item_type_observed=_label_value(labels, r"item type", r"商品カテゴリ", r"カテゴリ")
         or (hierarchy_without_size[-1] if hierarchy_without_size else None),
         condition_original=_label_value(labels, r"condition", r"状態")

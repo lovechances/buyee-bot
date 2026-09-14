@@ -1,0 +1,6 @@
+cohort,url_or_id,annotation,source,marketplace_id,user_feedback_tags
+purchase_controls,https://buyee.jp/item/jdirectitems/shopping/ssol-shopping_2348621003856,manual purchase approximately $49 Prada shoes; user report not verified transaction or profit,buyee_shopping,ssol-shopping_2348621003856,manual_purchase_reported;shopping_source
+purchase_controls,https://buyee.jp/item/yahoo/auction/h1238476063,manual purchase approximately $35 Vetements hat; authentication option reported not proof of selection or completed result,buyee,h1238476063,manual_purchase_reported;user_reported_authentication_option
+purchase_controls,https://buyee.jp/item/jdirectitems/auction/c1239443570,bot-originated Number Nine distressed denim shorts purchase; delivery predates v10 observation,buyee,c1239443570,bot_purchase_reported;pre_v10_delivery
+purchase_controls,https://buyee.jp/item/jdirectitems/auction/t1233238196,bot-originated GU Undercover distressed jeans purchase approximately 200 JPY; not the early Number Nine bid or later x1184359198,buyee,t1233238196,bot_purchase_reported;user_reported_price
+purchase_controls,https://buyee.jp/item/jdirectitems/auction/h1223997057,friend bought Stussy mastermind tee after bot surfaced it; final purchase price unverified,buyee,h1223997057,friend_purchase_reported;bot_origin_reported

@@ -53,6 +53,16 @@ class Comp:
     shipping_original: float | None = None
     condition: str | None = None
     size: str | None = None
+    # A page can be sold while its displayed amount is not the accepted offer.
+    # Producers must explicitly establish realized amounts; source names alone
+    # are not transaction verification.
+    price_evidence: str = "unknown"
+    evidence_observed_at: datetime | None = None
+    evidence_note: str | None = None
+    stock_identity: str | None = None
+    # Optional human/producer evidence about this exact product, independent
+    # from observing a sale. Never inferred merely from source or shared brand.
+    match_evidence: str | None = None
 
 
 @dataclass

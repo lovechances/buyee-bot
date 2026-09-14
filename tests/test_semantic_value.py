@@ -267,7 +267,7 @@ def test_piece_matched_japan_ended_supports_direction_not_us_fmv() -> None:
         buyout=12_000,
     )
     sales = [
-        Comp("yahoo_ended", listing.title_original, price, 1.0, 20)
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 20, price_evidence="realized")
         for price in (30_000, 32_000, 35_000)
     ]
     evaluation = evaluate_listing(listing, japan_comps=sales)
@@ -286,7 +286,7 @@ def test_piece_matched_japan_ended_supports_direction_not_us_fmv() -> None:
 def test_broad_or_active_japan_observations_do_not_drive_directional_value() -> None:
     listing = _listing("Prada graphic t-shirt", price=12_000, buyout=12_000)
     broad = [
-        Comp("yahoo_ended", "Prada logo t-shirt", 80_000, 1.0, 20)
+        Comp("yahoo_ended", "Prada logo t-shirt", 80_000, 1.0, 20, price_evidence="realized")
         for _ in range(3)
     ]
     active = [
@@ -297,6 +297,7 @@ def test_broad_or_active_japan_observations_do_not_drive_directional_value() -> 
             1.0,
             20,
             is_sold=False,
+            price_evidence="realized",
         )
         for _ in range(3)
     ]
@@ -541,6 +542,7 @@ def test_yahoo_ended_archetype_matches_are_not_called_piece_matched_directional_
             1.0,
             20,
             source_listing_id=f"plain-prada-{size}",
+            price_evidence="realized",
         )
         for size, price in ((44, 48_000), (46, 50_000), (48, 52_000))
     ]
@@ -652,6 +654,7 @@ def test_verified_high_ticket_economics_still_route_as_buyout() -> None:
             1.0,
             30,
             source_listing_id=f"verified-margiela-{index}",
+            price_evidence="realized",
         )
         for index, price_jpy in enumerate(
             (450_000, 475_000, 500_000, 525_000, 550_000),
@@ -678,6 +681,7 @@ def test_verified_negative_high_ticket_economics_do_not_rescue_era_only_grail() 
             1.0,
             30,
             source_listing_id=f"negative-margiela-{index}",
+            price_evidence="realized",
         )
         for index, price_jpy in enumerate(
             (50_000, 55_000, 60_000, 65_000, 70_000),
@@ -691,7 +695,7 @@ def test_verified_negative_high_ticket_economics_do_not_rescue_era_only_grail() 
     assert evaluation.economics.opportunity_score < 70
     assert evaluation.directional.thesis is None
     assert decision.route is None
-    assert decision.rejection_reason == "unverified_high_ticket_not_iconic"
+    assert decision.rejection_reason == "verified_negative_economics"
 
 
 def test_high_ticket_exceptional_heat_cannot_be_stacked_from_era_boilerplate() -> None:
@@ -1486,7 +1490,7 @@ def test_generic_archetype_with_verified_economics_can_still_route() -> None:
             1.0,
             30,
             source_listing_id=f"tie-{index}",
-        )
+         price_evidence="realized", match_evidence="verified_piece", evidence_note="Synthetic exact-piece transaction fixture; not production evidence")
         for index, price in enumerate((45_000, 48_000, 50_000, 52_000, 55_000))
     ]
     evaluation = evaluate_listing(listing, sold)
@@ -1537,6 +1541,7 @@ def test_chrome_sold_comps_do_not_make_photo_less_generic_silver_reviewworthy() 
             1.0,
             30,
             source_listing_id=f"chrome-{index}",
+            price_evidence="realized",
         )
         for index, price in enumerate((45_000, 48_000, 50_000, 52_000, 55_000))
     ]

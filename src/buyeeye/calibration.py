@@ -113,6 +113,9 @@ def _comps(records: Any) -> list[Comp]:
                 category=record.get("category"),
                 is_sold=bool(record.get("is_sold", True)),
                 provenance=str(record.get("provenance", "calibration_fixture")),
+                price_evidence=str(record.get("price_evidence", "unknown")),
+                match_evidence=record.get("match_evidence"),
+                evidence_note=record.get("evidence_note"),
             )
         )
     return comps

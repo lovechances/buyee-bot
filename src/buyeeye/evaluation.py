@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import statistics
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .fashion import FashionProfile, enrich_title, is_generic_signal
@@ -31,6 +31,7 @@ class CompResult:
     rejected_count: int = 0
     queries: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+    context_matches: list[Comp] = field(default_factory=list)
 
 
 @dataclass
@@ -44,6 +45,7 @@ class EconomicsResult:
     opportunity_score: int
     comp_confidence: str
     warnings: list[str] = field(default_factory=list)
+    cost_estimate: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -206,6 +208,9 @@ _DIRECTIONAL_DESIGN_TERMS = (
     "panelled",
     "patchwork",
     "painted",
+    "paisley",
+    "ペイズリー",
+    "ストーン",
     "patterned",
     "platform",
     "pointed toe",
@@ -284,6 +289,7 @@ _DIRECTIONAL_CONTEXT_ONLY_SIGNALS = {
 # Useful acquisition descriptors are not automatically interruption-worthy
 # grail evidence, and generic visual nouns cannot establish an exact comp.
 _WEAK_GRAIL_DESIGN_SIGNALS = {
+    "aids", "エイズ", "skull", "スカル", "ドクロ",
     "1b",
     "graphic",
     "one button",
@@ -308,6 +314,7 @@ _WEAK_STANDALONE_DESIGN_SIGNALS = {
     "embroidery",
     "open collar",
     "striped",
+    "paneled", "panelled", "切替", "パネル",
     "chelsea",
     "サイドゴア",
 }
@@ -462,7 +469,7 @@ _DISTINCTIVE_GENERIC_ESCAPES = {
 }
 
 _DESIGN_CONCEPT_ALIASES = {
-    "all_over": {"all-over", "all over", "総柄"},
+    "aids_graphic": {"aids", "エイズ", "aids tee", "エイズt"},
     "applique": {"applique", "appliqué", "アップリケ"},
     "asymmetry": {"asymmetric", "asymmetrical", "変形"},
     "bondage": {"bondage", "ボンテージ"},
@@ -485,9 +492,10 @@ _DESIGN_CONCEPT_ALIASES = {
     "one_button": {"one button", "1b"},
     "open_collar": {"open collar", "オープンカラー"},
     "paint": {"painted", "ペンキ"},
+    "paisley": {"paisley", "ペイズリー"},
     "paneling": {"paneled", "panelled", "パネル", "切替"},
     "patchwork": {"patchwork", "パッチワーク"},
-    "pattern": {"patterned"},
+    "pattern": {"patterned", "all-over", "all over", "総柄"},
     "platform": {"platform"},
     "pointed_toe": {"pointed toe"},
     "processing": {"processed", "加工"},
@@ -504,6 +512,7 @@ _DESIGN_CONCEPT_ALIASES = {
 }
 
 _DESIGN_SIGNAL_ITEM_TYPES = {
+    "ストーン": {"jacket", "shirt", "hoodie", "t_shirt", "denim", "trousers"},
     "1b": {"jacket"},
     "one button": {"jacket"},
     "open collar": {"shirt"},
@@ -675,7 +684,10 @@ def _has_standalone_design_evidence(piece_signals: Iterable[str]) -> bool:
     if normalized_signals & _STRONG_DESIGN_SIGNAL_OVERRIDES:
         return True
     weak_concepts = _design_concepts(_WEAK_STANDALONE_DESIGN_SIGNALS)
-    return bool(_design_concepts(piece_signals) - weak_concepts)
+    design_terms = {normalize_text(term).casefold() for term in _DIRECTIONAL_DESIGN_TERMS}
+    # Named product/taxonomy tokens are useful context, not automatically a
+    # second construction observation or independent design evidence.
+    return bool(_design_concepts(normalized_signals & design_terms) - weak_concepts)
 
 
 def has_grail_design_evidence(piece_signals: Iterable[str]) -> bool:
@@ -1049,7 +1061,12 @@ def assess_directional_opportunity(
         score = 0
 
     independent_design = has_specific_design_evidence(design_signals)
-    design_concepts = _design_concepts(design_signals)
+    design_concepts = _design_concepts(
+        signal for signal in design_signals
+        if normalize_text(signal).casefold() in {
+            normalize_text(term).casefold() for term in _DIRECTIONAL_DESIGN_TERMS
+        }
+    )
     standalone_design = _has_standalone_design_evidence(design_signals)
     iconic_piece = has_iconic_piece_context(profile)
     named_collection = has_named_collection_context(profile)
@@ -1058,7 +1075,7 @@ def assess_directional_opportunity(
         and (
             (
                 profile.item_type.value == "t_shirt"
-                and "graphic" in design_concepts
+                and bool({"graphic", "aids_graphic", "skull"} & design_concepts)
             )
             or (
                 profile.item_type.value == "footwear"
@@ -1076,6 +1093,24 @@ def assess_directional_opportunity(
         or len(design_concepts) >= 2
         or category_specific_weak_design
     )
+    # A common graphic remains inspectable, but an ordinary logo/motif at an
+    # ordinary acquisition price is not a standalone bargain claim. One truly
+    # distinctive construction/material can still suffice; no two-keyword rule.
+    weak_motif_only = bool(
+        profile.item_type and profile.item_type.value == "t_shirt"
+        and design_concepts
+        and design_concepts <= {"graphic", "aids_graphic", "skull", "embroidery", "stripe", "pattern", "paneling"}
+        and not notable_material and not iconic_piece
+    )
+    weak_motif_value_supported = bool(
+        actionable_price is not None
+        and 0 < actionable_price <= int(config.get("weak_motif_max_actionable_jpy", 5000))
+        or valuation.confidence in {"medium", "high"}
+        or japan_fraction is not None and japan_fraction <= japan_market_max_fraction
+    )
+    if weak_motif_only and not weak_motif_value_supported:
+        purposeful_piece_evidence = False
+        reasons.append("common motif alone does not establish unusual acquisition value")
     collaboration_piece_evidence = bool(
         iconic_piece
         or (has_named_collection_context(profile) and independent_design)
@@ -1115,6 +1150,8 @@ def assess_directional_opportunity(
             or strong_piece_quality_evidence
         )
     )
+    if weak_motif_only and not weak_motif_value_supported:
+        quality_floor = False
     is_vintage_band_tee = bool(
         profile.brand and profile.brand.value == "Vintage Band Tee"
     )
@@ -1332,7 +1369,7 @@ def score_desirability(profile: FashionProfile, title: str, condition: str | Non
     return DesirabilityResult(max(0, min(100, score)), reasons, warnings)
 
 
-def _comp_similarity(profile: FashionProfile, comp: Comp) -> float:
+def _comp_similarity(profile: FashionProfile, comp: Comp, evidence_text: str = "") -> float:
     comp_profile = enrich_title(comp.title)
     if (
         not profile.product_scope.acquisition_attributable
@@ -1343,6 +1380,13 @@ def _comp_similarity(profile: FashionProfile, comp: Comp) -> float:
         return 0.0
     if not profile.brand or not comp_profile.brand or profile.brand.value != comp_profile.brand.value:
         return 0.0
+    # Explicit identity contradictions are not broadening. A tee and shorts,
+    # or two named collections, cannot inherit one another's precise value.
+    for feature in ("item_type", "item_subtype", "collection"):
+        target_feature = getattr(profile, feature)
+        comp_feature = getattr(comp_profile, feature)
+        if target_feature and comp_feature and target_feature.value != comp_feature.value:
+            return 0.0
     target_relationship = profile.relationship.value if profile.relationship else "uncertain"
     comp_relationship = (
         comp_profile.relationship.value if comp_profile.relationship else "uncertain"
@@ -1388,40 +1432,81 @@ def _comp_similarity(profile: FashionProfile, comp: Comp) -> float:
     comp_signals = {signal.value for signal in comp_profile.positive_signals}
     if target_signals & comp_signals:
         score += 0.15
+    # A collection name/season and category are context, not the actual design.
+    target_piece = _design_concepts(_distinct_piece_signals(profile, evidence_text))
+    comp_piece = _design_concepts(_distinct_piece_signals(comp_profile, comp.title))
+    if comp.match_evidence == "verified_piece" and comp.evidence_note:
+        score = max(score, 0.85)
+    elif not target_piece or not target_piece.issubset(comp_piece):
+        score = min(score, 0.60)
+    if profile.material and comp_profile.material and profile.material.value != comp_profile.material.value:
+        score = min(score, 0.60)
+    if profile.season and comp_profile.season:
+        def season_key(value: str) -> str:
+            compact = value.upper().replace("FW", "AW")
+            match = re.search(r"(\d{2,4})\s*(SS|AW)|(SS|AW)\s*(\d{2,4})", compact)
+            if not match:
+                return compact
+            return f"{(match[1] or match[4])[-2:]}{match[2] or match[3]}"
+        if season_key(profile.season.value) != season_key(comp_profile.season.value):
+            score = min(score, 0.60)
     return max(0.0, min(1.0, score * max(0.0, min(1.0, comp.similarity))))
 
 
-def evaluate_comps(profile: FashionProfile, comps: Iterable[Comp]) -> CompResult:
+def evaluate_comps(
+    profile: FashionProfile,
+    comps: Iterable[Comp],
+    *,
+    condition: str | None = None,
+    evidence_text: str = "",
+) -> CompResult:
     candidates = list(comps)
     allowed_sources = {"grailed_sold", "yahoo_ended", "ebay_sold", "local_sold"}
     matched: list[Comp] = []
-    for comp in candidates:
+    context: list[Comp] = []
+    seen: set[tuple[Any, ...]] = set()
+    # If one cached observation lacks amount evidence but a later observation
+    # of the same transaction establishes it, the weaker first record cannot
+    # permanently consume that identity's contribution.
+    for comp in sorted(candidates, key=lambda row: row.price_evidence == "realized", reverse=True):
         if not comp.is_sold or comp.source not in allowed_sources or not comp.price_jpy:
             continue
-        similarity = _comp_similarity(profile, comp)
+        similarity = _comp_similarity(profile, comp, evidence_text)
         if similarity < 0.45:
             continue
-        matched.append(
-            Comp(
-                source=comp.source,
-                title=comp.title,
-                price_jpy=comp.price_jpy,
-                similarity=similarity,
-                recency_days=comp.recency_days,
-                category=comp.category,
-                is_sold=True,
-                provenance=comp.provenance,
-                source_listing_id=comp.source_listing_id,
-                url=comp.url,
-                query=comp.query,
-                sold_at=comp.sold_at,
-                original_price=comp.original_price,
-                original_currency=comp.original_currency,
-                shipping_original=comp.shipping_original,
-                condition=comp.condition,
-                size=comp.size,
-            )
+        identity = (
+            ("stock", comp.stock_identity) if comp.stock_identity else
+            (comp.source, comp.source_listing_id) if comp.source_listing_id else
+            ("url", comp.url.split("?")[0]) if comp.url else
+            (comp.source, normalize_text(comp.title).casefold(), comp.price_jpy, comp.sold_at)
         )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        record = replace(comp, similarity=similarity)
+        # Unknown accepted offer is never a realized transaction at the ask.
+        # Broad/condition-mismatched evidence remains visible as context but
+        # cannot create a median, margin, multiple or negative-economic veto.
+        def condition_grade(value: str | None) -> str | None:
+            if not value:
+                return None
+            if _has_poor_condition_evidence(value):
+                return "poor"
+            if _has_favorable_condition_evidence(value, ""):
+                return "unused"
+            if re.search(r"(?i)\b(?:worn|damaged)\b", value) and "gently" not in value.casefold():
+                return "worn"
+            if re.search(r"(?i)used|gently|no obvious|中古", value):
+                return "used"
+            return None
+        target_condition, comp_condition = condition_grade(condition), condition_grade(comp.condition)
+        condition_conflict = bool(
+            target_condition and comp_condition and target_condition != comp_condition
+        )
+        if comp.price_evidence != "realized" or similarity < 0.65 or condition_conflict:
+            context.append(record)
+        else:
+            matched.append(record)
     if not matched:
         return CompResult(
             None,
@@ -1429,11 +1514,12 @@ def evaluate_comps(profile: FashionProfile, comps: Iterable[Comp]) -> CompResult
             None,
             "none",
             [],
-            "no sufficiently similar sold comps",
+            "no verified realized, piece-specific sold amounts" if context else "no sufficiently similar sold comps",
             len(candidates),
             len(candidates),
             sorted({comp.query for comp in candidates if comp.query}),
             sorted({comp.source for comp in candidates}),
+            context_matches=context,
         )
     prices = sorted(int(comp.price_jpy) for comp in matched if comp.price_jpy)
     if len(prices) >= 5:
@@ -1453,15 +1539,17 @@ def evaluate_comps(profile: FashionProfile, comps: Iterable[Comp]) -> CompResult
         rejected_count=len(candidates) - len(matched),
         queries=sorted({comp.query for comp in candidates if comp.query}),
         sources=sorted({comp.source for comp in candidates}),
+        context_matches=context,
     )
 
 
 def evaluate_economics(price_jpy: int | None, comps: CompResult, settings: dict[str, Any] | None = None) -> EconomicsResult:
     if not price_jpy or price_jpy <= 0:
         return EconomicsResult(None, comps.median_jpy, None, None, None, None, 0, comps.confidence, ["invalid or missing acquisition price"])
-    landed = int(estimate_landed_cost_jpy(price_jpy, settings)["landed_jpy"])
+    cost_estimate = estimate_landed_cost_jpy(price_jpy, settings)
+    landed = int(cost_estimate["landed_jpy"])
     if comps.median_jpy is None:
-        return EconomicsResult(landed, None, None, None, None, None, 0, "none", ["no reliable sold-market valuation"])
+        return EconomicsResult(landed, None, None, None, None, None, 0, "none", ["no reliable sold-market valuation"], cost_estimate)
     resale_fee = float((settings or {}).get("pricing", {}).get("resale_fee_percent", 0.13))
     net_resale = int(comps.median_jpy * (1 - resale_fee))
     gross_margin = comps.median_jpy - landed
@@ -1481,7 +1569,7 @@ def evaluate_economics(price_jpy: int | None, comps: CompResult, settings: dict[
     elif multiple and multiple >= 1.5:
         score += 20
     warnings = [] if net_margin > 0 else ["estimated net margin is not positive"]
-    return EconomicsResult(landed, comps.median_jpy, net_resale, gross_margin, net_margin, multiple, min(100, score), comps.confidence, warnings)
+    return EconomicsResult(landed, comps.median_jpy, net_resale, gross_margin, net_margin, multiple, min(100, score), comps.confidence, warnings, cost_estimate)
 
 
 def assess_auth_risk(profile: FashionProfile, title: str, price_jpy: int | None, raw: dict[str, Any] | None = None) -> AuthRiskResult:
@@ -1498,12 +1586,15 @@ def assess_auth_risk(profile: FashionProfile, title: str, price_jpy: int | None,
     if profile.auth_sensitive:
         points += 15
         reasons.append("frequently counterfeited brand/category")
-        if profile.category and profile.category.value == "jewelry":
+        sensitive_hardware = bool(
+            profile.item_subtype and profile.item_subtype.value == "hair_accessory"
+        )
+        if (profile.category and profile.category.value == "jewelry") or sensitive_hardware:
             # A seller rating, image count, cheap price or service-availability
             # badge is not item-level authentication. Keep the claim separate
             # from the manufacturer's identity and the price opportunity.
             points += 30
-            reasons.append("item-level authentication unverified for sensitive jewelry")
+            reasons.append("item-level authentication unverified for sensitive jewelry/hardware")
         if re.search(r"(?i)\b(?:coated|coating|plated|plating|silver\s+coat)\b|メッキ|コーティング", title):
             points += 30
             reasons.append("plated/coated material wording requires item-specific review")
@@ -1587,7 +1678,7 @@ def evaluate_listing(
         None,
     )
     desirability = score_desirability(profile, evidence_text, getattr(listing, "condition", None))
-    comp_result = evaluate_comps(profile, us_comp_candidates)
+    comp_result = evaluate_comps(profile, us_comp_candidates, condition=getattr(listing, "condition", None), evidence_text=identity_evidence_text)
     if stage_b_record.get("status") == "failed" and comp_result.confidence in {"medium", "high"}:
         comp_result.confidence = "low"
         comp_result.reason = f"{comp_result.reason}; Stage B identity unavailable"

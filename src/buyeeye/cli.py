@@ -42,6 +42,7 @@ from .status_monitor import (
     record_auth_failure,
     record_scanning_success,
     record_source_failure,
+    release_event_status,
 )
 
 
@@ -125,6 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("send-test-alert")
     status_event = subparsers.add_parser("status-event")
     status_event.add_argument("event", choices=sorted(MAJOR_UPDATE_MESSAGES))
+    status_event.add_argument("--status", action="store_true", help="Read persisted release delivery state without registering or sending")
     backtest = subparsers.add_parser("backtest")
     backtest.add_argument("--cohort")
     backtest.add_argument("--full", action="store_true")
@@ -175,7 +177,9 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings()
     db_path = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
-    if args.command not in {"backtest", "diagnose-listing", "benchmark-listings", "storage-summary"}:
+    if args.command not in {"backtest", "diagnose-listing", "benchmark-listings", "storage-summary"} and not (
+        args.command == "status-event" and args.status
+    ):
         init_db(db_path)
 
     if args.command == "storage-summary":
@@ -259,8 +263,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if readiness == "ready" else 1
 
     if args.command == "status-event":
-        result = announce_major_update(args.event, db_path)
+        try:
+            if args.status:
+                print(json.dumps(release_event_status(args.event, db_path), indent=2))
+                return 0
+            result = announce_major_update(args.event, db_path)
+        except ValueError as exc:
+            print(f"BuyEye status event: {exc}")
+            return 2
         print(f"BuyEye status event: {result.outcome}")
+        if result.message_id:
+            print(f"Confirmed Discord message: {result.message_id}; channel: {result.channel_id}")
         return 0 if result.emitted or result.outcome == "deduped" else 1
 
     if args.command == "run":

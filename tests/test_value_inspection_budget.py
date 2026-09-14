@@ -220,6 +220,36 @@ def test_existing_value_slot_rotates_to_highest_ranked_uninspected_card():
     assert len(selected) == 2  # No increased fetch budget or benchmark-ID special case.
 
 
+def test_repeatedly_capped_candidate_can_displace_fresh_uninspected_card():
+    fresh = replace(_assess(market=True), listing_id="fresh", inspection_score=100,
+                    inspection_attempted=False)
+    waiting = replace(fresh, listing_id="waiting", inspection_score=78,
+                      uninspected_age_hours=30)
+    selected, capped = select_stage_a_candidates([fresh, waiting], _spec(market=True),
+        {"stage_a": {"max_candidates_per_query": 1, "max_market_candidate_rate": 1}})
+    assert selected == [waiting]
+    assert capped == [fresh]
+    # No expanded budget, instant rotation, inspection of hard rejects, or ID rule.
+    waiting = replace(waiting, uninspected_age_hours=1)
+    assert select_stage_a_candidates([fresh, waiting], _spec(market=True),
+        {"stage_a": {"max_candidates_per_query": 1}})[0] == [fresh]
+
+
+def test_waiting_candidate_does_not_steal_an_overdue_detail_retry():
+    retry = replace(_assess(), listing_id="retry", inspection_score=100,
+                    inspection_attempted=True, detail_retry_overdue=True)
+    waiting = replace(retry, listing_id="waiting", inspection_score=78,
+                      inspection_attempted=False, detail_retry_overdue=False,
+                      uninspected_age_hours=100)
+    assert select_stage_a_candidates([retry, waiting], _spec(),
+        {"stage_a": {"max_candidates_per_query": 1}})[0] == [retry]
+
+
+def test_eligible_hat_can_share_existing_value_inspection_reservation():
+    hat = _assess("Vetements embroidered baseball cap", price=5000, family="vetements")
+    assert hat.eligible and hat.value_inspection_candidate
+
+
 def test_rotation_does_not_reward_repeated_low_rank_before_higher_uninspected_cards():
     cards = _coverage_cards()
     first, _ = select_stage_a_candidates(cards, _spec(market=True), _coverage_settings())

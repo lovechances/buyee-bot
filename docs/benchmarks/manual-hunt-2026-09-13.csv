@@ -1,0 +1,28 @@
+benchmark_id,row,url_or_id,annotation,source,marketplace_id,user_feedback_tags
+manual-hunt-2026-09-13,1,https://buyee.jp/item/jdirectitems/auction/o1219575641,unranked interest,buyee,o1219575641,manual_interest_unrated
+manual-hunt-2026-09-13,2,https://buyee.jp/item/jdirectitems/auction/n1217516540,a bit too expensive,buyee,n1217516540,price_objection
+manual-hunt-2026-09-13,3,https://buyee.jp/item/jdirectitems/auction/r1227256998,not my size and a bit too expensive,buyee,r1227256998,size_constraint;price_objection
+manual-hunt-2026-09-13,4,https://buyee.jp/item/jdirectitems/auction/n1238725647,approximately $46 Balenciaga jeans; strong possible ping at discovery,buyee,n1238725647,strong_alert_interest;user_reported_price;fit_conflict_reported
+manual-hunt-2026-09-13,5,https://buyee.jp/item/jdirectitems/auction/f1214226865,too expensive but cool,buyee,f1214226865,interesting_but_too_expensive
+manual-hunt-2026-09-13,6,https://buyee.jp/item/jdirectitems/auction/t1222582674,unranked interest,buyee,t1222582674,manual_interest_unrated
+manual-hunt-2026-09-13,7,https://buyee.jp/item/jdirectitems/auction/g1201770622,unranked interest,buyee,g1201770622,manual_interest_unrated
+manual-hunt-2026-09-13,8,https://buyee.jp/item/jdirectitems/auction/c1211862596,authenticity uncertain,buyee,c1211862596,authenticity_uncertain
+manual-hunt-2026-09-13,9,https://buyee.jp/item/jdirectitems/auction/f1051997767,authenticity uncertain,buyee,f1051997767,authenticity_uncertain
+manual-hunt-2026-09-13,10,https://buyee.jp/item/jdirectitems/auction/e1206936947,unranked interest,buyee,e1206936947,manual_interest_unrated
+manual-hunt-2026-09-13,11,https://buyee.jp/item/jdirectitems/auction/e1244072587,unranked interest,buyee,e1244072587,manual_interest_unrated
+manual-hunt-2026-09-13,12,https://buyee.jp/item/jdirectitems/auction/j1237781532,repeated manual interest; also in the earlier hunt,buyee,j1237781532,repeated_manual_interest;longitudinal_overlap_prior_18
+manual-hunt-2026-09-13,13,https://buyee.jp/item/jdirectitems/auction/h1238476063,"low price, authentication option reported; subsequently bought manually",buyee,h1238476063,manual_purchase_reported;user_reported_authentication_option
+manual-hunt-2026-09-13,14,https://buyee.jp/item/jdirectitems/auction/c1157326782,dislike the color; design would appeal in another color,buyee,c1157326782,color_objection;conditional_design_interest
+manual-hunt-2026-09-13,15,https://buyee.jp/item/jdirectitems/auction/g1228389581,too expensive but cool,buyee,g1228389581,interesting_but_too_expensive
+manual-hunt-2026-09-13,16,https://buyee.jp/item/jdirectitems/auction/w1230036935,unranked interest,buyee,w1230036935,manual_interest_unrated
+manual-hunt-2026-09-13,17,https://buyee.jp/item/jdirectitems/auction/x1184359198,decent; not as good as the earlier approximately $1 bot-found jeans,buyee,x1184359198,decent_relative_interest;not_the_bot_purchased_gu_listing
+manual-hunt-2026-09-13,18,https://buyee.jp/item/jdirectitems/auction/u1234723893,unranked interest,buyee,u1234723893,manual_interest_unrated
+manual-hunt-2026-09-13,19,https://buyee.jp/item/jdirectitems/auction/x1243943183,a bit expensive and the design is not particularly interesting,buyee,x1243943183,price_objection;low_design_interest
+manual-hunt-2026-09-13,20,https://buyee.jp/item/jdirectitems/auction/r1229681678,"much too expensive, but cool tee",buyee,r1229681678,interesting_but_too_expensive
+manual-hunt-2026-09-13,21,https://buyee.jp/item/jdirectitems/auction/k1236929442,"good price, but I would not buy the piece",buyee,k1236929442,good_price_but_personally_unwanted
+manual-hunt-2026-09-13,22,https://buyee.jp/item/jdirectitems/auction/c1239443570,bot-alerted Number Nine shorts; purchased,buyee,c1239443570,purchase_reported;bot_origin_reported;pre_v10_delivery
+manual-hunt-2026-09-13,23,https://buyee.jp/item/jdirectitems/auction/d1184054169,somewhat pricey but considerable,buyee,d1184054169,price_objection;purchase_consideration
+manual-hunt-2026-09-13,24,https://buyee.jp/item/jdirectitems/auction/b1231732915,"uncertain, but decent price",buyee,b1231732915,uncertain_interest;decent_price
+manual-hunt-2026-09-13,25,https://buyee.jp/item/jdirectitems/auction/t1228669967?conversionType=jdirectitems_auction_DirectSearch,considerably too expensive but good piece,buyee,t1228669967,interesting_but_too_expensive
+manual-hunt-2026-09-13,26,https://buyee.jp/item/jdirectitems/auction/g1223149511?conversionType=jdirectitems_auction_DirectSearch,possible purchase,buyee,g1223149511,purchase_consideration
+manual-hunt-2026-09-13,27,https://buyee.jp/item/jdirectitems/auction/e1206936947?conversionType=buyee_top_browsing_history,another good possible purchase,buyee,e1206936947,purchase_consideration;updated_annotation_same_listing

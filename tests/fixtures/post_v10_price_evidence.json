@@ -1,0 +1,33 @@
+{
+  "provenance": "Read-only extract from frozen post_v11 baseline_verified.db; diagnostic fixture, not a new acquisition",
+  "listing": {
+    "source": "buyee",
+    "source_listing_id": "u1222047972",
+    "title_original": "2000年代初頭 即決 Dolce&Gabbana ドルチェ＆ガッバーナ レザー装飾 クラッシュ＆リペア デストロイデニムパンツ フレアーデニム メンズ 46",
+    "buyout_price": 9888,
+    "observed_at": "2026-09-13T16:59:06.655363+00:00",
+    "raw_price_label": "9,888 YEN (Tax 0 yen) (US$67.54)",
+    "domestic_shipping_responsibility": "Winner",
+    "domestic_shipping_amount_jpy": null,
+    "sent_at": "2026-09-13 16:59:11.776479",
+    "ledger_id": 97,
+    "user_outcome": "consideration_positive_not_purchased"
+  },
+  "legacy_pricing": {
+    "fx_jpy_to_usd": 0.00675,
+    "buyee_fee_percent": 0.11,
+    "plan_fee_jpy": 350,
+    "domestic_shipping_jpy": 800,
+    "international_shipping_jpy": 1500,
+    "packaging_jpy": 300,
+    "insurance_percent": 0.02,
+    "duty_percent": 0.08,
+    "reserve_percent": 0.05
+  },
+  "legacy_display": {"listing_only_usd": 66.74, "estimated_landed_usd": 98.61},
+  "grailed_observations": [
+    {"source_listing_id": "4466597", "original_price": 120, "original_currency": "USD", "retrieved_at": "2026-09-11 22:48:53.198030", "sold_at": null, "accepted_amount_verified": false},
+    {"source_listing_id": "37239749", "original_price": 70, "original_currency": "USD", "retrieved_at": "2026-09-11 22:48:53.198030", "sold_at": null, "accepted_amount_verified": false},
+    {"source_listing_id": "79545908", "original_price": 154, "original_currency": "USD", "retrieved_at": "2026-09-11 22:48:53.198030", "sold_at": null, "accepted_amount_verified": false}
+  ]
+}

@@ -158,7 +158,9 @@ cases:
       source: user_calibration
       outcome: mixed_positive
       note: Undercover 25AW plant graphic tee around ¥7,590.
-    acceptable_outcomes: [route:buyouts, route:grails, reject:route_threshold]
+    # Same mixed/user design-miss label; the new explicit rejection reason is
+    # equivalent to this cohort's previously acceptable route-threshold miss.
+    acceptable_outcomes: [route:buyouts, route:grails, reject:route_threshold, reject:missing_us_valuation_but_directional_weak]
     listing:
       title_original: "UNDERCOVER 25AW plant graphic T-shirt"
       brand: Undercover
@@ -440,9 +442,9 @@ cases:
       item_type_observed: Jacket
       description_original: "Artisanal reconstructed leather paneled jacket"
     us_comps:
-      - {source: grailed_sold, title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 180000, similarity: 0.95}
-      - {source: grailed_sold, title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 200000, similarity: 0.95}
-      - {source: grailed_sold, title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 220000, similarity: 0.95}
+      - {source: grailed_sold, price_evidence: realized, match_evidence: verified_piece, evidence_note: "Synthetic explicitly verified transaction regression control, not production evidence", title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 180000, similarity: 0.95}
+      - {source: grailed_sold, price_evidence: realized, match_evidence: verified_piece, evidence_note: "Synthetic explicitly verified transaction regression control, not production evidence", title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 200000, similarity: 0.95}
+      - {source: grailed_sold, price_evidence: realized, match_evidence: verified_piece, evidence_note: "Synthetic explicitly verified transaction regression control, not production evidence", title: "Maison Martin Margiela artisanal reconstruction leather jacket", price_jpy: 220000, similarity: 0.95}
 
   - key: mature_margiela_ending
     cohort: auction
@@ -487,6 +489,6 @@ cases:
       item_type_observed: T-shirt
       description_original: "2001SS Time Migration original Miyashita graphic tee"
     us_comps:
-      - {source: grailed_sold, title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 40000, similarity: 0.98}
-      - {source: grailed_sold, title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 45000, similarity: 0.98}
-      - {source: grailed_sold, title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 50000, similarity: 0.98}
+      - {source: grailed_sold, price_evidence: realized, match_evidence: verified_piece, evidence_note: "Synthetic explicitly verified transaction regression control, not production evidence", title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 40000, similarity: 0.98}
+      - {source: grailed_sold, price_evidence: realized, match_evidence: verified_piece, evidence_note: "Synthetic explicitly verified transaction regression control, not production evidence", title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 45000, similarity: 0.98}
+      - {source: grailed_sold, price_evidence: realized, match_evidence: verified_piece, evidence_note: "Synthetic explicitly verified transaction regression control, not production evidence", title: "Number (N)ine 2001SS Time Migration graphic T-shirt", price_jpy: 50000, similarity: 0.98}

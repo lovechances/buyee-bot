@@ -104,7 +104,7 @@ def test_unknown_gallery_exception_requires_high_piece_identity():
 def test_verified_comp_economics_with_primary_image_still_requires_auth_review():
     listing = _primary_image_listing("Chrome Hearts keeper floral cross 925 silver ring")
     comps = [Comp("ebay_sold", listing.title_original, price, 1.0, 30,
-                  source_listing_id=f"fixture-chrome-{i}")
+                  source_listing_id=f"fixture-chrome-{i}", price_evidence="realized")
              for i, price in enumerate((45000, 48000, 50000, 52000, 55000))]
     evaluation = evaluate_listing(listing, comps)
     assert evaluation.economics.opportunity_score >= 70

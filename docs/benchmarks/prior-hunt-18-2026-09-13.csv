@@ -1,0 +1,19 @@
+benchmark_id,row,url_or_id,annotation,source,marketplace_id,user_feedback_tags
+prior-hunt-18-2026-09-13,1,https://buyee.jp/item/jdirectitems/auction/b1157261953,,buyee,b1157261953,manual_interest_unrated
+prior-hunt-18-2026-09-13,2,https://buyee.jp/item/jdirectitems/auction/n1204220076,,buyee,n1204220076,manual_interest_unrated
+prior-hunt-18-2026-09-13,3,https://buyee.jp/item/jdirectitems/auction/k1222800544,,buyee,k1222800544,manual_interest_unrated
+prior-hunt-18-2026-09-13,4,https://buyee.jp/item/jdirectitems/auction/d1215306825,,buyee,d1215306825,manual_interest_unrated
+prior-hunt-18-2026-09-13,5,https://buyee.jp/item/jdirectitems/auction/d1239615529,,buyee,d1239615529,manual_interest_unrated
+prior-hunt-18-2026-09-13,6,https://buyee.jp/item/jdirectitems/auction/j1237781532,,buyee,j1237781532,longitudinal_overlap_later_hunt
+prior-hunt-18-2026-09-13,7,https://buyee.jp/item/jdirectitems/auction/g1242293701,cool but too expensive,buyee,g1242293701,interesting_but_too_expensive
+prior-hunt-18-2026-09-13,8,https://buyee.jp/item/jdirectitems/auction/o1221701770,,buyee,o1221701770,manual_interest_unrated
+prior-hunt-18-2026-09-13,9,https://buyee.jp/item/jdirectitems/auction/w1228214899,cool but too expensive,buyee,w1228214899,interesting_but_too_expensive
+prior-hunt-18-2026-09-13,10,https://buyee.jp/item/jdirectitems/auction/q1240677210,cool but too expensive,buyee,q1240677210,interesting_but_too_expensive
+prior-hunt-18-2026-09-13,11,https://buyee.jp/item/jdirectitems/auction/u1225470712,,buyee,u1225470712,manual_interest_unrated
+prior-hunt-18-2026-09-13,12,https://buyee.jp/item/jdirectitems/auction/w1219596150,,buyee,w1219596150,manual_interest_unrated
+prior-hunt-18-2026-09-13,13,https://buyee.jp/item/jdirectitems/auction/d1214836782,,buyee,d1214836782,manual_interest_unrated
+prior-hunt-18-2026-09-13,14,https://buyee.jp/item/jdirectitems/auction/c1226698756,,buyee,c1226698756,manual_interest_unrated
+prior-hunt-18-2026-09-13,15,https://buyee.jp/item/jdirectitems/auction/p1222030094,possible purchase,buyee,p1222030094,purchase_consideration
+prior-hunt-18-2026-09-13,16,https://buyee.jp/item/jdirectitems/auction/l1174555515,possible purchase,buyee,l1174555515,purchase_consideration
+prior-hunt-18-2026-09-13,17,https://buyee.jp/item/jdirectitems/auction/n1190713130,,buyee,n1190713130,manual_interest_unrated
+prior-hunt-18-2026-09-13,18,https://buyee.jp/paypayfleamarket/item/z609539002?conversionType=jdirectitems_auction_DirectSearch,,buyee_paypay,z609539002,manual_interest_unrated;unsupported_acquisition_source

@@ -160,9 +160,12 @@ def test_configuration_cleanup_does_not_delete_historical_listings(tmp_path) -> 
 
 def test_major_update_sends_once_and_dedupes_persistently(monkeypatch, tmp_path) -> None:
     messages: list[str] = []
+    monkeypatch.setenv("DISCORD_WEBHOOK_STATUS", "https://discord.com/api/webhooks/fixture/token")
     monkeypatch.setattr(
-        "buyeeye.status_monitor.send_status_event",
-        lambda message, level="info": (messages.append(message) or True, 204, 0.01),
+        "buyeeye.status_monitor.send_release_summary",
+        lambda message: (messages.append(message) or {
+            "state": "sent", "result": "200", "message_id": "123", "channel_id": "456",
+        }),
     )
     db_path = tmp_path / "status.db"
 

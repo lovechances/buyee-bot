@@ -108,13 +108,16 @@ class YahooEndedSource(SoldCompSource):
                     sold_at=sold_at,
                     original_price=float(price_jpy),
                     original_currency="JPY",
+                    price_evidence="realized",
+                    evidence_observed_at=observed_at,
+                    evidence_note="Yahoo closed-search card explicitly labels the winning amount 落札",
                 )
             )
         return records
 
 
 class ObservedUSSoldSource(SoldCompSource):
-    """Manually verified U.S. sold records; never treats active asking prices as comps."""
+    """Observed U.S. sold pages, with amount verification kept separate from status."""
 
     name = "grailed_sold"
 
@@ -147,7 +150,7 @@ class ObservedUSSoldSource(SoldCompSource):
                     similarity=1.0,
                     recency_days=int(row.get("recency_days", 180)),
                     is_sold=True,
-                    provenance=f"verified_public_grailed:{row['listing_id']}",
+                    provenance=f"observed_public_grailed:{row['listing_id']}",
                     source_listing_id=str(row["listing_id"]),
                     url=str(row["url"]),
                     query=query,
@@ -155,6 +158,14 @@ class ObservedUSSoldSource(SoldCompSource):
                     original_currency="USD",
                     condition=row.get("condition"),
                     size=row.get("size"),
+                    price_evidence=str(row.get("price_evidence", "unknown")),
+                    evidence_observed_at=(
+                        datetime.fromisoformat(str(row["evidence_observed_at"]))
+                        if row.get("evidence_observed_at") else None
+                    ),
+                    evidence_note=row.get("evidence_note"),
+                    stock_identity=row.get("stock_identity"),
+                    match_evidence=row.get("match_evidence"),
                 )
             )
         return records

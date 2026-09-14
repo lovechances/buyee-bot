@@ -1,7 +1,12 @@
-version: 1
-provenance: manual_verified_public_us_sold
+version: 2
+provenance: manual_observed_public_us_sold_pages
 
-# Only completed U.S.-market sales belong here. Active/reseller asks are forbidden.
+# Sold status does not independently establish an accepted transaction amount.
+# Preserve these historical visible-price observations as context. They cannot
+# drive exact valuation unless realized-amount evidence is subsequently supplied.
+# 2026-09-13 recheck: 4466597 displays "Sold Price $120"; the other two
+# accessible sold-page representations did not expose a price. No checkout,
+# accepted-offer or settled-amount record is held for any of these observations.
 sold_comps:
   - listing_id: "4466597"
     market: "US"
@@ -9,6 +14,8 @@ sold_comps:
     platform: "Grailed"
     title: 'Number (N)ine SS01 "Time Migration" T-Shirt'
     sold_price_usd: 120
+    price_evidence: visible_sold_price
+    evidence_note: "2026-09-13 public-page recheck labels $120 Sold Price; accepted/settled amount and included shipping not independently established."
     size: "3"
     query_terms: ["number (n)ine", "time migration", "t shirt"]
     url: "https://www.grailed.com/listings/4466597-number-n-ine-number-n-ine-ss01-time-migration-t-shirt"
@@ -18,6 +25,8 @@ sold_comps:
     platform: "Grailed"
     title: 'Vintage Number (N)ine SS01 "Time Migration" Montreal T-Shirt'
     sold_price_usd: 70
+    price_evidence: visible_sold_price
+    evidence_note: "Historical visible-price observation preserved; 2026-09-13 public sold-page recheck did not expose the amount. Accepted/settled amount unknown."
     size: "1"
     condition: "Worn"
     query_terms: ["number (n)ine", "time migration", "t shirt"]
@@ -28,6 +37,8 @@ sold_comps:
     platform: "Grailed"
     title: 'Number (N)ine SS01 "Time Migration" Montreal Bullet Tee'
     sold_price_usd: 154
+    price_evidence: visible_sold_price
+    evidence_note: "Historical visible-price observation preserved; 2026-09-13 public sold-page recheck did not expose the amount. Accepted/settled amount unknown."
     size: "4"
     condition: "Gently Used"
     query_terms: ["number (n)ine", "time migration", "t shirt"]

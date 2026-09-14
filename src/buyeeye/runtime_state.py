@@ -196,6 +196,7 @@ class DedupeResult:
     revisit_reason: str | None = None
     inspection_attempted: bool | None = None
     detail_retry_overdue: bool = False
+    uninspected_age_hours: float = 0.0
 
 
 def _key(*parts: str) -> str:
@@ -797,6 +798,13 @@ def mark_listing_seen(
         if not isinstance(outcomes, dict):
             outcomes = {}
         inspection_attempted = bool(row.first_inspected_at or "selected" in outcomes.values())
+        first_seen = row.first_seen_at
+        if first_seen.tzinfo is None:
+            first_seen = first_seen.replace(tzinfo=UTC)
+        uninspected_age_hours = (
+            max(0.0, (now - first_seen).total_seconds() / 3600)
+            if not inspection_attempted and "capped" in outcomes.values() else 0.0
+        )
         inspection_history = [event for event in _json_list(row.event_history_json)
                               if event.get("stage_a") == "selected"
                               or event.get("detail") in {"enriched", "failed"}]
@@ -932,6 +940,7 @@ def mark_listing_seen(
             revisit_reason=revisit_reason,
             inspection_attempted=inspection_attempted,
             detail_retry_overdue=detail_retry_overdue,
+            uninspected_age_hours=uninspected_age_hours,
         )
 
 

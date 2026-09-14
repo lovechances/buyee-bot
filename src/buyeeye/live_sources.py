@@ -331,7 +331,11 @@ class BuyeeAuthenticatedSource(ListingSource):
     ) -> str:
         if not query:
             return "https://buyee.jp/jdirectitems/auction"
-        url = f"https://buyee.jp/item/search/query/{quote(query, safe='')}"
+        # Frozen v10 telemetry: slash spelling failed 24/24; the already
+        # configured spaced spelling succeeded 16/16. Keep the strategy/key
+        # unchanged and use that ordinary source spelling, not a new search.
+        transport_query = re.sub(r"(?i)(?<![a-z0-9])y/project(?![a-z0-9])", "y project", query)
+        url = f"https://buyee.jp/item/search/query/{quote(transport_query, safe='')}"
         if search_filters and search_filters.category_id:
             url += f"/category/{search_filters.category_id}"
         params = search_filters.query_params() if search_filters else {}

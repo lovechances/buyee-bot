@@ -1,0 +1,57 @@
+[
+  {
+    "id": "w1126239250", "source": "frozen production listing",
+    "title": "【アンダーカバー UNDERCOVERISM 09AW EARMUFF MANIAC 非売品 顧客限定品 グラデーションニット ポストカード 招待状 DM フライヤー】",
+    "scope": "media_ephemera"
+  },
+  {
+    "id": "q1152517228", "source": "frozen production listing",
+    "title": "新品 正規品 SAINT LAURENT PARIS サンローラン パリ 眼鏡 樹脂/メタル シルバー メガネ サングラス 純正品 鼻パッド ノーズパッド SL",
+    "scope": "non_fashion"
+  },
+  {
+    "id": "v1239102626", "source": "frozen production listing",
+    "title": "高品質 オークリー ジョウボーン 交換 偏光 サングラス シルバー 銀 ミラー bsokl94 oakley jawbone racingjacket jaw bone racing jacket",
+    "scope": "non_fashion"
+  },
+  {
+    "id": "f1234471974", "source": "frozen production listing; component-language contrast, not a resolved screenshot match",
+    "title": "LRM292 クロムハーツ ピアス キャッチ シルバー シルバー925 シルバー９２５ シルバー925刻印入り シリコン入りで外れにく",
+    "scope": "non_fashion"
+  },
+  {
+    "id": "q1243019191", "source": "frozen production listing; hanger-language contrast, not a resolved screenshot match",
+    "title": "3本セット メゾン マルタン マルジェラ 布巻き ジャケット用ハンガー ホワイト Martin Margiela",
+    "scope": "non_fashion"
+  },
+  {
+    "id": "f1232328298", "source": "frozen production listing",
+    "title": "希少 4サイズ 初期 Number Nine サングラス スカル プリント Tシャツ 白 NumberNine ナンバーナイン 本人期 VINTAGE archive 26040359",
+    "scope": "product", "type": "t_shirt"
+  },
+  {
+    "id": "s1203770426", "source": "frozen production listing",
+    "title": "新品KAPITALキャピタルモヘアソックス深緑",
+    "scope": "product", "type": "accessory", "subtype": "socks"
+  },
+  {
+    "id": "k1130586759", "source": "frozen production listing; observed maker present in primary raw Brand label",
+    "title": "UNFINISHED岡山デニムインクダメージベレー帽キャピタルリーバイスレザーパンクセディショナリーズ",
+    "brand_observed": "UNFINISHED", "scope": "product", "type": "accessory", "subtype": "beret", "target_role": "contradicted"
+  },
+  {
+    "id": "h1243677239", "source": "frozen production listing",
+    "title": "00s denim flared pants Japanese Label Y2K archive opium goa ifsixwasnine kmrii share spirit lgb 14th addiction TORNADO MART",
+    "scope": "product", "brand_unknown": true
+  },
+  {
+    "id": "r1167851235", "source": "frozen production listing",
+    "title": "Japanese Label Y2K fur gimmick hoodie nylon jacket goa ifsixwasnine kmrii share spirit lgb obelisk 14th addiction archive 00s",
+    "scope": "product", "brand_unknown": true
+  },
+  {
+    "id": "n1053672229", "source": "frozen production listing; explicit human genuine-Needles positive control",
+    "title": "core 総柄プリント 半袖 シアー シャツ メンズL マルチボーダー アフリカ / シースルー ニードルズ 90s ヴィンテージ 70s ヒッピー",
+    "scope": "product", "brand": "Needles", "type": "shirt"
+  }
+]

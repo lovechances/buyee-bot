@@ -9,6 +9,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .evaluation import evaluate_listing
 from .live_sources import LiveListing
@@ -21,7 +22,7 @@ def marketplace_listing_identity(
     *,
     source: str | None = None,
 ) -> tuple[str, str]:
-    """Return a stable source/ID pair from a supported URL or bare ID.
+    """Return a stable source/ID pair without implying acquisition support.
 
     PayPay Flea Market's current IDs use a ``z`` plus nine digits.  That bare
     form is accepted for benchmark convenience; a full URL (or explicit
@@ -39,33 +40,41 @@ def marketplace_listing_identity(
         "paypay": "buyee_paypay",
         "paypay_fleamarket": "buyee_paypay",
         "buyee_paypay": "buyee_paypay",
+        "shopping": "buyee_shopping",
+        "jdirectitems_shopping": "buyee_shopping",
+        "buyee_shopping": "buyee_shopping",
     }
     if requested_source not in source_aliases:
         raise ValueError(f"Unsupported marketplace source: {source}")
     explicit_source = source_aliases[requested_source]
 
-    paypay_match = re.search(
-        r"/paypayfleamarket/item/([A-Za-z0-9]+)(?:[/?#]|$)",
-        text,
-        re.IGNORECASE,
-    )
-    if paypay_match:
-        if explicit_source and explicit_source != "buyee_paypay":
-            raise ValueError("Listing URL conflicts with the requested marketplace source")
-        return "buyee_paypay", paypay_match.group(1)
-
-    # BuyEye's authenticated source emits canonical Buyee JDirectItems URLs.
-    # Match that full path before Yahoo's shorter auction form so intermediate
-    # path components (notably ``jdirectitems``) can never become the ID.
-    for pattern in (
-        r"/item/jdirectitems/auction/([A-Za-z0-9]+)(?:[/?#]|$)",
-        r"/jp/auction/([A-Za-z0-9]+)(?:[/?#]|$)",
+    if "://" in text:
+        parsed = urlsplit(text)
+        host = (parsed.hostname or "").casefold()
+        patterns: tuple[tuple[str, str], ...] = ()
+        if parsed.scheme in {"http", "https"} and host in {"buyee.jp", "www.buyee.jp"}:
+            patterns = (
+                (r"/item/(?:jdirectitems|yahoo)/auction/([A-Za-z0-9]+)/?", "buyee"),
+                (r"/paypayfleamarket/item/([A-Za-z0-9]+)/?", "buyee_paypay"),
+                (r"/item/(?:jdirectitems|yahoo)/shopping/([A-Za-z0-9_-]+)/?", "buyee_shopping"),
+            )
+        elif parsed.scheme in {"http", "https"} and host in {
+            "page.auctions.yahoo.co.jp", "auctions.yahoo.co.jp",
+        }:
+            patterns = ((r"/jp/auction/([A-Za-z0-9]+)/?", "buyee"),)
+        for pattern, url_source in patterns:
+            match = re.fullmatch(pattern, parsed.path, re.IGNORECASE)
+            if match:
+                if explicit_source and explicit_source != url_source:
+                    raise ValueError("Listing URL conflicts with the requested marketplace source")
+                return url_source, match.group(1)
+        raise ValueError("Expected a recognized Buyee or Yahoo marketplace listing URL")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", text) and (
+        explicit_source == "buyee_shopping" or text.casefold().startswith("ssol-shopping_")
     ):
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            if explicit_source and explicit_source != "buyee":
-                raise ValueError("Listing URL conflicts with the requested marketplace source")
-            return "buyee", match.group(1)
+        if explicit_source and explicit_source != "buyee_shopping":
+            raise ValueError("Shopping ID conflicts with the requested marketplace source")
+        return "buyee_shopping", text
     if re.fullmatch(r"[A-Za-z0-9]+", text):
         inferred_source = (
             "buyee_paypay"
@@ -74,7 +83,7 @@ def marketplace_listing_identity(
         )
         return explicit_source or inferred_source, text
     raise ValueError(
-        "Expected a Buyee/JDirectItems or PayPay Flea Market listing URL/ID"
+        "Expected a Buyee auction, Shopping, or PayPay Flea Market listing URL/ID"
     )
 
 
@@ -312,6 +321,18 @@ def diagnose_listing(
             connection, "listingprotection", "source=? AND source_listing_id=?",
             (source, listing_id),
         )
+        send_events: list[dict[str, Any]] = []
+        send_count = 0
+        if _table_exists(connection, "alertsendledger"):
+            send_count = int(connection.execute(
+                "SELECT COUNT(*) FROM alertsendledger WHERE source=? AND source_listing_id=?",
+                (source, listing_id),
+            ).fetchone()[0])
+            send_events = [dict(row) for row in connection.execute(
+                "SELECT * FROM alertsendledger WHERE source=? AND source_listing_id=? "
+                "ORDER BY sent_at DESC, id DESC LIMIT 100",
+                (source, listing_id),
+            )]
         query_state = None
         if seen and _table_exists(connection, "queryruntimestate"):
             query_columns = _columns(connection, "queryruntimestate")
@@ -405,6 +426,7 @@ def diagnose_listing(
     return {
         "source": source,
         "marketplace_id": listing_id,
+        "acquisition_supported": source == "buyee",
         "seen": seen is not None,
         "first_seen": (seen or {}).get("first_seen_at"),
         "latest_seen": (seen or {}).get("last_seen_at"),
@@ -435,6 +457,12 @@ def diagnose_listing(
         "latest_trace": latest_trace,
         "event_history": history,
         "alert_state": alert,
+        "send_ledger": {
+            "total": send_count,
+            "events": send_events,
+            "truncated": send_count > len(send_events),
+            "note": "successful sends recorded since ledger introduction; absence does not erase legacy AlertState",
+        },
         "human_evidence": protection,
         "retention": {
             "history_expired_at": (seen or {}).get("history_expired_at"),
@@ -475,7 +503,7 @@ def _benchmark_miss_category(report: dict[str, Any]) -> str:
     if not report.get("seen"):
         return (
             "source_coverage_miss"
-            if report.get("source") == "buyee_paypay"
+            if report.get("source") in {"buyee_paypay", "buyee_shopping"}
             else "discovery_miss"
         )
     if report.get("alert_state"):
@@ -558,16 +586,28 @@ def benchmark_listings(
     inputs = _benchmark_inputs(input_path)
     results: list[dict[str, Any]] = []
     categories: Counter[str] = Counter()
+    reports: dict[tuple[str, str], dict[str, Any]] = {}
+    unique_items: dict[tuple[str, str], dict[str, Any]] = {}
     for index, item in enumerate(inputs, start=1):
         value = str(item["value"] or "")
         try:
-            report = diagnose_listing(
-                db_path,
-                value,
-                source=item.get("source"),
-            )
+            identity = marketplace_listing_identity(value, source=item.get("source"))
+            if identity not in reports:
+                reports[identity] = diagnose_listing(db_path, value, source=item.get("source"))
+            report = reports[identity]
             category = _benchmark_miss_category(report)
             categories[category] += 1
+            unique = unique_items.setdefault(identity, {
+                "source": identity[0], "marketplace_id": identity[1],
+                "seen": bool(report.get("seen")), "outcome": category,
+                "reference_indices": [], "annotations": [], "latest_annotation": None,
+            })
+            unique["reference_indices"].append(index)
+            unique["annotations"].append(item.get("annotation"))
+            # A later explicit annotation supersedes interpretation, but every
+            # raw reference and earlier annotation stays available separately.
+            if item.get("annotation"):
+                unique["latest_annotation"] = item["annotation"]
             results.append(
                 {
                     "index": index,
@@ -597,5 +637,12 @@ def benchmark_listings(
         "total": len(results),
         "seen": sum(bool(result.get("seen")) for result in results),
         "outcomes": dict(sorted(categories.items())),
+        "denominator_note": "total/seen/outcomes count raw references; unique_* count source-qualified listings",
+        "unique_total": len(unique_items),
+        "unique_seen": sum(item["seen"] for item in unique_items.values()),
+        "unique_outcomes": dict(sorted(Counter(
+            item["outcome"] for item in unique_items.values()
+        ).items())),
+        "unique_items": list(unique_items.values()),
         "results": results,
     }

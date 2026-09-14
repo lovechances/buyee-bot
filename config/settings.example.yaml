@@ -81,15 +81,18 @@ marketplaces:
     ended_auction_base: "https://auctions.yahoo.co.jp"
 
 pricing:
+  # Static planning FX, NOT a live rate or Buyee/payment-provider quote.
   fx_jpy_to_usd: 0.00675
-  buyee_fee_percent: 0.11
-  plan_fee_jpy: 350
+  # Official Buyee general/auction guidance describes a fixed fee. This remains
+  # a configurable checkout estimate, not a claim about a particular invoice.
+  service_fee_jpy: 500
+  plan_fee_jpy: 500  # optional guarantee-plan budgeting assumption
   domestic_shipping_jpy: 800
-  international_shipping_jpy: 1500
-  packaging_jpy: 300
-  insurance_percent: 0.02
-  duty_percent: 0.08
-  reserve_percent: 0.05
+  international_shipping_jpy: 1500  # unknown weight/method/consolidation
+  packaging_jpy: 0  # no protective-service selection is assumed
+  insurance_percent: 0  # do not duplicate guarantee-plan coverage
+  duty_percent: 0.08  # legacy planning allowance, NOT a verified tariff rate
+  reserve_percent: 0.05  # uncertainty reserve, NOT a platform fee
   resale_fee_percent: 0.13
   profit_floor_usd: 75
   min_profit_multiple: 1.5
@@ -149,6 +152,8 @@ stage_a:
   # At most one existing inspection slot can yield to an already-eligible,
   # cheap actionable garment/footwear card. No added detail-fetch budget.
   value_inspection_reserved_slots: 1
+  # Reuse this slot for repeatedly capped, uninspected candidates; no extra fetches.
+  value_inspection_wait_hours: 6
   value_inspection_max_actionable_jpy: 10000
   path_caps:
     unknown_interesting: 1
@@ -174,6 +179,9 @@ directional_opportunity:
   # A mass-market collaboration can use one weak design observation only at a
   # truly negligible garment price; accessories/footwear still need specific evidence.
   low_priority_collaboration_weak_signal_max_price_jpy: 1000
+  # Common motif-only tees need exceptional acquisition price or credible
+  # matched market evidence. This is not a ceiling for distinctive pieces.
+  weak_motif_max_actionable_jpy: 5000
   micro_asymmetry_max_actionable_price_jpy: 10000
   exceptional_landed_usd: 30
   max_landed_usd: 65

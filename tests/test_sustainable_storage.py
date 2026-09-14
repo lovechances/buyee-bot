@@ -250,7 +250,7 @@ def test_verified_comps_and_alert_dedupe_survive_maintenance(tmp_path):
     path = tmp_path / "durable.db"
     _seed(path)
     CompRepository(path).put("local_sold", "exact piece", [Comp(source="local_sold", title="real sold", price_jpy=50000,
-        source_listing_id="verified-us-1", is_sold=True, similarity=1.0, recency_days=1)])
+        source_listing_id="verified-us-1", is_sold=True, similarity=1.0, recency_days=1, price_evidence="realized")])
     save_alert_state("buyee", "x100000001", "stable", "grails", path,
         thesis="archive_grail", material_identity="same-piece", material_price_jpy=2000,
         material_price_kind="buyout", material_maturity_state="fixed_price",

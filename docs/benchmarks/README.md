@@ -13,3 +13,13 @@ python -m buyeeye benchmark-listings docs/benchmarks/manual-hunt-2026-09-10.csv
 ```
 
 Production-history measurements for this checkpoint are instead run against the frozen snapshot through the existing Python diagnostic functions. A current offline replay is never relabeled as natural acquisition, inspection, or delivery.
+
+## September 13 supplied evidence
+
+`manual-hunt-2026-09-13.csv` retains the latest prompt's **27 raw references / 26 unique source-qualified listings**. Rows 10 and 27 reference the same `e1206936947`; the latter adds explicit purchase consideration. Both annotations remain available, and the latest explicit annotation governs interpretation. The dated manifest is a supplied-evidence revision, not a claim that another hunt occurred on September 13. The September 10 manifest remains unchanged.
+
+`prior-hunt-18-2026-09-13.csv` keeps the earlier **18-item** hunt separate, including unsupported-source PayPay `z609539002`. Its five explicit price/purchase annotations are not generalized to other rows. `purchase-controls-2026-09-13.csv` is a separate overlapping set of user-reported outcomes, not another independent recall denominator. Shopping Prada keeps full ID `ssol-shopping_2348621003856` under `buyee_shopping`; the legacy Yahoo hat URL normalizes to the same supported auction identity as its JDirectItems alias. Recognizing a URL diagnostically does not enable that acquisition source.
+
+The diagnostic's `total`, `seen`, and `outcomes` remain reference counts for compatibility; **use `unique_total`, `unique_seen`, and `unique_outcomes` for listing denominators**. Each unique item includes reference indices and annotation history. These outputs do not change production ratings, pin ownership, eligibility, or purchased status.
+
+The user reports conflicting fit information for `n1238725647`: tag size 34, flat waist 49 cm, marketplace category XS. These are unresolved conflicting observations, not a verified intended fit or model-code interpretation. An authentication option on `h1238476063` is reported eligibility, not evidence that an order selected or passed a paid service.

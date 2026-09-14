@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import re
 import time
 from typing import Any
 
@@ -232,6 +233,7 @@ def _verified_us_sold_range(evaluation: Any) -> str | None:
         for comp in (_read(comps, "matches", []) or [])
         if _read(comp, "is_sold", True)
         and str(_read(comp, "source", "")).casefold() in VERIFIED_US_SOLD_SOURCES
+        and _read(comp, "price_evidence") == "realized"
     ]
     # Comp confidence becomes medium only with at least three accepted sales.
     # Recheck the U.S.-only subset so mixed/miswired evidence cannot borrow
@@ -280,6 +282,8 @@ def _seller_line(listing: Any) -> str | None:
 
 def _evidence_lines(evaluation: Any) -> list[str]:
     matches = list(_nested(evaluation, "comps", "matches") or [])
+    if not matches:
+        matches = list(_nested(evaluation, "comps", "context_matches") or [])
     lines: list[str] = []
     seen_urls: set[str] = set()
     for comp in matches:
@@ -288,6 +292,8 @@ def _evidence_lines(evaluation: Any) -> list[str]:
             continue
         seen_urls.add(url)
         label = _short(_read(comp, "title") or _read(comp, "source") or "Sold evidence", 58)
+        if _read(comp, "price_evidence") != "realized":
+            label = "Sold-page context · amount unverified: " + _short(label, 35)
         lines.append(f"[{label}]({url})")
         if len(lines) == 2:
             break
@@ -307,12 +313,41 @@ def _concise_why(reason: str, *, early_auction: bool) -> str:
 
 
 def _size_label(listing: Any, evaluation: Any) -> str | None:
-    profile_size = _nested(evaluation, "profile", "size", "value")
-    if profile_size:
-        return _short(profile_size, 28)
     observed = _nested(listing, "raw", "stage_b", "observed") or {}
-    size = _read(observed, "size_original")
-    return _short(size, 28) if size else None
+    title = str(_read(listing, "title_original") or "")
+    match = re.search(r"(?i)(size|サイズ|US|UK|EU)\s*[:：]?\s*(xxl|xl|xs|s|m|l|\d{1,2}(?:\.\d+)?)\b", title)
+    title_size = match.group(2).upper() if match else None
+    if match and match.group(1).upper() in {"US", "UK", "EU"}:
+        title_size = f"{match.group(1).upper()} {title_size}"
+    if not match:
+        suffix = re.search(r"(?i)(xxl|xl|xs|s|m|l|\d{1,2}(?:\.\d+)?)\s*サイズ", title)
+        title_size = suffix.group(1).upper() if suffix else None
+    size = str(_read(observed, "size_original") or "").strip()
+    observed_size = re.sub(r"(?i)^size\s*", "", size).strip()
+    if title_size and observed_size and title_size.casefold() != observed_size.casefold():
+        return _short(f"title {title_size} / metadata {observed_size} — conflict; check measurements", 100)
+    if title_size or size:
+        return _short(title_size or size, 28)
+    profile_size = _nested(evaluation, "profile", "size", "value")
+    return _short(profile_size, 28) if profile_size else None
+
+
+def _listing_only_usd(listing: Any, evaluation: Any, price: int, kind: str) -> str | None:
+    """Prefer a matching observed source conversion; never borrow another price."""
+    labels = _nested(listing, "raw", "stage_b", "observed", "raw", "labels") or []
+    pattern = r"(?i)buyout|buy it now|即決" if kind == "buyout" else r"(?i)current price|現在価格"
+    for row in labels:
+        if not isinstance(row, list) or len(row) < 2 or not re.search(pattern, str(row[0])):
+            continue
+        value = str(row[1])
+        yen = re.search(r"([0-9][0-9,]*)\s*(?:YEN|JPY|円)", value, re.IGNORECASE)
+        usd = re.search(r"US\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)", value, re.IGNORECASE)
+        if yen and usd and int(yen.group(1).replace(",", "")) == price:
+            return f"~${float(usd.group(1).replace(',', '')):,.2f} item only (Buyee display)"
+    fx = _nested(evaluation, "economics", "cost_estimate", "fx_jpy_to_usd")
+    if fx is not None and float(fx) > 0:
+        return f"~${price * float(fx):,.2f} item only (planning FX)"
+    return None
 
 
 def build_listing_alert_payload(
@@ -320,7 +355,7 @@ def build_listing_alert_payload(
 ) -> dict[str, Any]:
     """Build a compact, phone-readable Discord payload without performing I/O."""
 
-    listing_title = _short(_read(listing, "title_original") or "Untitled Buyee listing", 190)
+    listing_title = _short(_read(listing, "title_original") or "Untitled Buyee listing", 150)
     current_price = _read(listing, "current_price")
     buyout_price = _read(listing, "buyout_price")
     listing_url = str(_read(listing, "url", "") or "")
@@ -381,8 +416,15 @@ def build_listing_alert_payload(
             value_parts: list[str] = []
             if timing:
                 value_parts.append(f"Ends {timing}")
+            price = current_price if acquisition_kind == "current_bid" else buyout_price or current_price
+            if price:
+                converted = _listing_only_usd(listing, evaluation, int(price), acquisition_kind or "buyout")
+                if converted:
+                    value_parts.append(converted)
+            if acquisition_kind == "current_bid" and buyout_price and buyout_price != current_price:
+                value_parts.append(f"Buyout ¥{int(buyout_price):,}")
             if landed_usd is not None:
-                value_parts.append(f"Landed ~${float(landed_usd):,.0f}")
+                value_parts.append(f"Landed ~${float(landed_usd):,.0f} estimated incl. shipping/fees")
             if sold_range:
                 value_parts.append(f"U.S. sold {sold_range}")
                 multiple = _nested(evaluation, "economics", "multiple")
@@ -392,22 +434,16 @@ def build_listing_alert_payload(
                 value_parts.append("U.S. resale unverified")
             market_name = "U.S. sold / upside" if sold_range else "Value context"
             market_value = " | ".join(value_parts)
-            directional_confidence = _directional_confidence(evaluation)
-            if not sold_range and directional_confidence:
-                market_value += f"\nDirectional confidence: {directional_confidence}"
             fields.append({"name": market_name, "value": market_value, "inline": False})
 
         risk = str(_nested(evaluation, "auth_risk", "level") or "unknown").upper()
         signal_parts = [f"Heat {score}", f"Risk {risk}"]
-        identity_confidence = _identity_confidence(evaluation)
-        if identity_confidence:
-            signal_parts.append(f"Identity {identity_confidence}")
         size = _size_label(listing, evaluation)
         if size:
             signal_parts.append(f"Size {size}")
         relationship = _relationship_label(evaluation)
-        if relationship:
-            signal_parts.append(f"Relationship {relationship}")
+        if relationship and relationship != "CORE":
+            signal_parts.append(relationship)
         if _nested(evaluation, "profile", "auth_sensitive"):
             signal_parts.append("Authenticity unverified")
         fields.append({"name": "Signal", "value": " | ".join(signal_parts), "inline": False})
@@ -456,6 +492,8 @@ def build_listing_alert_payload(
         embed["description"] = description.replace(
             "**ARCHIVE GRAIL**", "**ARCHIVE DISCOVERY · QUIET**", 1
         )
+        if _read(attention, "role") == "secondary_offer":
+            embed["description"] = "**SIMILAR OFFER · QUIET**\n" + description.split("\n", 1)[-1]
     return payload
 
 

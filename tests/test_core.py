@@ -172,12 +172,12 @@ def test_extract_taste_signals_and_brand_classification():
 
 
 def test_fashion_enrichment_recognizes_archive_context_and_japanese_terms():
-    profile = enrich_title("ナンバーナイン 03AW カート期 モヘア ニット")
+    profile = enrich_title("ナンバーナイン 05AW The High Streets モヘア ニット")
     assert profile.brand and profile.brand.value == "Number (N)ine"
     assert profile.collection and profile.collection.value == "The High Streets"
     assert profile.item_type and profile.item_type.value == "knitwear"
     assert profile.material and profile.material.value == "mohair"
-    assert profile.season and profile.season.value == "03AW"
+    assert profile.season and profile.season.value == "05AW"
     assert profile.brand.provenance.startswith("taxonomy.brands")
 
 
@@ -198,14 +198,16 @@ def test_generic_brand_item_scores_below_piece_specific_archive_item():
 def test_piece_aware_comps_reject_brand_only_category_mismatch_and_active_asks():
     profile = enrich_title("Chrome Hearts keeper 925 silver bracelet")
     comps = [
-        Comp("grailed_sold", "Chrome Hearts keeper 925 silver bracelet", 180_000, 0.95, 30),
-        Comp("ebay_sold", "Chrome Hearts floral 925 silver bracelet", 160_000, 0.85, 60),
-        Comp("grailed_sold", "Chrome Hearts logo t-shirt", 45_000, 0.95, 20),
-        Comp("reseller_ask", "Chrome Hearts keeper bracelet", 400_000, 1.0, 1, is_sold=False),
+        Comp("grailed_sold", "Chrome Hearts keeper 925 silver bracelet", 180_000, 0.95, 30, price_evidence="realized"),
+        Comp("ebay_sold", "Chrome Hearts floral 925 silver bracelet", 160_000, 0.85, 60, price_evidence="realized"),
+        Comp("grailed_sold", "Chrome Hearts logo t-shirt", 45_000, 0.95, 20, price_evidence="realized"),
+        Comp("reseller_ask", "Chrome Hearts keeper bracelet", 400_000, 1.0, 1, is_sold=False, price_evidence="realized"),
     ]
     result = evaluate_comps(profile, comps)
-    assert result.median_jpy == 170_000
-    assert len(result.matches) == 2
+    # Keeper and floral are different designs; the latter remains context.
+    assert result.median_jpy == 180_000
+    assert len(result.matches) == 1
+    assert len(result.context_matches) == 1
     assert result.confidence == "low"
 
 
@@ -221,11 +223,12 @@ def test_exact_piece_comp_outranks_brand_only_and_outlier_is_trimmed():
             1.0,
             index + 1,
             query="Dior Homme Strip denim",
+            price_evidence="realized",
         )
         for index, price in enumerate(prices)
     ]
-    comps.append(Comp("yahoo_ended", "Dior Homme generic shirt", 20_000, 1.0, 2))
-    result = evaluate_comps(profile, comps)
+    comps.append(Comp("yahoo_ended", "Dior Homme generic shirt", 20_000, 1.0, 2, price_evidence="realized"))
+    result = evaluate_comps(profile, comps, evidence_text="Dior Homme 04SS Strip distressed wax denim jeans")
     assert result.matches[0].similarity > 0.8
     assert all("shirt" not in comp.title for comp in result.matches)
     assert result.median_jpy == 110_000
@@ -242,7 +245,7 @@ def test_diffusion_piece_cannot_borrow_mainline_sold_values():
             price,
             0.95,
             30,
-        )
+         price_evidence="realized", match_evidence="verified_piece", evidence_note="Synthetic exact-piece transaction fixture; not production evidence")
         for price in (80_000, 90_000, 100_000)
     ]
     diffusion_comps = [
@@ -252,7 +255,7 @@ def test_diffusion_piece_cannot_borrow_mainline_sold_values():
             price,
             0.95,
             30,
-        )
+         price_evidence="realized", match_evidence="verified_piece", evidence_note="Synthetic exact-piece transaction fixture; not production evidence")
         for price in (15_000, 18_000, 20_000)
     ]
 
@@ -277,6 +280,7 @@ def test_collaboration_comps_require_the_same_explicit_participants():
             price,
             0.95,
             30,
+            price_evidence="realized",
         )
         for price in (70_000, 80_000, 90_000)
     ]
@@ -287,6 +291,7 @@ def test_collaboration_comps_require_the_same_explicit_participants():
             price,
             0.95,
             30,
+            price_evidence="realized",
         )
         for price in (60_000, 65_000, 70_000)
     ]
@@ -303,6 +308,7 @@ def test_collaboration_comps_require_the_same_explicit_participants():
                 price,
                 0.95,
                 30,
+                price_evidence="realized",
             )
             for price in (25_000, 30_000, 35_000)
         ],
@@ -501,6 +507,7 @@ def test_comp_cache_prevents_repeat_retrieval(tmp_path):
                     5,
                     source_listing_id="sold-1",
                     query=query,
+                    price_evidence="realized",
                 )
             ]
 
@@ -554,7 +561,7 @@ def test_auth_risk_blocks_apparently_excellent_economics():
         condition=None,
     )
     comps = [
-        Comp("grailed_sold", "Chrome Hearts keeper 925 silver ring", price, 1.0, 10)
+        Comp("grailed_sold", "Chrome Hearts keeper 925 silver ring", price, 1.0, 10, price_evidence="realized")
         for price in (80_000, 90_000, 100_000)
     ]
     evaluation = evaluate_listing(listing, comps)
@@ -579,7 +586,7 @@ def test_high_confidence_economics_can_route_buyout():
         condition=None,
     )
     comps = [
-        Comp("grailed_sold", listing.title_original, price, 1.0, 10)
+        Comp("grailed_sold", listing.title_original, price, 1.0, 10, price_evidence="realized")
         for price in (90_000, 100_000, 110_000)
     ]
     evaluation = evaluate_listing(listing, comps)
@@ -1257,7 +1264,7 @@ def test_stage_b_failure_caps_comp_confidence():
         raw={"stage_b": {"status": "failed", "error_type": "TimeoutError"}},
     )
     comps = [
-        Comp("grailed_sold", listing.title_original, price, 1.0, 10)
+        Comp("grailed_sold", listing.title_original, price, 1.0, 10, price_evidence="realized", match_evidence="verified_piece", evidence_note="Synthetic exact-piece transaction fixture; not production evidence")
         for price in (20_000, 25_000, 30_000)
     ]
 
@@ -1283,7 +1290,7 @@ def test_yahoo_ended_evidence_never_becomes_us_fmv_even_if_misrouted():
         condition="Used",
     )
     yahoo_sales = [
-        Comp("yahoo_ended", listing.title_original, price, 1.0, 10)
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 10, price_evidence="realized", match_evidence="verified_piece", evidence_note="Synthetic exact-piece transaction fixture; not production evidence")
         for price in (40_000, 50_000, 60_000)
     ]
 
@@ -1373,11 +1380,12 @@ def test_time_migration_archive_opportunity_routes_with_seller_warning():
             30,
             original_price=usd,
             original_currency="USD",
+            price_evidence="realized",
         )
         for price, usd in ((10_370, 70), (17_778, 120), (22_815, 154))
     ]
     japan_comps = [
-        Comp("yahoo_ended", listing.title_original, price, 1.0, 30)
+        Comp("yahoo_ended", listing.title_original, price, 1.0, 30, price_evidence="realized")
         for price in (7777, 20_000, 25_000, 30_000, 35_000)
     ]
 
@@ -1420,7 +1428,8 @@ def test_cheap_desirable_margiela_can_route_without_us_fmv():
     assert evaluation.economics.resale_median_jpy is None
     assert evaluation.directional.us_valuation_state == "us_resale_unverified"
     assert evaluation.directional.thesis == "asymmetric_value"
-    assert _route_evaluation(listing, evaluation)[0] == "grails"
+    # Mature enough to evaluate, not yet ending-soon and not an archive grail.
+    assert _route_evaluation(listing, evaluation) is None
 
 
 def test_enriched_core_buyout_keeps_identity_and_directional_value_separate_from_fmv():
@@ -1636,8 +1645,9 @@ def test_cheap_diffusion_path_keeps_piece_and_price_boundaries():
 
     assert plain.profile.relationship.value == "diffusion"
     assert plain.directional.thesis is None
-    assert at_boundary.directional.thesis == "asymmetric_value"
-    assert _route_evaluation(at_boundary_listing, at_boundary)[0] == "buyouts"
+    # Generic all-over wording is one motif, not two independent designs.
+    assert at_boundary.directional.thesis is None
+    assert _route_evaluation(at_boundary_listing, at_boundary) is None
     assert above_boundary.directional.thesis is None
     assert mcq.profile.relationship.value == "diffusion"
     assert mcq.directional.thesis == "asymmetric_value"
@@ -1886,7 +1896,7 @@ def test_real_roen_and_needles_steal_shapes_remain_route_eligible():
         assert _route_evaluation(listing, evaluation)[0] == "buyouts"
 
 
-def test_low_actionable_price_can_rescue_specific_margiela_without_fabricating_fmv():
+def test_ordinary_aids_motif_at_7800_is_not_itself_a_verified_bargain():
     listing = LiveListing(
         source="buyee",
         source_listing_id="margiela-aids-low-downside",
@@ -1917,8 +1927,8 @@ def test_low_actionable_price_can_rescue_specific_margiela_without_fabricating_f
     assert evaluation.directional.discovery_price_fraction is None
     assert evaluation.valuation.confidence == "unavailable"
     assert evaluation.economics.resale_median_jpy is None
-    assert evaluation.directional.thesis == "asymmetric_value"
-    assert _route_evaluation(listing, evaluation)[0] == "buyouts"
+    assert evaluation.directional.thesis is None
+    assert _route_evaluation(listing, evaluation) is None
 
 
 def test_generic_modern_band_tee_is_not_core_or_asymmetric_value():
@@ -2082,10 +2092,10 @@ def test_bondage_construction_can_support_named_archive_discovery():
         source_listing_id="number-nine-bondage",
         url="https://buyee.jp/item/number-nine-bondage",
         title_original=(
-            "ナンバーナイン 03AW カート期 ウールチェック ボンテージパンツ 3 "
-            "NUMBER (N)INE 2003AW TOUCH ME I'M SICK Wool Check Bondage Pants"
+            "ナンバーナイン 05AW The High Streets ウールチェック ボンテージパンツ 3 "
+            "NUMBER (N)INE Wool Check Bondage Pants"
         ),
-        title_normalized="number nine 03aw kurt bondage pants",
+        title_normalized="number nine 05aw the high streets bondage pants",
         brand="Number (N)ine",
         category="menswear",
         current_price=48_000,
@@ -2130,8 +2140,8 @@ def test_bare_season_shorthand_cannot_create_named_archive_rescue():
 
     evaluation = evaluate_listing(listing)
 
-    assert evaluation.profile.collection is not None
-    assert evaluation.profile.collection.matched_term.casefold() == "03aw"
+    assert evaluation.profile.collection is None
+    assert evaluation.profile.season and evaluation.profile.season.value == "03AW"
     assert _route_evaluation(listing, evaluation) is None
 
 
@@ -2181,7 +2191,7 @@ def test_auth_sensitive_silver_with_implausible_price_routes_to_review():
         raw={"detail_photo_count": 2, "seller_feedback_count": 100},
     )
     comps = [
-        Comp("grailed_sold", listing.title_original, price, 1.0, 10)
+        Comp("grailed_sold", listing.title_original, price, 1.0, 10, price_evidence="realized")
         for price in (80_000, 90_000, 100_000)
     ]
 
@@ -2264,7 +2274,7 @@ def test_supported_sensitive_silver_remains_reviewable_without_item_authenticati
     )
 
     comps = [
-        Comp("ebay_sold", listing.title_original, price, 1.0, 30)
+        Comp("ebay_sold", listing.title_original, price, 1.0, 30, price_evidence="realized")
         for price in (80_000, 90_000, 100_000)
     ]
     evaluation = evaluate_listing(listing, comps)
@@ -2519,6 +2529,7 @@ def test_discord_alert_is_compact_and_thesis_led(monkeypatch):
             url=f"https://www.grailed.com/listings/{index}",
             original_price=usd,
             original_currency="USD",
+            price_evidence="realized",
         )
         for index, (price, usd) in enumerate(((10_370, 70), (17_778, 120), (22_815, 154)))
     ]
@@ -2548,7 +2559,7 @@ def test_discord_alert_is_compact_and_thesis_led(monkeypatch):
     assert "ASYMMETRIC VALUE" in embed["description"]
     assert len(embed["fields"]) <= 5
     assert sum("seller 84.4%" in field["value"] for field in embed["fields"]) == 1
-    assert any(field["name"] == "U.S. sold / upside" for field in embed["fields"])
+    assert any(field["name"] == "Value context" for field in embed["fields"])
 
 
 def _margiela_auction(
@@ -2681,7 +2692,7 @@ def test_open_auction_becomes_economically_actionable_inside_maturity_window():
     assert evaluation.auction_maturity.price_actionable is True
     assert evaluation.economics.landed_cost_jpy is not None
     assert evaluation.directional.thesis == "asymmetric_value"
-    assert _route_evaluation(listing, evaluation)[0] == "grails"
+    assert _route_evaluation(listing, evaluation) is None
 
 
 def test_ending_soon_remains_distinct_from_auction_maturity():

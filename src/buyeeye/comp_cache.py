@@ -44,6 +44,23 @@ class SoldCompCache(SQLModel, table=True):
 
 
 def _as_comp(row: SoldCompCache, now: datetime) -> Comp:
+    try:
+        features = json.loads(row.matching_features_json or "{}")
+    except (TypeError, ValueError):
+        features = {}
+    if not isinstance(features, dict):
+        features = {}
+    # Legacy Yahoo rows were produced only by the parser requiring 落札.
+    # Legacy U.S. rows never recorded accepted-amount verification: do not
+    # silently grandfather their source name into verified transactions.
+    price_evidence = features.get("price_evidence") or (
+        "realized" if row.source == "yahoo_ended" else "unknown"
+    )
+    evidence_time = features.get("evidence_observed_at")
+    try:
+        observed_at = datetime.fromisoformat(evidence_time) if evidence_time else row.retrieved_at
+    except (TypeError, ValueError):
+        observed_at = row.retrieved_at
     sold_at = row.sold_at
     if sold_at and sold_at.tzinfo is None:
         sold_at = sold_at.replace(tzinfo=UTC)
@@ -65,6 +82,14 @@ def _as_comp(row: SoldCompCache, now: datetime) -> Comp:
         shipping_original=row.shipping_original,
         condition=row.condition,
         size=row.size,
+        price_evidence=price_evidence,
+        evidence_observed_at=observed_at,
+        evidence_note=features.get("evidence_note") or (
+            "legacy source observation; accepted amount was not recorded"
+            if row.source != "yahoo_ended" else "legacy Yahoo winning-price parser observation"
+        ),
+        stock_identity=features.get("stock_identity"),
+        match_evidence=features.get("match_evidence"),
     )
 
 
@@ -121,7 +146,17 @@ class CompRepository:
                     "sold_at": comp.sold_at,
                     "condition": comp.condition,
                     "size": comp.size,
-                    "matching_features_json": json.dumps({"query": query}),
+                    "matching_features_json": json.dumps({
+                        "query": query,
+                        "price_evidence": comp.price_evidence,
+                        "evidence_observed_at": (
+                            comp.evidence_observed_at.isoformat()
+                            if comp.evidence_observed_at else current.isoformat()
+                        ),
+                        "evidence_note": comp.evidence_note,
+                        "stock_identity": comp.stock_identity,
+                        "match_evidence": comp.match_evidence,
+                    }),
                     "retrieved_at": current,
                 }
                 if existing is None:

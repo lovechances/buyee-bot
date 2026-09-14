@@ -290,7 +290,7 @@ def test_discovery_price_ceiling_never_becomes_fmv_or_changes_economics():
         }
     )
     comps = [
-        Comp("grailed_sold", base.title_original, price, 1.0, 30)
+        Comp("grailed_sold", base.title_original, price, 1.0, 30, price_evidence="realized")
         for price in (40_000, 45_000, 50_000)
     ]
 
