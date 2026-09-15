@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,12 @@ from .settings import runtime_state_path
 
 SESSION_DIR = runtime_state_path("BUYEYE_SESSION_DIR", "browser")
 STATE_PATH = SESSION_DIR / "buyee_state.json"
+
+
+def _expired_cookie(cookie: dict[str, object]) -> bool:
+    expires = cookie.get("expires")
+    # -1 denotes a browser-session cookie. Never extend an actual expiry.
+    return isinstance(expires, (int, float)) and expires >= 0 and expires <= time.time()
 
 
 def _kill_stale_browser_processes() -> None:
@@ -122,6 +129,8 @@ def load_session_cookies(state_path: str | Path | None = None) -> dict[str, str]
 
     cookies: dict[str, str] = {}
     for cookie in payload.get("cookies", []):
+        if not isinstance(cookie, dict) or _expired_cookie(cookie):
+            continue
         name = cookie.get("name")
         value = cookie.get("value")
         if isinstance(name, str) and isinstance(value, str):
@@ -173,7 +182,7 @@ def restore_session_cookies(context: BrowserContext, state_path: str | Path | No
 
     cookies = []
     for cookie in payload.get("cookies", []):
-        if not isinstance(cookie, dict):
+        if not isinstance(cookie, dict) or _expired_cookie(cookie):
             continue
         normalized = {
             "name": cookie.get("name"),
@@ -207,7 +216,7 @@ async def restore_session_cookies_async(
 
     cookies = []
     for cookie in payload.get("cookies", []):
-        if not isinstance(cookie, dict):
+        if not isinstance(cookie, dict) or _expired_cookie(cookie):
             continue
         normalized = {
             "name": cookie.get("name"),

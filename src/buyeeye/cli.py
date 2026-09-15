@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .browser_session import has_valid_session, launch_manual_buyee_login, save_session_state
-from .db import init_db
+from .db import StatusIncidentState, get_session, init_db
 from .discord_alerts import send_test_alert
 from .discovery import build_query_universe, query_layer_counts
 from .live_sources import AuthExpiredError, LiveMarketLoop, ParserAnomalyError, load_live_queries
@@ -70,6 +70,8 @@ def _record_source_attempt_failure(db_path: str | os.PathLike[str], exc: Excepti
     }
     if isinstance(exc, ParserAnomalyError):
         values["last_parser_anomaly"] = now
+    if isinstance(exc, AuthExpiredError):
+        values.update(last_auth_confirmed=False, last_auth_observed_at=now)
     update_health(db_path, **values)
 
 
@@ -82,6 +84,8 @@ def _health_readiness(
     last = runtime.last_successful_scan
     age = None if last is None else max(0.0, (current - last.replace(tzinfo=last.tzinfo or UTC)).total_seconds() / 60)
     if not report["database_ready"] or not report["session_ready"]:
+        return "degraded", age
+    if getattr(runtime, "last_auth_confirmed", None) is False or report.get("auth_incident_open"):
         return "degraded", age
     started = getattr(runtime, "started_at", None)
     if age is None:
@@ -200,6 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "health":
         report = health_report(db_path)
         runtime = get_health(db_path)
+        with get_session(db_path) as session:
+            incident = session.get(StatusIncidentState, 1)
+            report["auth_incident_open"] = bool(
+                incident and (incident.auth_failure_streak or incident.auth_required_announced)
+            )
         metrics = hourly_metrics(db_path, hours=args.hours)
         readiness, progress_age = _health_readiness(
             report, runtime,
@@ -208,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"BuyEye health: {readiness}")
         print(f"Database: {report['database']}")
         print(f"Buyee portable session: {'present' if report['session_ready'] else 'unavailable'} (not a live authentication test)")
+        auth_label = {True: "authenticated", False: "login not authenticated", None: "unverified"}
+        print(f"Last source login check: {auth_label[runtime.last_auth_confirmed]} ({runtime.last_auth_observed_at or 'never'})")
+        print(f"Last confirmed authenticated acquisition: {runtime.last_verified_auth_success or 'not yet verified'}")
+        print(f"Authentication incident: {'open' if report['auth_incident_open'] else 'none'}")
         print(f"Last successful scan: {runtime.last_successful_scan or 'never'}")
         print(f"Successful acquisition age: {f'{progress_age:.1f} minutes' if progress_age is not None else 'no recorded success'}")
         print(f"Current/last query: {runtime.current_query or '-'} / {runtime.last_query or '-'}")
@@ -412,12 +425,16 @@ def main(argv: list[str] | None = None) -> int:
                 recovery_counts["source_retries"] = max(0, attempts_made - 1)
                 result.recovery_counts = recovery_counts
                 prior = get_health(db_path)
+                auth_confirmed = getattr(result, "auth_confirmed", None)
                 update_health(
                     db_path,
                     current_query=None,
                     last_query=spec.query,
                     last_successful_scan=datetime.now(UTC),
-                    last_auth_success=datetime.now(UTC),
+                    **({"last_auth_success": datetime.now(UTC), "last_verified_auth_success": datetime.now(UTC)}
+                       if auth_confirmed is True and result.scanned > 0 else {}),
+                    last_auth_observed_at=datetime.now(UTC),
+                    last_auth_confirmed=auth_confirmed,
                     consecutive_source_failures=0,
                     unique_listings_scanned=prior.unique_listings_scanned + result.unique_listings,
                     lifetime_first_seen_count=(prior.lifetime_first_seen_count or 0)
@@ -481,11 +498,18 @@ def main(argv: list[str] | None = None) -> int:
                 # A completed acquisition is operational success even when a
                 # narrowly filtered marketplace slice legitimately has zero
                 # cards. Parser anomalies raise before reaching this point.
+                if auth_confirmed is False:
+                    record_auth_failure(
+                        db_path, query=spec.query, query_scope=spec.query_layer,
+                        confirmation_threshold=int(status_settings.get("auth_confirmation_threshold", 2)),
+                        notification_cooldown_minutes=float(status_settings.get("notification_cooldown_minutes", 360)),
+                    )
                 record_scanning_success(
                     db_path,
                     query=spec.query,
                     query_scope=spec.query_layer,
                     cards_seen=result.scanned,
+                    auth_confirmed=auth_confirmed,
                     recovery_confirmation_scans=int(
                         status_settings.get("recovery_confirmation_scans", 2)
                     ),

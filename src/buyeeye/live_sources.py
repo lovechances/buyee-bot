@@ -88,6 +88,32 @@ class ParserAnomalyError(RuntimeError):
     pass
 
 
+def auth_observation_script() -> str:
+    """Read visible login controls, never cookie values, account text or form inputs."""
+    return r"""() => {
+      const visible = el => el.getClientRects().length > 0
+        && getComputedStyle(el).visibility !== 'hidden';
+      const controls = [...document.querySelectorAll('a, button')].filter(visible);
+      const named = pattern => controls.some(el => pattern.test((el.textContent || '').trim()));
+      return {
+        logout_control: named(/^(?:log\s*out|sign\s*out|ログアウト)$/i),
+        login_control: named(/^(?:log\s*in|sign\s*in|ログイン)$/i),
+        password_form: [...document.querySelectorAll('input[type="password"]')].some(visible),
+        login_page: /^\/(?:login|signin)(?:\/|$)/i.test(location.pathname)
+      };
+    }"""
+
+
+def confirmed_page_auth(evidence: dict[str, Any]) -> bool | None:
+    if evidence.get("password_form") is True or evidence.get("login_page") is True:
+        return False
+    if evidence.get("logout_control") is True and evidence.get("login_control") is not True:
+        return True
+    if evidence.get("login_control") is True and evidence.get("logout_control") is not True:
+        return False
+    return None
+
+
 _PAGINATION_PAGE_PATTERN = re.compile(
     r'''["']?page["']?\s*:\s*["']?(\d+)["']?''',
     flags=re.IGNORECASE,
@@ -323,6 +349,28 @@ class BuyeeAuthenticatedSource(ListingSource):
         self.parser_reload_successes = 0
         self.search_filters = search_filters
         self.discovery_context = discovery_context or {}
+        self.auth_confirmed: bool | None = None
+        self.auth_wall = False
+
+    async def _observe_auth(self, page: Any) -> None:
+        try:
+            observed = await page.evaluate(auth_observation_script())
+            evidence = {key: observed.get(key) is True for key in (
+                "logout_control", "login_control", "password_form", "login_page"
+            )}
+            self.auth_confirmed = confirmed_page_auth(evidence)
+            self.auth_wall = evidence["password_form"] or evidence["login_page"]
+            logging.getLogger("buyeeye.runtime").info(
+                "source_auth_observation %s", json.dumps({
+                    **evidence, "authenticated": self.auth_confirmed,
+                }, sort_keys=True)
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.auth_confirmed = None
+            self.auth_wall = False
+            logging.getLogger("buyeeye.runtime").warning(
+                "source_auth_observation_unavailable error=%s", type(exc).__name__
+            )
 
     @staticmethod
     def _search_url(
@@ -357,10 +405,14 @@ class BuyeeAuthenticatedSource(ListingSource):
 
     @staticmethod
     def _empty_page_state(body_text: str) -> str:
-        if "Logout" not in body_text and re.search(r"(?i)\b(?:log in|login|sign in)\b", body_text):
-            return "auth_expired"
+        # A navigation/footer Login link can coexist with a legitimate empty
+        # public search. It is not itself an authentication wall.
         if re.search(r"(?i)no (?:items|results)|0 (?:items|results)|該当する商品", body_text):
             return "no_results"
+        if not re.search(r"(?i)\b(?:log\s*out|sign\s*out)\b|ログアウト", body_text) and re.search(
+            r"(?i)(?:please|must|required to)\s+(?:log\s*in|sign\s*in)|ログインしてください", body_text
+        ):
+            return "auth_expired"
         return "parser_anomaly"
 
     async def fetch(self, query: str | None = None) -> list[LiveListing]:
@@ -511,6 +563,9 @@ class BuyeeAuthenticatedSource(ListingSource):
                         break
                     current_page = next_page
                     await page.wait_for_timeout(1000)
+                await self._observe_auth(page)
+                if self.auth_wall:
+                    raise AuthExpiredError("Buyee search reached a login page")
                 if not all_rows:
                     body_text = normalize_text((await page.locator("body").inner_text())[:10000])
                     state = self._empty_page_state(body_text)
@@ -526,6 +581,9 @@ class BuyeeAuthenticatedSource(ListingSource):
                         wait_until="domcontentloaded", timeout=60000
                     )
                     await page.wait_for_timeout(5000)
+                    await self._observe_auth(page)
+                    if self.auth_wall:
+                        raise AuthExpiredError("Buyee search reached a login page")
                     recovered_rows = await page.evaluate(listing_script)
                     for rank, row in enumerate(recovered_rows, start=1):
                         row["search_page"] = current_page

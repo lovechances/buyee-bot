@@ -18,6 +18,7 @@ from .discord_alerts import send_status_event
 OUTAGE_MESSAGE = "BuyEye source acquisition is degraded after sustained failed scans. Recovery is running."
 RECOVERY_MESSAGE = "BuyEye has resumed successful scans. Some searches may still need retries."
 AUTH_REQUIRED_MESSAGE = "BuyEye needs its Buyee login refreshed."
+AUTH_RECOVERY_MESSAGE = "BuyEye's Buyee login is working again and authenticated scanning has resumed."
 MAJOR_UPDATE_MESSAGES = {
     "alert-quality-recall-v2": (
         "BuyEye update: alert quality and opportunity finding have been improved."
@@ -261,6 +262,7 @@ def record_source_failure(
         if persisted.source_failure_started_at is None or consecutive_failures <= 1:
             persisted.source_failure_started_at = current_time
         persisted.recovery_success_streak = 0
+        persisted.auth_recovery_success_streak = 0
         session.commit()
         failure_started = persisted.source_failure_started_at or current_time
     if failure_started.tzinfo is None:
@@ -312,15 +314,22 @@ def record_auth_failure(
     confirmation_threshold: int = 2,
     query: str | None = None,
     query_scope: str | None = None,
+    now: datetime | None = None,
+    notification_cooldown_minutes: float = 360,
 ) -> StatusEventResult:
     """Require repeated authenticated-source failures before asking for login."""
     _state(path)
+    current_time = now or datetime.now(UTC)
+    current_time = current_time.replace(tzinfo=current_time.tzinfo or UTC)
     with get_session(path) as session:
         state = session.get(StatusIncidentState, 1)
         assert state is not None
         state.auth_failure_streak += 1
+        state.auth_recovery_success_streak = 0
+        state.recovery_success_streak = 0
         streak = state.auth_failure_streak
         announced = state.auth_required_announced
+        last_notice = state.last_auth_notice_at
         session.commit()
 
     def result(emitted: bool, outcome: str) -> StatusEventResult:
@@ -337,8 +346,24 @@ def record_auth_failure(
         return result(False, "not_confirmed")
     if announced:
         return result(False, "incident_already_open")
+    if last_notice and current_time - last_notice.replace(tzinfo=UTC) < timedelta(
+        minutes=notification_cooldown_minutes
+    ):
+        return result(False, "notification_rate_limited")
+    # Claim before sending so a process exit after delivery cannot repeat it.
+    with get_session(path) as session:
+        state = session.get(StatusIncidentState, 1)
+        assert state is not None
+        state.auth_required_announced = True
+        state.last_auth_notice_at = current_time
+        session.commit()
     sent, status, _ = send_status_event(AUTH_REQUIRED_MESSAGE, "warning")
     if not sent:
+        with get_session(path) as session:
+            state = session.get(StatusIncidentState, 1)
+            assert state is not None
+            state.auth_required_announced = False
+            session.commit()
         return result(False, f"delivery_failed:{status}")
     with get_session(path) as session:
         state = session.get(StatusIncidentState, 1)
@@ -356,16 +381,22 @@ def record_scanning_success(
     query: str | None = None,
     query_scope: str | None = None,
     cards_seen: int | None = None,
+    auth_confirmed: bool | None = None,
 ) -> StatusEventResult:
-    """Close auth quietly and confirm recovery only for an announced outage."""
+    """Public cards/empty results are not evidence of restored authentication."""
     state = _state(path)
     outage_announced = state.outage_announced
+    auth_open = bool(state.auth_failure_streak or state.auth_required_announced)
+    auth_recovery_streak = (
+        (state.auth_recovery_success_streak or 0) + 1
+        if auth_open and auth_confirmed is True and (cards_seen or 0) > 0 else 0
+    )
+    auth_recovered = auth_recovery_streak >= max(1, int(recovery_confirmation_scans))
     recovery_streak = (state.recovery_success_streak or 0) + 1 if outage_announced else 0
     with get_session(path) as session:
         current = session.get(StatusIncidentState, 1)
         assert current is not None
-        current.auth_failure_streak = 0
-        current.auth_required_announced = False
+        current.auth_recovery_success_streak = auth_recovery_streak
         current.source_failure_started_at = None
         current.recovery_success_streak = recovery_streak
         session.commit()
@@ -388,6 +419,8 @@ def record_scanning_success(
             query_scope=query_scope,
             cards_seen=cards_seen,
             validated_empty=cards_seen == 0,
+            auth_confirmed=auth_confirmed,
+            auth_recovery_success_streak=auth_recovery_streak,
             recovery_success_streak=recovery_streak,
             outage_previously_announced=outage_announced,
             prior_failure_started_at=(
@@ -397,17 +430,31 @@ def record_scanning_success(
             ),
         )
 
-    if not outage_announced:
+    if auth_open and not auth_recovered:
+        return result(False, "auth_recovery_unconfirmed")
+    if auth_recovered and not state.auth_required_announced:
+        with get_session(path) as session:
+            current = session.get(StatusIncidentState, 1)
+            assert current is not None
+            current.auth_failure_streak = 0
+            current.auth_recovery_success_streak = 0
+            session.commit()
+    if not outage_announced and not state.auth_required_announced:
         return result(False, "healthy_no_incident")
-    if recovery_streak < max(1, int(recovery_confirmation_scans)):
+    if not auth_recovered and recovery_streak < max(1, int(recovery_confirmation_scans)):
         return result(False, "recovery_unconfirmed")
-    sent, status, _ = send_status_event(RECOVERY_MESSAGE, "recovery")
+    sent, status, _ = send_status_event(
+        AUTH_RECOVERY_MESSAGE if auth_recovered else RECOVERY_MESSAGE, "recovery"
+    )
     if not sent:
         return result(False, f"delivery_failed:{status}")
     with get_session(path) as session:
         current = session.get(StatusIncidentState, 1)
         assert current is not None
         current.outage_announced = False
+        current.auth_required_announced = False
+        current.auth_failure_streak = 0
+        current.auth_recovery_success_streak = 0
         current.last_recovery_announced_at = now or datetime.now(UTC)
         current.recovery_success_streak = 0
         session.commit()

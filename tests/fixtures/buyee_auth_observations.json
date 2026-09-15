@@ -1,0 +1,9 @@
+[
+  {"name":"logged_in_search","evidence":{"logout_control":true,"login_control":false},"authenticated":true,"body":"Logout No results matched","empty_state":"no_results"},
+  {"name":"public_empty_with_login_navigation","evidence":{"logout_control":false,"login_control":true},"authenticated":false,"body":"Login No items matched your filters","empty_state":"no_results"},
+  {"name":"public_results_not_auth_proof","evidence":{"logout_control":false,"login_control":true},"authenticated":false,"body":"Login Current Price 3000 YEN","empty_state":"parser_anomaly"},
+  {"name":"login_wall","evidence":{"password_form":true,"login_page":true},"authenticated":false,"body":"Please log in to continue","empty_state":"auth_expired"},
+  {"name":"japanese_login_wall","evidence":{"password_form":true},"authenticated":false,"body":"ログインしてください","empty_state":"auth_expired"},
+  {"name":"ambiguous_controls","evidence":{"login_control":true,"logout_control":true},"authenticated":null,"body":"Logout Login temporary shell","empty_state":"parser_anomaly"},
+  {"name":"unknown_shell","evidence":{},"authenticated":null,"body":"Temporary empty search shell","empty_state":"parser_anomaly"}
+]

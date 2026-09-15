@@ -115,6 +115,8 @@ class StatusIncidentState(SQLModel, table=True):
     last_outage_announced_at: datetime | None = None
     last_recovery_announced_at: datetime | None = None
     recovery_success_streak: int | None = 0
+    auth_recovery_success_streak: int | None = 0
+    last_auth_notice_at: datetime | None = None
 
 
 def init_db(path: str | Path = DB_PATH) -> None:

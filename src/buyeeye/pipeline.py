@@ -58,6 +58,7 @@ DECISION_LOGIC_VERSION = "ultra-refinement-v11"
 
 @dataclass
 class ScanResult:
+    auth_confirmed: bool | None = None
     scanned: int = 0
     new_rows: int = 0
     updated_rows: int = 0
@@ -1053,6 +1054,7 @@ async def scan_once(
     listings = await loop.run_once(query_text, persist=False)
     ending_threshold = int(settings.get("alert", {}).get("ending_threshold_minutes", 60))
     result = ScanResult(
+        auth_confirmed=getattr(source, "auth_confirmed", None),
         scanned=len(listings),
         unique_listings=len(listings),
         search_pages=source.last_page_count,
