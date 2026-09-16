@@ -72,4 +72,48 @@ speculative fashion patch was added to this health repair.
 - Existing public search acquisition can continue, but never clears an unresolved
   auth incident or masquerades as verified authentication.
 
-Live deployment and authentication outcome are recorded below after validation.
+## Live validation and manual action
+
+Maintenance `46d1643` deployed successfully as
+`742b8fef-047f-44f5-ab30-0ace71b09265`. At 00:02:29 UTC Sep 16 the **normal**
+headed scanner acquired a Needles result and observed Login=true, Logout=false,
+login-page=false, password-form=false. This is logged-out public acquisition,
+not a restored authenticated session. The new incident remained open rather
+than being cleared by that successful public scan. Manual login is required.
+
+The incident is therefore real expired authentication plus incorrect incident
+resetting and overbroad empty-page classification. There is no evidence of lost
+volume state, competing browsers, or a need to reset a profile. Cookie expiry
+coincides with onset, and the live login controls independently confirm the
+current logged-out state. The old cookie alone was not treated as proof.
+
+Run from the local repository, with no local scanner/manual browser using this
+profile. This intentionally opens a visible window; automated scans remain
+off-screen/Xvfb. Keep the local backup private and outside Git:
+
+```sh
+cp -n data/browser/buyee_state.json data/browser/buyee_state.before-refresh-20260915.json
+.venv/bin/python -m buyeeye setup-session
+```
+
+Log into Buyee normally. Verify the page is logged in before pressing Enter in
+the terminal to export and close. Then upload **only** the refreshed portable
+file to the existing volume:
+
+```sh
+railway volume files upload ./data/browser/buyee_state.json /browser/buyee_state.json
+railway ssh -- python -m buyeeye health
+```
+
+The CLI upload path is volume-relative: the container sees
+`/data/browser/buyee_state.json`. No profile/database deletion, new scanner,
+full-profile copy or infrastructure change is needed. The next natural browser
+launch imports the refreshed state; allow at least two nonempty authenticated
+scans before expecting recovery. If the source still reports logged out, stop
+and investigate rather than forcing a recovery notification.
+
+Full suite including the manual-refresh visibility fix: **734 passed**, Ruff and compile checks
+passed. Tests cover expired-cookie preservation, visible/hidden login controls,
+public/empty results, incident persistence, interrupted recovery, distinct later
+incidents, notification rate limits and credential-free diagnostics. Existing
+v11 positive/negative fashion controls remain unchanged and passing.

@@ -142,3 +142,23 @@ def test_expired_portable_cookie_cannot_delete_newer_profile_cookie(monkeypatch,
     assert sync.names == asynchronous.names == ["current", "session"]
     assert set(load_session_cookies(state)) == {"current", "session"}
     assert state.read_text() == original
+
+
+def test_manual_refresh_window_visible_without_changing_automated_browser(monkeypatch):
+    from buyeeye.browser_session import launch_manual_buyee_login
+
+    launched = {}
+    page = SimpleNamespace(add_init_script=lambda *_args: None, goto=lambda *_args, **_kwargs: None)
+    context = SimpleNamespace(new_page=lambda: page)
+
+    def launch(directory, **options):
+        launched.update(options)
+        return context
+
+    playwright = SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=launch))
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: SimpleNamespace(start=lambda: playwright))
+    monkeypatch.setattr("buyeeye.browser_session.ensure_browser_dir", lambda: None)
+    monkeypatch.setattr("buyeeye.browser_session.restore_session_cookies", lambda *_args: None)
+    assert launch_manual_buyee_login() == (playwright, context, page)
+    assert launched["headless"] is False
+    assert not any("-10000" in arg for arg in launched.get("args", []))

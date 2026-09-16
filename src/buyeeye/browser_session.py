@@ -238,7 +238,7 @@ async def restore_session_cookies_async(
 
 
 def launch_manual_buyee_login() -> tuple[Playwright, BrowserContext, Page]:
-    """Open a fresh headed browser profile and restore the saved Buyee auth if present.
+    """Open a visible manual-login window using the existing profile.
 
     Reuse the persistent profile after removing only stale browser lifecycle artifacts.
     """
@@ -249,7 +249,6 @@ def launch_manual_buyee_login() -> tuple[Playwright, BrowserContext, Page]:
     context = playwright.chromium.launch_persistent_context(
         str(SESSION_DIR),
         headless=False,
-        args=["--window-position=-10000,-10000"],
         viewport={"width": 1440, "height": 1100},
     )
     restore_session_cookies(context, STATE_PATH)

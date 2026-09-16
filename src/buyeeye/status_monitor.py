@@ -28,6 +28,12 @@ MAJOR_UPDATE_MESSAGES = {
         "BuyEye now separates listing prices from estimated costs and handles misleading product descriptions more carefully. "
         "Inspection has also been adjusted so overlooked candidates can get a closer look."
     ),
+    "v11-auth-maintenance": (
+        "BuyEye's Buyee login expired, and public searches were incorrectly clearing the login warning. "
+        "Repeated reminders and false recovery checks are fixed. Public scanning is running, "
+        "but a manual login refresh is still needed; authenticated access is not restored yet. "
+        "Sourcing rules are unchanged."
+    ),
 }
 RELEASE_MAX_ATTEMPTS = 3
 RELEASE_RETRY_SECONDS = 60
