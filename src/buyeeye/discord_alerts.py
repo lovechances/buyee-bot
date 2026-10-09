@@ -4,6 +4,7 @@ import multiprocessing
 import os
 import re
 import time
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -324,7 +325,17 @@ def _size_label(listing: Any, evaluation: Any) -> str | None:
         title_size = suffix.group(1).upper() if suffix else None
     size = str(_read(observed, "size_original") or "").strip()
     observed_size = re.sub(r"(?i)^size\s*", "", size).strip()
-    if title_size and observed_size and title_size.casefold() != observed_size.casefold():
+    def comparable(value: str) -> str:
+        # Decimal formatting is not a fit conflict; units remain significant.
+        value = value.casefold().strip()
+        try:
+            if re.fullmatch(r"\d+(?:\.\d+)?", value):
+                return str(Decimal(value).normalize())
+            return value
+        except InvalidOperation:
+            return value
+
+    if title_size and observed_size and comparable(title_size) != comparable(observed_size):
         return _short(f"title {title_size} / metadata {observed_size} — conflict; check measurements", 100)
     if title_size or size:
         return _short(title_size or size, 28)
@@ -355,7 +366,12 @@ def build_listing_alert_payload(
 ) -> dict[str, Any]:
     """Build a compact, phone-readable Discord payload without performing I/O."""
 
-    listing_title = _short(_read(listing, "title_original") or "Untitled Buyee listing", 150)
+    # Buyee's heading may concatenate its translation and original title. This
+    # is presentation only: keep the complete observation for matching/dedupe.
+    raw_title = str(_read(listing, "title_original") or "Untitled Buyee listing")
+    translated, delimiter, original = raw_title.partition("Original Japanese Name:")
+    display_title = (translated.strip() or original.strip()) if delimiter else raw_title
+    listing_title = _short(display_title, 150)
     current_price = _read(listing, "current_price")
     buyout_price = _read(listing, "buyout_price")
     listing_url = str(_read(listing, "url", "") or "")

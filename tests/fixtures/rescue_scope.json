@@ -1,0 +1,62 @@
+[
+  {
+    "id": "v1199739790", "provenance": "October 9 family-stratified capped card; car engine cover, not clothing",
+    "title": "⑧! AGH30W Alphard Genuine Engine Undercover 51442-12270",
+    "price": 10, "expected_offer": "non_fashion"
+  },
+  {
+    "id": "p1180830418", "provenance": "October 9 family-stratified capped card; motorcycle body part, not clothing",
+    "title": "[Yamaha Gear UA06J GEAR 4-stroke] Genuine front under cowl, cracked under cover",
+    "price": 21, "expected_offer": "non_fashion"
+  },
+  {
+    "id": "k1024905420", "provenance": "October 9 latest capped card; eligible identity-recovery candidate, not delivered",
+    "title": "YSL イブサンローラン 化粧水・美容液・ファンデーション サンプル",
+    "price": 1000, "expected_offer": "non_fashion"
+  },
+  {
+    "id": "w1115434526", "provenance": "October 9 latest capped card; eligible identity-recovery candidate, not delivered",
+    "title": "【中古】YSL口紅２本セット 13.14",
+    "price": 6000, "expected_offer": "non_fashion"
+  },
+  {
+    "id": "g1224884233", "provenance": "October 9 latest capped card; eligible identity-recovery candidate, not delivered",
+    "title": "YVES SAINT LAURENT PARIS イブ サンローランパリ イブ・サンローラン展/モードの革新と栄光 MODE 1958-1990 BOOK ファッション アーカイブ",
+    "price": 7500, "expected_offer": "media_ephemera"
+  },
+  {
+    "id": "j1224884628", "provenance": "October 9 latest capped card; eligible identity-recovery candidate, not delivered",
+    "title": "YVES SAINT LAURENT PARIS イブ サンローランパリ Yves Saint Laurent Forty Years of Creation 1958-1998 40周年 作品集 BOOK アーカイブ",
+    "price": 12000, "expected_offer": "media_ephemera"
+  },
+  {
+    "id": "1244820350", "provenance": "retained production review send; later detail heading September 29, 2026",
+    "title": "(Note: This item is not Chrome Hearts) Old Dagger Pendant Top Charm Silver ★★★★ Original Japanese Name: (注意：本品はクロムハーツではありません）オールド ダガー ペンダント トップ チャーム シルバー 銀 ★★★★",
+    "price": 7699, "expected_role": "contradicted", "expected_offer": "product"
+  },
+  {
+    "id": "r1239508437", "provenance": "retained production buyout send September 18, 2026; title only, not full at-send detail",
+    "title": "riri CH ZIPPER PULL クロムハーツファスナーチャーム 1 2 chrome hearts ウォレット クロス ジッパープル ジップ ダガー 引き手 引手 財布",
+    "price": 7695, "expected_role": "manufacturer", "expected_offer": "non_fashion"
+  },
+  {
+    "id": "r1185787929", "provenance": "retained production buyout send September 18, 2026; title only",
+    "title": "Celine Dion short-sleeved T-shirt, size S, US vintage clothing, free shipping! [189] Original Japanese Name: セリーヌ・ディオン 半袖Tシャツ Sサイズ CELINE DION US古着 送料無料！ [189]",
+    "price": 2999, "brand_unknown": true, "expected_offer": "product"
+  },
+  {
+    "id": "w1228035926", "provenance": "retained production buyout send October 1, 2026; title only",
+    "title": "【激レアコレクター物】CELINE DION EYES セリーヌ ディオン メガネ パール ラインストーン クリスタル 装飾 付き ジャケット ブルゾン",
+    "price": 4501, "brand_unknown": true, "expected_offer": "product"
+  },
+  {
+    "id": "b1207102458", "provenance": "retained production buyout send September 19, 2026; title only",
+    "title": "ドルチェ アンド ガッバーナ「DOLCE&GABBANA」ショッパー ヒョウ柄 (6180) 正規品 付属品 ショップ袋 ブランド紙袋 折らずに配送",
+    "price": 1599, "expected_offer": "packaging_only"
+  },
+  {
+    "id": "g1245043642", "provenance": "retained production silver send; later detail heading September 24, 2026",
+    "title": "NUMBER(N)INE Brass Silver Bracelet by Takahiro Miyashita Original Japanese Name: NUMBER(N)INE ナンバーナイン 真鍮 シルバー ブレスレット 宮下貴裕",
+    "brand_observed": "NUMBER (N)INE", "price": 6000, "expected_offer": "product", "expected_material": "brass"
+  }
+]

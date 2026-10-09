@@ -12,6 +12,7 @@ import logging
 import shutil
 import sqlite3
 import time
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -80,7 +81,7 @@ def _prepare(path: str | Path) -> None:
     from . import comp_cache, detail_enrichment  # noqa: F401 - register cache tables
 
     init_db(path)
-    with _connect(path) as connection:
+    with closing(_connect(path)) as connection, connection:
         for table, column in (
             ("seenlisting", "last_seen_at"),
             ("seenlisting", "last_processed_at"),
@@ -169,7 +170,7 @@ def optional_diagnostics_allowed(db_path: str | Path) -> bool:
     if cached and time.monotonic() - cached[0] < 60:
         return not cached[1]
     try:
-        with _connect(db_path, readonly=True) as connection:
+        with closing(_connect(db_path, readonly=True)) as connection, connection:
             row = connection.execute("SELECT low_space FROM maintenancestate WHERE id=1").fetchone()
         low = bool(row and row[0])
     except sqlite3.Error:
@@ -376,7 +377,7 @@ def _warn_storage(path: str | Path, now: datetime, free: int, policy: dict) -> N
 
     # Persist the attempt before network delivery: a failing webhook cannot spam
     # every scan. This optional warning never modifies listing alert history.
-    with _connect(path) as c:
+    with closing(_connect(path)) as c, c:
         row = c.execute("SELECT last_warning_attempt_at FROM maintenancestate WHERE id=1").fetchone()
         cutoff = _stamp(now - timedelta(hours=float(policy["warning_cooldown_hours"])))
         if row and row[0] and row[0] > cutoff:
@@ -387,7 +388,7 @@ def _warn_storage(path: str | Path, now: datetime, free: int, policy: dict) -> N
         "Bounded retention is running; protect headroom before the volume fills.", "warning"
     )
     if sent:
-        with _connect(path) as c:
+        with closing(_connect(path)) as c, c:
             c.execute("UPDATE maintenancestate SET last_warning_sent_at=? WHERE id=1", (_stamp(now),))
 
 
@@ -398,7 +399,7 @@ def storage_summary(db_path: str | Path) -> dict[str, Any]:
     result: dict[str, Any] = {"database": str(path), "filesystem_bytes": usage.total,
                               "free_bytes": usage.free, "database_bytes": path.stat().st_size,
                               "read_only": True, "browser_modified": False}
-    with _connect(path, readonly=True) as c:
+    with closing(_connect(path, readonly=True)) as c, c:
         names = {row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         result["rows"] = {name: c.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
                           for name in ("seenlisting", "listing", "detailcache", "scanevent", "scandailyaggregate", "listingprotection", "alertsendledger") if name in names}

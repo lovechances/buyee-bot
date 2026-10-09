@@ -1,0 +1,6 @@
+# Match the measured production runtime during this targeted rescue trial.
+# Avoid an unrelated ORM/browser upgrade when the image is rebuilt.
+SQLAlchemy==2.0.54
+sqlmodel==0.0.42
+pydantic==2.13.5
+playwright==1.63.0

@@ -15,7 +15,6 @@ from logging.handlers import RotatingFileHandler
 from types import SimpleNamespace
 from typing import Any
 
-from .browser_session import has_valid_session, launch_manual_buyee_login, save_session_state
 from .db import StatusIncidentState, get_session, init_db
 from .discord_alerts import send_test_alert
 from .discovery import build_query_universe, query_layer_counts
@@ -139,6 +138,9 @@ def _build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--source")
     benchmark = subparsers.add_parser("benchmark-listings")
     benchmark.add_argument("input_path")
+    trial = subparsers.add_parser("trial-summary", help="Read-only UTC calendar-window report")
+    trial.add_argument("--start-day", required=True, help="Inclusive UTC date, YYYY-MM-DD")
+    trial.add_argument("--days", type=int, default=7)
 
     intel = subparsers.add_parser("intelligence")
     intel_sub = intel.add_subparsers(dest="intelligence_command")
@@ -179,12 +181,29 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    if args.command == "setup-session":
+        from .session_setup import main as setup_session
+
+        return setup_session([])
+
     settings = load_settings()
     db_path = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
-    if args.command not in {"backtest", "diagnose-listing", "benchmark-listings", "storage-summary"} and not (
+    if args.command not in {"backtest", "diagnose-listing", "benchmark-listings", "storage-summary", "trial-summary"} and not (
         args.command == "status-event" and args.status
     ):
         init_db(db_path)
+
+    if args.command == "trial-summary":
+        import sqlite3
+
+        from .trial_report import trial_summary
+
+        try:
+            print(json.dumps(trial_summary(db_path, start_day=args.start_day, days=args.days)))
+        except (OSError, TypeError, ValueError, sqlite3.Error) as exc:
+            print(f"trial-summary: {type(exc).__name__}", file=sys.stderr)
+            return 2
+        return 0
 
     if args.command == "storage-summary":
         from .maintenance import storage_summary
@@ -597,30 +616,6 @@ def main(argv: list[str] | None = None) -> int:
             f"logic_reconsidered={getattr(result, 'logic_reconsidered', 0)}"
         )
         return 0 if result.scanned else 1
-
-    if args.command == "setup-session":
-        if has_valid_session():
-            print(
-                "An existing Buyee session is already saved; reopening the persistent profile to reuse it."
-            )
-        else:
-            print(
-                "Opening a headed browser for Buyee sign-in. Please log in in the browser window."
-            )
-        playwright, context, page = launch_manual_buyee_login()
-        try:
-            input(
-                "When the page is ready and logged in, press Enter to save the browser session and close the browser: "
-            )
-            save_session_state(context)
-            print(
-                f"Buyee browser session saved to {runtime_data_dir() / 'browser/buyee_state.json'}"
-            )
-            print(f"Current page title: {page.title()}")
-        finally:
-            context.close()
-            playwright.stop()
-        return 0
 
     if args.command == "send-test-alert":
         return send_test_alert()

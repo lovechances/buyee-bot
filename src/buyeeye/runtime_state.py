@@ -199,6 +199,7 @@ class DedupeResult:
     revisit_reason: str | None = None
     inspection_attempted: bool | None = None
     detail_retry_overdue: bool = False
+    detail_retry_age_hours: float = 0.0
     uninspected_age_hours: float = 0.0
 
 
@@ -820,6 +821,10 @@ def mark_listing_seen(
             and inspection_history
             and inspection_history[-1].get("detail") == "failed"
         )
+        detail_retry_age_hours = (
+            max(0.0, (now - last_attempt).total_seconds() / 3600)
+            if detail_retry_overdue and last_attempt else 0.0
+        )
         if not unchanged:
             outcomes = {}
             row.stage_a_outcomes_json = None
@@ -943,6 +948,7 @@ def mark_listing_seen(
             revisit_reason=revisit_reason,
             inspection_attempted=inspection_attempted,
             detail_retry_overdue=detail_retry_overdue,
+            detail_retry_age_hours=detail_retry_age_hours,
             uninspected_age_hours=uninspected_age_hours,
         )
 

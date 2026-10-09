@@ -86,6 +86,36 @@ def _rendered(payload: dict) -> str:
     )
 
 
+def test_bilingual_heading_is_shortened_only_for_display() -> None:
+    listing = _listing()
+    raw_title = "Number Nine mohair cardigan Original Japanese Name: ナンバーナイン モヘア カーディガン"
+    listing.title_original = raw_title
+    listing.raw = {"stage_b": {"observed": {"title_original": raw_title}}}
+    payload = build_listing_alert_payload(listing, "buyouts", "Mohair cardigan", 70)
+    assert "Number Nine mohair cardigan" in payload["embeds"][0]["title"]
+    assert "Original Japanese Name:" not in payload["embeds"][0]["title"]
+    assert listing.title_original == raw_title
+    assert listing.raw["stage_b"]["observed"]["title_original"] == raw_title
+
+
+def test_original_only_heading_and_ordinary_japanese_title_survive() -> None:
+    for raw_title in ("Original Japanese Name: モヘア カーディガン", "モヘア カーディガン"):
+        listing = _listing()
+        listing.title_original = raw_title
+        payload = build_listing_alert_payload(listing, "buyouts", "Mohair cardigan", 70)
+        assert payload["embeds"][0]["title"].startswith("モヘア カーディガン")
+
+
+def test_decimal_size_formatting_is_not_a_conflict_but_real_difference_is() -> None:
+    listing = _listing()
+    listing.title_original = "Puma McQueen sneakers Size 27.5"
+    for observed, conflict in (("27.50", False), ("27", True), ("US 9.5", True)):
+        listing.raw = {"stage_b": {"observed": {"size_original": observed}}}
+        rendered = _rendered(build_listing_alert_payload(listing, "buyouts", "Sneakers", 70, _evaluation()))
+        assert ("conflict" in rendered) is conflict
+        assert "27.5" in rendered
+
+
 def test_actionable_verified_card_is_compact_and_evidence_backed() -> None:
     comps = [
         Comp(

@@ -12,8 +12,9 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY config ./config
+COPY deploy/runtime-constraints.txt ./deploy/runtime-constraints.txt
 
-RUN pip install --no-cache-dir . \
+RUN pip install --no-cache-dir -c deploy/runtime-constraints.txt . \
     && python -m playwright install --with-deps chromium \
     && apt-get update \
     && apt-get install -y --no-install-recommends tini xauth \

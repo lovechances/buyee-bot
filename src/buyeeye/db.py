@@ -1,16 +1,101 @@
 from __future__ import annotations
 
+import atexit
+import os
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import inspect, text
+from sqlalchemy import Engine, inspect, text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Field, Session, SQLModel, UniqueConstraint, create_engine, select
 
 from .settings import runtime_state_path
 
 DB_PATH = runtime_state_path("BUYEYE_DB_PATH", "buyeeye.db")
+
+
+@dataclass
+class _DatabaseEngine:
+    engine: Engine
+    file_identity: tuple[int, int, bool] | None
+    schema_signature: tuple | None = None
+
+
+# The daemon owns one DB. Keep test/diagnostic paths bounded too, and dispose
+# evicted pools instead of leaving every per-card connection to cyclic GC.
+_MAX_DATABASE_ENGINES = 4
+_database_engines: OrderedDict[Path, _DatabaseEngine] = OrderedDict()
+_database_lock = threading.RLock()
+
+
+def _file_identity(path: Path) -> tuple[int, int, bool] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_size == 0
+
+
+def _schema_signature() -> tuple:
+    # Tables are registered by module imports; do not cache readiness merely by
+    # path and accidentally omit later-imported detail/runtime/comp tables.
+    return tuple(
+        (name, tuple((column.name, str(column.type)) for column in table.columns))
+        for name, table in sorted(SQLModel.metadata.tables.items())
+    )
+
+
+def _dispose_database_engines() -> None:
+    with _database_lock:
+        for state in _database_engines.values():
+            state.engine.dispose()
+        _database_engines.clear()
+
+
+def _discard_inherited_database_engines() -> None:
+    # Webhook workers can fork. A child must never reuse the parent's DBAPI
+    # connections or inherit a lock held by a vanished parent thread.
+    global _database_lock
+    for state in _database_engines.values():
+        state.engine.dispose(close=False)
+    _database_engines.clear()
+    _database_lock = threading.RLock()
+
+
+atexit.register(_dispose_database_engines)
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_discard_inherited_database_engines)
+
+
+def _initialized_engine(path: str | Path) -> Engine:
+    database_path = Path(path).resolve()
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with _database_lock:
+        identity = _file_identity(database_path)
+        state = _database_engines.get(database_path)
+        if state is not None and state.file_identity != identity:
+            # A replaced, removed, or truncated test/restore DB must not reuse
+            # an old inode's pooled connections or its schema-ready marker.
+            state.engine.dispose()
+            del _database_engines[database_path]
+            state = None
+        if state is None:
+            state = _DatabaseEngine(create_engine(f"sqlite:///{database_path}"), identity)
+            _database_engines[database_path] = state
+            while len(_database_engines) > _MAX_DATABASE_ENGINES:
+                _, evicted = _database_engines.popitem(last=False)
+                evicted.engine.dispose()
+        _database_engines.move_to_end(database_path)
+        signature = _schema_signature()
+        if state.schema_signature != signature:
+            _migrate_schema(state.engine)
+            state.file_identity = _file_identity(database_path)
+            state.schema_signature = signature
+        return state.engine
 
 
 class Listing(SQLModel, table=True):
@@ -120,9 +205,10 @@ class StatusIncidentState(SQLModel, table=True):
 
 
 def init_db(path: str | Path = DB_PATH) -> None:
-    database_path = Path(path)
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{database_path}")
+    _initialized_engine(path)
+
+
+def _migrate_schema(engine: Engine) -> None:
     try:
         SQLModel.metadata.create_all(engine)
     except OperationalError as exc:
@@ -152,11 +238,7 @@ def init_db(path: str | Path = DB_PATH) -> None:
 
 
 def get_session(path: str | Path = DB_PATH) -> Session:
-    database_path = Path(path)
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{database_path}")
-    SQLModel.metadata.create_all(engine)
-    return Session(engine)
+    return Session(_initialized_engine(path))
 
 
 def save_listings(listings: list[Any], path: str | Path = DB_PATH) -> tuple[int, int]:

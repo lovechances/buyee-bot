@@ -34,6 +34,7 @@ class StageAAssessment:
     value_inspection_candidate: bool = False
     inspection_attempted: bool | None = None
     detail_retry_overdue: bool = False
+    detail_retry_age_hours: float = 0.0
     uninspected_age_hours: float = 0.0
 
     @property
@@ -57,6 +58,7 @@ class StageAAssessment:
             "value_inspection_candidate": self.value_inspection_candidate,
             "inspection_attempted": self.inspection_attempted,
             "detail_retry_overdue": self.detail_retry_overdue,
+            "detail_retry_age_hours": round(self.detail_retry_age_hours, 2),
             "uninspected_age_hours": round(self.uninspected_age_hours, 2),
             "price_in_discovery_band": self.price_in_discovery_band,
             "discovery_price_fraction": self.discovery_price_fraction,
@@ -496,6 +498,7 @@ def assess_stage_a(
             else None
         ),
         detail_retry_overdue=dedupe.get("detail_retry_overdue") is True,
+        detail_retry_age_hours=max(0.0, float(dedupe.get("detail_retry_age_hours") or 0)),
         uninspected_age_hours=max(0.0, float(dedupe.get("uninspected_age_hours") or 0)),
     )
 
@@ -562,13 +565,32 @@ def select_stage_a_candidates(
             if item.value_inspection_candidate and item.inspection_attempted is False
         ]
         policies = []
-        # Repeatedly capped, still-uninspected useful-price cards must not lose
-        # forever to each newly arriving slightly higher-ranked card. Reuse the
-        # SAME reservation; never add a fetch or relax any eligibility/path cap.
+        # Repeatedly capped, incomplete useful-price inspections share the SAME
+        # reservation. A failed attempt is not completed enrichment: protecting
+        # an already-selected retry alone leaves lower-ranked failures starved.
+        # A retry's clock starts at its last attempt, not its first sighting, so
+        # another failure yields this priority during the normal retry cooldown.
         overdue_hours = max(1.0, float(config.get("value_inspection_wait_hours", 6)))
+
+        def pending_age(item: StageAAssessment) -> float:
+            return (
+                item.detail_retry_age_hours if item.detail_retry_overdue
+                else item.uninspected_age_hours
+            )
+
         overdue = sorted(
-            (item for item in uninspected if item.uninspected_age_hours >= overdue_hours),
-            key=lambda item: (-item.uninspected_age_hours, -item.inspection_score, item.listing_id),
+            (
+                item for item in ranked
+                if item.value_inspection_candidate
+                and (
+                    (item.detail_retry_overdue and item.inspection_attempted is True)
+                    or (
+                        item.inspection_attempted is False
+                        and item.uninspected_age_hours >= overdue_hours
+                    )
+                )
+            ),
+            key=lambda item: (-pending_age(item), -item.inspection_score, item.listing_id),
         )
         policies.extend((item, False) for item in overdue)
         if uninspected and not selected_uninspected_value:
@@ -589,8 +611,8 @@ def select_stage_a_candidates(
                 for item in reversed(selected)
                 if not item.detail_retry_overdue
                 and not (
-                    candidate in overdue and item.inspection_attempted is False
-                    and item.uninspected_age_hours >= candidate.uninspected_age_hours
+                    candidate in overdue and item in overdue
+                    and pending_age(item) >= pending_age(candidate)
                 )
                 and (not coverage_only or item.inspection_attempted is True)
                 and (

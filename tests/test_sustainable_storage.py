@@ -324,15 +324,27 @@ def test_overdue_failed_attempt_survives_capped_classification_not_success(tmp_p
             {"stage_a": "capped", "detail": None},
         ])
         s.commit()
-    assert mark_listing_seen("buyee", "x100000001", "new-signature", "brand", path).detail_retry_overdue
+    overdue = mark_listing_seen("buyee", "x100000001", "new-signature", "brand", path)
+    assert overdue.detail_retry_overdue
+    assert 25 <= overdue.detail_retry_age_hours < 26
     with get_session(path) as s:
         row = s.get(SeenListing, key)
+        row.last_inspected_at = datetime.now(UTC)
+        s.commit()
+    recent_failure = mark_listing_seen("buyee", "x100000001", "new-signature", "brand", path)
+    assert not recent_failure.detail_retry_overdue
+    assert recent_failure.detail_retry_age_hours == 0
+    with get_session(path) as s:
+        row = s.get(SeenListing, key)
+        row.last_inspected_at = datetime.now(UTC) - timedelta(hours=25)
         row.event_history_json = json.dumps([
             {"stage_a": "selected", "detail": "failed"},
             {"stage_a": "selected", "detail": "enriched"},
         ])
         s.commit()
-    assert not mark_listing_seen("buyee", "x100000001", "new-signature", "brand", path).detail_retry_overdue
+    completed = mark_listing_seen("buyee", "x100000001", "new-signature", "brand", path)
+    assert not completed.detail_retry_overdue
+    assert completed.detail_retry_age_hours == 0
 
 
 def test_recent_activity_preserves_old_candidate_history_and_detail(tmp_path):

@@ -20,6 +20,12 @@ RECOVERY_MESSAGE = "BuyEye has resumed successful scans. Some searches may still
 AUTH_REQUIRED_MESSAGE = "BuyEye needs its Buyee login refreshed."
 AUTH_RECOVERY_MESSAGE = "BuyEye's Buyee login is working again and authenticated scanning has resumed."
 MAJOR_UPDATE_MESSAGES = {
+    "final-rescue-2026-10": (
+        "BuyEye's targeted fixes are live: clearer wrong-product, brand and material checks; "
+        "another chance for overdue failed inspections within the same budget; shorter cards; "
+        "and less redundant database work. Authenticated scanning is running. "
+        "Lower costs and better finds are not proven yet—this is a final seven-day trial."
+    ),
     "alert-quality-recall-v2": (
         "BuyEye update: alert quality and opportunity finding have been improved."
     ),

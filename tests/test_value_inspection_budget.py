@@ -367,3 +367,94 @@ def test_overdue_retry_metadata_is_explicit_and_does_not_change_eligibility():
     assert retry.observation(selected=True)["detail_retry_overdue"] is True
     assert retry.eligible_paths == regular.eligible_paths
     assert retry.inspection_score == regular.inspection_score
+
+
+def test_low_rank_failed_gu_inspection_can_use_existing_reservation():
+    # Retained October 9 card context: 171 sightings, one September 17 failed
+    # detail attempt, no successful detail, still actionable at 1,990 JPY.
+    retry = replace(
+        _assess(
+            "GU x UNDERCOVER Denim Pants Jeans Zip Pocket Collaboration Men's Gray S",
+            price=1990, bid=1890, market=True, family="undercover",
+            dedupe={"inspection_attempted": True, "detail_retry_overdue": True,
+                    "detail_retry_age_hours": 527},
+        ),
+        listing_id="failed-collaboration", inspection_score=66.2,
+    )
+    fresh = replace(
+        _assess(market=True), listing_id="fresh", inspection_attempted=False,
+        inspection_score=100,
+    )
+    assert retry.eligible and retry.value_inspection_candidate
+    selected, capped = select_stage_a_candidates(
+        [fresh, retry], _spec(market=True, family="undercover"),
+        _coverage_settings(max_candidates_per_query=1),
+    )
+    assert selected == [retry] and capped == [fresh]
+    assert retry.observation(selected=True)["detail_retry_age_hours"] == 527
+    # A failed retry resets the existing retry cooldown; it cannot reserve on
+    # every encounter, while successful enrichment also removes retry priority.
+    for after_attempt in (
+        replace(retry, detail_retry_overdue=False, detail_retry_age_hours=0),
+        replace(retry, detail_retry_overdue=False, detail_retry_age_hours=0,
+                inspection_score=65),
+    ):
+        assert select_stage_a_candidates(
+            [fresh, after_attempt], _spec(market=True),
+            _coverage_settings(max_candidates_per_query=1),
+        )[0] == [fresh]
+
+
+def test_overdue_retries_and_never_attempted_candidates_share_wait_order():
+    fresh = replace(_assess(market=True), listing_id="fresh", inspection_score=110,
+                    inspection_attempted=False)
+    waiting = replace(fresh, listing_id="waiting", inspection_score=90,
+                      uninspected_age_hours=100)
+    retry = replace(fresh, listing_id="retry", inspection_score=70,
+                    inspection_attempted=True, detail_retry_overdue=True,
+                    detail_retry_age_hours=200)
+    settings = _coverage_settings(max_candidates_per_query=1)
+    assert select_stage_a_candidates([fresh, waiting, retry], _spec(market=True), settings)[0] == [retry]
+    waiting = replace(waiting, uninspected_age_hours=300)
+    assert select_stage_a_candidates([fresh, waiting, retry], _spec(market=True), settings)[0] == [waiting]
+
+
+@pytest.mark.parametrize("change", [
+    {"eligible_paths": (), "hard_veto": True},
+    {"value_inspection_candidate": False},
+    {"inspection_attempted": False},
+    {"detail_retry_overdue": False},
+])
+def test_retry_priority_requires_eligible_value_and_confirmed_overdue_failure(change):
+    fresh = replace(_assess(market=True), listing_id="fresh", inspection_score=100,
+                    inspection_attempted=False)
+    retry = replace(fresh, listing_id="retry", inspection_score=66,
+                    inspection_attempted=True, detail_retry_overdue=True,
+                    detail_retry_age_hours=527)
+    retry = replace(retry, **change)
+    assert select_stage_a_candidates(
+        [fresh, retry], _spec(market=True), _coverage_settings(max_candidates_per_query=1),
+    )[0] == [fresh]
+
+
+def test_promoted_retry_obeys_disabled_path_reservation_and_market_rate():
+    fresh = replace(_assess(market=True), listing_id="fresh", inspection_score=100,
+                    inspection_attempted=False)
+    retry = replace(fresh, listing_id="retry", inspection_score=66,
+                    inspection_attempted=True, detail_retry_overdue=True,
+                    detail_retry_age_hours=527)
+    for config in (
+        {"value_inspection_reserved_slots": 0},
+        {"path_caps": {"market_buyout_inspection": 0}},
+    ):
+        selected, _ = select_stage_a_candidates(
+            [fresh, retry], _spec(market=True),
+            _coverage_settings(max_candidates_per_query=1, **config),
+        )
+        assert retry not in selected
+    extra = [replace(fresh, listing_id=f"ordinary-{i}") for i in range(50)]
+    selected, capped = select_stage_a_candidates(
+        [fresh, retry, *extra], _spec(market=True),
+        _coverage_settings(max_market_candidate_rate=0.03),
+    )
+    assert selected == [retry] and len(capped) == 51

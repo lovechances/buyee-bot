@@ -161,6 +161,7 @@ def _compact_listing_trace(
         "value_inspection_candidate",
         "inspection_attempted",
         "detail_retry_overdue",
+        "detail_retry_age_hours",
         "uninspected_age_hours",
         "actionable_price",
         "price_in_discovery_band",
@@ -1123,6 +1124,7 @@ async def scan_once(
                     "revisit_reason": seen.revisit_reason,
                     "inspection_attempted": seen.inspection_attempted,
                     "detail_retry_overdue": seen.detail_retry_overdue,
+                    "detail_retry_age_hours": seen.detail_retry_age_hours,
                     "uninspected_age_hours": seen.uninspected_age_hours,
                 },
             }
